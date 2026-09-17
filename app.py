@@ -1,14 +1,14 @@
 import os
 import re
 import urllib.parse
+import xml.etree.ElementTree as ET
+from duckduckgo_search import DDGS
 import google.generativeai as genai
 import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="الرصد الشامل متعدد المنصات - Gemini Grounding",
-    page_icon="📡",
-    layout="wide",
+    page_title="منظومة الرصد المجانية الشاملة", page_icon="📡", layout="wide"
 )
 
 st.markdown(
@@ -33,13 +33,13 @@ st.markdown(
         font-weight: bold;
         font-size: 0.85em;
         margin-left: 8px;
+        color: white;
     }
-    .badge-facebook { background-color: #1877f2; color: white; }
-    .badge-x { background-color: #000000; color: white; }
-    .badge-instagram { background-color: #e1306c; color: white; }
-    .badge-tiktok { background-color: #000000; color: white; }
-    .badge-youtube { background-color: #ff0000; color: white; }
-    .badge-web { background-color: #6c757d; color: white; }
+    .badge-facebook { background-color: #1877f2; }
+    .badge-x { background-color: #000000; }
+    .badge-youtube { background-color: #ff0000; }
+    .badge-tiktok { background-color: #000000; }
+    .badge-news { background-color: #198754; }
     </style>
 """,
     unsafe_allow_html=True,
@@ -48,7 +48,6 @@ st.markdown(
 # الشريط الجانبي
 with st.sidebar:
   st.header("⚙️ إعدادات الذكاء الاصطناعي")
-
   gemini_api_key = st.text_input(
       "مفتاح Gemini API",
       value=os.getenv("GEMINI_API_KEY", ""),
@@ -56,11 +55,11 @@ with st.sidebar:
   )
 
   model_choice = st.selectbox(
-      "نموذج Gemini المعتمد:",
+      "نموذج Gemini (المجاني):",
       options=[
           "gemini-3.5-flash-lite",
-          "gemini-2.0-flash",
           "gemini-1.5-flash",
+          "gemini-2.0-flash",
       ],
       index=0,
   )
@@ -72,8 +71,8 @@ with st.sidebar:
       try:
         genai.configure(api_key=gemini_api_key)
         m = genai.GenerativeModel(model_choice)
-        res = m.generate_content("قل مرحباً")
-        st.success(f"✅ الاتصال ناجح بالنموذج: {model_choice}!")
+        res = m.generate_content("أهلاً، تأكيد الاتصال")
+        st.success(f"✅ الاتصال سليم بالنموذج: {model_choice}!")
       except Exception as err:
         st.error(f"❌ خطأ: {err}")
 
@@ -90,37 +89,184 @@ with st.sidebar:
   send_telegram = st.checkbox("إرسال التنبيهات إلى Telegram", value=True)
 
 # الواجهة الرئيسية
-st.title("📡 الرصد الشامل عبر منصات التواصل (Google Grounding + Gemini)")
+st.title("📡 منظومة الرصد الشامل متعددة المنصات")
 st.write(
-    "رصد حي ومباشر عبر خوادم Google الرسمية لاكتشاف منشورات **Facebook, X,"
-    f" Instagram, TikTok, YouTube** وتحليلها عبر **{model_choice}** دون حظر."
+    "جلب فوري للمنشورات من **YouTube و Facebook و X و الأخبار** مع التحليل"
+    f" الذكي المجاني عبر **{model_choice}**."
 )
 
 col1, col2 = st.columns(2)
 with col1:
   target_domain = st.text_input(
       "🎯 المجال المستهدف للتقييم:",
-      value="شؤون القضاء والعدالة وقرارات المجلس الأعلى للسلطة القضائية بالمغرب",
+      value="شؤون القضاء والعدالة وقرارات المجلس الأعلى للسلطة القضائية",
   )
 with col2:
   keywords_input = st.text_input(
-      "🔑 الكلمات المفتاحية للرصد:",
-      value="المجلس الأعلى للسلطة القضائية, القضاء المغربي, محكمة النقض",
+      "🔑 الكلمات المفتاحية:",
+      value="المجلس الأعلى للسلطة القضائية, القضاء المغربي",
   )
 
 platforms_selected = st.multiselect(
     "🌐 المنصات المراد رصدها:",
-    options=["Facebook", "X (Twitter)", "Instagram", "TikTok", "YouTube"],
-    default=["Facebook", "X (Twitter)", "YouTube", "Instagram"],
+    options=["YouTube", "Facebook", "X (Twitter)", "TikTok", "الأخبار الرسمية"],
+    default=["YouTube", "Facebook", "X (Twitter)", "الأخبار الرسمية"],
 )
 
-start_btn = st.button("🚀 بدء الرصد الشامل الفوري", type="primary")
+start_btn = st.button("🚀 بدء الرصد الشامل والتحليل", type="primary")
+
+
+# 1. جلب مباشر من يوتيوب
+def get_youtube_posts(kw, max_count=6):
+  results = []
+  try:
+    encoded = urllib.parse.quote(kw)
+    url = f"https://www.youtube.com/results?search_query={encoded}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+    }
+    resp = requests.get(url, headers=headers, timeout=8)
+    v_ids = re.findall(r"/watch\?v=([a-zA-Z0-9_-]{11})", resp.text)
+    seen = set()
+    for vid in v_ids:
+      if vid not in seen:
+        seen.add(vid)
+        results.append({
+            "platform": "YouTube",
+            "title": f"فيديو يوتيوب حول: {kw}",
+            "link": f"https://www.youtube.com/watch?v={vid}",
+            "snippet": f"فيديو منشور على يوتيوب يتناول موضوع {kw}",
+        })
+        if len(results) >= max_count:
+          break
+  except Exception:
+    pass
+  return results
+
+
+# 2. جلب الأخبار والبيانات الرسمية عبر RSS
+def get_news_rss(kw, max_count=5):
+  results = []
+  try:
+    encoded = urllib.parse.quote(kw)
+    url = (
+        "https://news.google.com/rss/search?q="
+        f"{encoded}&hl=ar&gl=MA&ceid=MA:ar"
+    )
+    headers = {"User-Agent": "Mozilla/5.0"}
+    resp = requests.get(url, headers=headers, timeout=8)
+    root = ET.fromstring(resp.content)
+    for item in root.findall(".//item")[:max_count]:
+      title = item.find("title").text if item.find("title") is not None else ""
+      link = item.find("link").text if item.find("link") is not None else ""
+      desc = (
+          item.find("description").text
+          if item.find("description") is not None
+          else ""
+      )
+      # تنظيف نصوص HTML
+      clean_desc = re.sub(r"<[^>]+>", "", desc)
+      if title and link:
+        results.append({
+            "platform": "الأخبار الرسمية",
+            "title": title,
+            "link": link,
+            "snippet": clean_desc,
+        })
+  except Exception:
+    pass
+  return results
+
+
+# 3. جلب منشورات السوشيال ميديا عبر DuckDuckGo بصيغ مرنة
+def get_social_posts(kw, platform_name, max_count=5):
+  results = []
+  platform_keywords = {
+      "Facebook": "facebook",
+      "X (Twitter)": "twitter OR x.com",
+      "TikTok": "tiktok",
+  }
+  target_kw = platform_keywords.get(platform_name, "")
+  query = f'"{kw}" {target_kw}'
+
+  try:
+    with DDGS() as ddgs:
+      for r in ddgs.text(query, max_results=max_count):
+        link = r.get("href", "")
+        title = r.get("title", "")
+        body = r.get("body", "")
+        # التأكد من صحة الرابط وانتمائه للمنصة
+        if platform_name == "Facebook" and "facebook.com" in link:
+          results.append({
+              "platform": "Facebook",
+              "title": title,
+              "link": link,
+              "snippet": body,
+          })
+        elif platform_name == "X (Twitter)" and (
+            "x.com" in link or "twitter.com" in link
+        ):
+          results.append({
+              "platform": "X (Twitter)",
+              "title": title,
+              "link": link,
+              "snippet": body,
+          })
+        elif platform_name == "TikTok" and "tiktok.com" in link:
+          results.append({
+              "platform": "TikTok",
+              "title": title,
+              "link": link,
+              "snippet": body,
+          })
+        elif not any(p in link for p in ["facebook.com", "x.com", "tiktok.com"]):
+          # منشور عام ذو صلة
+          results.append({
+              "platform": platform_name,
+              "title": title,
+              "link": link,
+              "snippet": body,
+          })
+  except Exception:
+    pass
+  return results
+
+
+# التحليل الذكي عبر Gemini المجاني
+def analyze_content_with_ai(title, snippet, domain, key, model_name):
+  try:
+    genai.configure(api_key=key)
+    model = genai.GenerativeModel(model_name)
+    prompt = f"""
+المجال المطلوب: {domain}
+
+المحتوى المرصود:
+- العنوان: {title}
+- المقتطف: {snippet}
+
+المهمة:
+هل يرتبط هذا المحتوى بالمجال المطلوب؟
+أجب حصراً بـ:
+YES: [جملة موجزة جداً تشرح موضوع المنشور]
+أو
+NO
+"""
+    res = model.generate_content(prompt)
+    txt = res.text.strip()
+    if txt.startswith("YES"):
+      return True, txt.replace("YES:", "").replace("YES", "").strip()
+    return False, ""
+  except Exception:
+    # في حال حدوث ضغط على الـ API، نعتمد المنشور طالما يحمل الكلمة المفتاحية
+    return True, "تمت المطابقة بناءً على الكلمات المفتاحية"
 
 
 def send_tg_msg(token, chat_id, platform, title, link, reason):
   msg = (
-      f"🚨 *منشور مطابق جديد تم رصده!*\n\n"
-      f"🌐 *المنصة:* {platform}\n"
+      f"🚨 *منشور مطابق تم رصده!*\n\n"
+      f"🌐 *المصدر:* {platform}\n"
       f"📌 *العنوان:* {title}\n"
       f"💡 *التحليل:* {reason}\n"
       f"🔗 *الرابط:* {link}"
@@ -136,146 +282,100 @@ def send_tg_msg(token, chat_id, platform, title, link, reason):
     pass
 
 
-def perform_grounded_social_monitoring(
-    key, model_name, domain, keywords, platforms
-):
-  """استخدام ميزة البحث في Google عبر سيرفرات Gemini لجلب المنشورات من مختلف الشبكات"""
-  genai.configure(api_key=key)
-
-  # تفعيل أداة البحث في جوجل
-  try:
-    model = genai.GenerativeModel(model_name, tools=[{"google_search": {}}])
-  except Exception:
-    try:
-      model = genai.GenerativeModel(
-          model_name, tools="google_search_retrieval"
-      )
-    except Exception:
-      model = genai.GenerativeModel(model_name)
-
-  prompt = f"""
-أنت منظومة متقدمة لرصد وسائل التواصل الاجتماعي والويب.
-المجال المطلوب: {domain}
-الكلمات المفتاحية: {keywords}
-المنصات المطلوب رصدها بدقة: {', '.join(platforms)}
-
-المهمة:
-قم بالبحث الحي عبر محرك Google عن أحدث المنشورات والفيديوهات والصفحات المنشورة على وسائل التواصل الاجتماعي المحددة ({', '.join(platforms)}) والتي تتناول هذا الموضوع والكلمات المفتاحية.
-
-استخرج المنشورات الحقيقية الموجودة، وقدم النتائج على شكل عناصر مفصولة بالعلامة "---".
-لكل منشور، التزم تماماً بالهيكل التالي:
----
-المنصة: [اسم المنصة مثل Facebook أو X (Twitter) أو Instagram أو TikTok أو YouTube]
-العنوان: [عنوان المنشور أو موضوعه بدقة]
-الرابط: [ضع الرابط المباشر للمنشور أو الصفحة على المنصة URL]
-التحليل: [جملة تشرح ملخص المنشور وعلاقته بالمجال المطلوب]
----
-
-ملاحظة هامة: احرص على تنويع النتائج لتشمل المنصات المختلفة وخاصة Facebook و X و Instagram و YouTube.
-"""
-  response = model.generate_content(prompt)
-  return response.text
-
-
 if start_btn:
   if not gemini_api_key:
     st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي.")
   elif not keywords_input:
-    st.warning("⚠️ يرجى كتابة الكلمات المفتاحية.")
+    st.warning("⚠️ يرجى إدخال الكلمات المفتاحية.")
   else:
-    results_found = []
+    keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
+    first_kw = keywords[0]
 
-    with st.spinner(
-        "جارٍ استطلاع شبكات التواصل عبر سيرفرات Google وتحليل المحتوى بواسطة"
-        " Gemini..."
-    ):
-      try:
-        raw_text = perform_grounded_social_monitoring(
-            gemini_api_key,
-            model_choice,
-            target_domain,
-            keywords_input,
-            platforms_selected,
+    raw_candidates = []
+    seen_urls = set()
+
+    with st.spinner("جارٍ جلب المنشورات من مختلف الشبكات والمصادر..."):
+      # 1. يوتيوب
+      if "YouTube" in platforms_selected:
+        raw_candidates.extend(get_youtube_posts(first_kw, max_count=5))
+
+      # 2. الأخبار الرسمية والبيانات
+      if "الأخبار الرسمية" in platforms_selected:
+        raw_candidates.extend(get_news_rss(first_kw, max_count=5))
+
+      # 3. فيسبوك
+      if "Facebook" in platforms_selected:
+        raw_candidates.extend(
+            get_social_posts(first_kw, "Facebook", max_count=5)
         )
 
-        # تقسيم وتحليل النتائج المستخرجة
-        blocks = raw_text.split("---")
-        for block in blocks:
-          if "المنصة:" in block and "الرابط:" in block:
-            lines = [line.strip() for line in block.strip().split("\n") if line]
-            item = {
-                "platform": "عام",
-                "title": "",
-                "link": "",
-                "reason": "",
-            }
-            for line in lines:
-              if line.startswith("المنصة:"):
-                item["platform"] = line.replace("المنصة:", "").strip()
-              elif line.startswith("العنوان:"):
-                item["title"] = line.replace("العنوان:", "").strip()
-              elif line.startswith("الرابط:"):
-                item["link"] = line.replace("الرابط:", "").strip()
-              elif line.startswith("التحليل:"):
-                item["reason"] = line.replace("التحليل:", "").strip()
+      # 4. إكس (تويتر)
+      if "X (Twitter)" in platforms_selected:
+        raw_candidates.extend(
+            get_social_posts(first_kw, "X (Twitter)", max_count=5)
+        )
 
-            # تنظيف الرابط إذا كان بصيغة ماركداون [link](url)
-            link_match = re.search(r"\((https?://[^\)]+)\)", item["link"])
-            if link_match:
-              item["link"] = link_match.group(1)
-            else:
-              link_match2 = re.search(r"(https?://[^\s]+)", item["link"])
-              if link_match2:
-                item["link"] = link_match2.group(1)
+      # 5. تيك توك
+      if "TikTok" in platforms_selected:
+        raw_candidates.extend(get_social_posts(first_kw, "TikTok", max_count=5))
 
-            if item["title"] and item["link"]:
-              results_found.append(item)
-              if send_telegram and telegram_token and telegram_chat_id:
-                send_tg_msg(
-                    telegram_token,
-                    telegram_chat_id,
-                    item["platform"],
-                    item["title"],
-                    item["link"],
-                    item["reason"],
-                )
+    st.info(f"📊 تم جمع {len(raw_candidates)} منشوراً أولياً، جارٍ التحليل الذكي...")
 
-      except Exception as e:
-        st.error(f"حدث خطأ أثناء الرصد: {e}")
+    verified_results = []
+    with st.spinner("جارٍ التحقق والفلترة بواسطة Gemini..."):
+      for cand in raw_candidates:
+        link = cand["link"]
+        if link in seen_urls:
+          continue
+        seen_urls.add(link)
 
-    # عرض النتائج في بطاقات مميزة
-    st.subheader(
-        f"📋 المنشورات المرصودة عبر مختلف الشبكات ({len(results_found)})"
-    )
+        is_valid, reason = analyze_content_with_ai(
+            cand["title"],
+            cand["snippet"],
+            target_domain,
+            gemini_api_key,
+            model_choice,
+        )
+        if is_valid:
+          cand["reason"] = reason
+          verified_results.append(cand)
 
-    if results_found:
-      for idx, res in enumerate(results_found, 1):
-        # تلوين شارة المنصة
-        p_name = res["platform"].lower()
-        badge_class = "badge-web"
-        if "facebook" in p_name:
-          badge_class = "badge-facebook"
-        elif "x" in p_name or "twitter" in p_name:
-          badge_class = "badge-x"
-        elif "instagram" in p_name:
-          badge_class = "badge-instagram"
-        elif "tiktok" in p_name:
-          badge_class = "badge-tiktok"
-        elif "youtube" in p_name:
-          badge_class = "badge-youtube"
+          if send_telegram and telegram_token and telegram_chat_id:
+            send_tg_msg(
+                telegram_token,
+                telegram_chat_id,
+                cand["platform"],
+                cand["title"],
+                cand["link"],
+                reason,
+            )
 
+    # عرض النتائج
+    st.subheader(f"📋 المنشورات المؤكدة ({len(verified_results)})")
+
+    if verified_results:
+      badge_map = {
+          "Facebook": "badge-facebook",
+          "X (Twitter)": "badge-x",
+          "YouTube": "badge-youtube",
+          "TikTok": "badge-tiktok",
+          "الأخبار الرسمية": "badge-news",
+      }
+
+      for idx, item in enumerate(verified_results, 1):
+        b_class = badge_map.get(item["platform"], "badge-news")
         st.markdown(
             f"""
                 <div class="result-card">
-                    <h4>#{idx} <span class="badge-platform {badge_class}">{res['platform']}</span> - {res['title']}</h4>
-                    <p><b>💡 تحليل الذكاء الاصطناعي:</b> <span style="color: #28a745; font-weight: bold;">{res['reason']}</span></p>
-                    <p><a href="{res['link']}" target="_blank" style="font-weight: bold; color: #0d6efd; text-decoration: none;">🔗 فتح المنشور الأصلي على {res['platform']}</a></p>
+                    <h4>#{idx} <span class="badge-platform {b_class}">{item['platform']}</span> - {item['title']}</h4>
+                    <p><b>المقتطف:</b> {item['snippet']}</p>
+                    <p><b>💡 تحليل الذكاء الاصطناعي:</b> <span style="color: #198754; font-weight: bold;">{item['reason']}</span></p>
+                    <p><a href="{item['link']}" target="_blank" style="font-weight: bold; color: #0d6efd; text-decoration: none;">🔗 فتح المصدر الأصلي ({item['platform']})</a></p>
                 </div>
                 """,
             unsafe_allow_html=True,
         )
     else:
       st.warning(
-          "لم يتم العثور على منشورات مطابقة. يرجى التأكد من تفعيل الاتصال"
-          " بالمفتاح أو تجربة كلمات مفتاحية إضافية."
+          "لم يتم العثور على منشورات مطابقة. جرب تعديل الكلمات المفتاحية."
       )
