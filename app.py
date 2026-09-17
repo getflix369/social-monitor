@@ -6,7 +6,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="منظومة الرصد الشامل بالذكاء الاصطناعي",
+    page_title="منظومة الرصد الذكي - Gemini 3.5 Flash-Lite",
     page_icon="📡",
     layout="wide",
 )
@@ -30,7 +30,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# الشريط الجانبي: المفاتيح والتحقق
+# الشريط الجانبي
 with st.sidebar:
   st.header("⚙️ إعدادات الذكاء الاصطناعي")
 
@@ -40,32 +40,32 @@ with st.sidebar:
       type="password",
   )
 
-  # اختيار موديل Gemini
+  # تحديد النموذج المعتمد
   model_choice = st.selectbox(
-      "إصدار نموذج Gemini:",
+      "نموذج الذكاء الاصطناعي:",
       options=[
-          "gemini-2.0-flash-lite",
+          "gemini-3.5-flash-lite",
+          "gemini-3.5-flash",
           "gemini-1.5-flash",
-          "gemini-1.5-flash-8b",
           "gemini-2.0-flash",
       ],
       index=0,
-      help="اختر الإصدار المتوافق مع مفتاحك",
+      help="تم تعيين Gemini 3.5 Flash-Lite كخيار افتراضي مجاني وسريع",
   )
 
-  # زر اختبار المفتاح والموديل فوراً
-  if st.button("🧪 فحص المفتاح والاتصال الآن"):
+  # زر فحص الاتصال بالنموذج
+  if st.button("🧪 فحص المفتاح والاتصال بالنموذج"):
     if not gemini_api_key:
-      st.error("يرجى إدخال المفتاح أولاً.")
+      st.error("يرجى كتابة المفتاح أولاً.")
     else:
       try:
         genai.configure(api_key=gemini_api_key)
-        test_model = genai.GenerativeModel(model_choice)
-        res = test_model.generate_content("قل مرحباً باختصار")
-        st.success(f"✅ الاتصال ناجح بالنموذج {model_choice}!")
-        st.caption(f"رد النموذج: {res.text.strip()}")
+        m = genai.GenerativeModel(model_choice)
+        res = m.generate_content("قل مرحباً باختصار")
+        st.success(f"✅ الاتصال ناجح بالنموذج: {model_choice}!")
+        st.info(f"رد النموذج: {res.text.strip()}")
       except Exception as err:
-        st.error(f"❌ فشل الاتصال: {err}")
+        st.error(f"❌ خطأ في الاتصال بالنموذج: {err}")
 
   st.divider()
   st.header("📲 إعدادات Telegram")
@@ -83,10 +83,10 @@ with st.sidebar:
   max_results = st.slider("عدد النتائج لكل منصة:", 5, 20, 8)
 
 # الواجهة الرئيسية
-st.title("📡 الرصد والبحث الشامل عبر منصات التواصل")
+st.title("📡 الرصد الشامل عبر منصات التواصل (Gemini 3.5 Flash-Lite)")
 st.write(
-    "رصد المحتوى الرائج عبر المنصات باستخدام البحث المباشر والتقييم الذكي عبر"
-    " Gemini."
+    "رصد المحتوى المنشور عبر المنصات باستخدام البحث المباشر والتقييم الذكي عبر"
+    f" **{model_choice}**."
 )
 
 col1, col2 = st.columns(2)
@@ -104,7 +104,7 @@ with col2:
 platforms_selected = st.multiselect(
     "🌐 المنصات المراد رصدها:",
     options=["YouTube", "X (Twitter)", "Facebook", "TikTok"],
-    default=["YouTube", "X (Twitter)"],
+    default=["YouTube", "X (Twitter)", "Facebook"],
 )
 
 start_btn = st.button("🚀 بدء الرصد والتحليل الآن", type="primary")
@@ -150,9 +150,9 @@ def analyze_with_ai(title, snippet, domain, key, model_name):
 - المقتطف: {snippet}
 
 المطلوب:
-هل هذا المنشور ذو صلة بالمجال المطلوب؟
-أجب بإحدى الصيغتين فقط:
-YES: [اكتب في جملة واحدة موجزة ما يناقشه المنشور]
+هل هذا المنشور يتناول المجال المطلوب أو يرتبط به بشكل واضح؟
+أجب حصراً بإحدى الصيغتين:
+YES: [جملة واحدة موجزة توضح الفكرة المطابقة]
 أو
 NO
 """
@@ -160,14 +160,14 @@ NO
     txt = res.text.strip()
     if txt.startswith("YES"):
       return True, txt.replace("YES:", "").replace("YES", "").strip(), ""
-    return False, "", "تم استبعاده لعدم تطابق السياق"
+    return False, "", "غير مطابق للمجال"
   except Exception as e:
-    return False, "", f"خطأ في Gemini: {e}"
+    return False, "", f"خطأ في الـ API: {e}"
 
 
 def send_tg_msg(token, chat_id, platform, account, title, link, reason):
   msg = (
-      f"🚨 *منشور مطابق جديد تم رصده!*\n\n"
+      f"🚨 *منشور مطابق جديد!*\n\n"
       f"🌐 *المنصة:* {platform}\n"
       f"👤 *الناشر:* `{account}`\n"
       f"📌 *العنوان:* {title}\n"
@@ -187,7 +187,7 @@ def send_tg_msg(token, chat_id, platform, account, title, link, reason):
 
 if start_btn:
   if not gemini_api_key:
-    st.error("⚠️ يرجى إدخال مفتاح Gemini API في القائمة الجانبية.")
+    st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي.")
   elif not keywords_input:
     st.warning("⚠️ يرجى إدخال كلمات البحث المفتاحية.")
   else:
@@ -203,77 +203,75 @@ if start_btn:
     seen_links = set()
     debug_logs = []
 
-    with st.spinner("جارٍ البحث في المنصات وتحليل المحتوى بواسطة Gemini..."):
-      for platform in platforms_selected:
-        p_domain = platform_domains.get(platform, "")
+    with st.spinner(f"جارٍ البحث والتحليل باستخدام {model_choice}..."):
+      with DDGS() as ddgs:
+        for platform in platforms_selected:
+          p_domain = platform_domains.get(platform, "")
 
-        # صياغة الاستعلام المباشر لكل منصة
-        for kw in raw_keywords[:2]:  # فحص أول كلمتين رئيسيتين
-          search_query = f"site:{p_domain} {kw}"
-          debug_logs.append(
-              f"🔍 **استعلام البحث ({platform})**: `{search_query}`"
-          )
+          for kw in raw_keywords[:2]:
+            search_query = f"site:{p_domain} {kw}"
+            debug_logs.append(
+                f"🔍 **استعلام ({platform})**: `{search_query}`"
+            )
 
-          try:
-            with DDGS() as ddgs:
+            try:
               raw_results = list(
                   ddgs.text(search_query, max_results=max_results)
               )
-
-            debug_logs.append(
-                f"📊 **{platform}** للكلمة `{kw}`: عثر محرك البحث على"
-                f" {len(raw_results)} نتيجة."
-            )
-
-            for item in raw_results:
-              link = item.get("href", "")
-              title = item.get("title", "")
-              snippet = item.get("body", "")
-
-              if not link or link in seen_links:
-                continue
-              seen_links.add(link)
-
-              # فحص الذكاء الاصطناعي
-              is_match, reason, error_msg = analyze_with_ai(
-                  title, snippet, target_domain, gemini_api_key, model_choice
+              debug_logs.append(
+                  f"📊 **{platform}** للكلمة `{kw}`: تم العثور على"
+                  f" {len(raw_results)} نتيجة أولية."
               )
 
-              if is_match:
-                acc = extract_account_from_url(link, platform)
-                results_found.append({
-                    "platform": platform,
-                    "account": acc,
-                    "title": title,
-                    "link": link,
-                    "reason": reason,
-                    "snippet": snippet,
-                })
-                debug_logs.append(f"✅ **تم اعتماده**: {title}")
+              for item in raw_results:
+                link = item.get("href", "")
+                title = item.get("title", "")
+                snippet = item.get("body", "")
 
-                if send_telegram and telegram_token and telegram_chat_id:
-                  send_tg_msg(
-                      telegram_token,
-                      telegram_chat_id,
-                      platform,
-                      acc,
-                      title,
-                      link,
-                      reason,
-                  )
-              else:
-                if error_msg:
-                  debug_logs.append(f"⚠️ **تنبيه الذكاء الاصطناعي**: {error_msg}")
+                if not link or link in seen_links:
+                  continue
+                seen_links.add(link)
+
+                # التحليل بواسطة النموذج المختار
+                is_match, reason, error_msg = analyze_with_ai(
+                    title, snippet, target_domain, gemini_api_key, model_choice
+                )
+
+                if is_match:
+                  acc = extract_account_from_url(link, platform)
+                  results_found.append({
+                      "platform": platform,
+                      "account": acc,
+                      "title": title,
+                      "link": link,
+                      "reason": reason,
+                      "snippet": snippet,
+                  })
+                  debug_logs.append(f"✅ **تم اعتماده**: {title}")
+
+                  if send_telegram and telegram_token and telegram_chat_id:
+                    send_tg_msg(
+                        telegram_token,
+                        telegram_chat_id,
+                        platform,
+                        acc,
+                        title,
+                        link,
+                        reason,
+                    )
                 else:
-                  debug_logs.append(
-                      f"❌ **مستبعد**: {title} ({error_msg or 'خارج سياق المجال'})"
-                  )
+                  if error_msg.startswith("خطأ"):
+                    debug_logs.append(
+                        f"🚨 **خطأ في استدعاء الذكاء الاصطناعي**: {error_msg}"
+                    )
+                  else:
+                    debug_logs.append(f"❌ **مستبعد**: {title}")
 
-          except Exception as e:
-            debug_logs.append(f"⚠️ خطأ أثناء البحث في {platform}: {e}")
+            except Exception as e:
+              debug_logs.append(f"⚠️ خطأ في البحث عبر {platform}: {e}")
 
     # عرض النتائج
-    st.subheader(f"📋 المنشورات المطابقة المعتمدة ({len(results_found)})")
+    st.subheader(f"📋 النتائج المعتمدة ({len(results_found)})")
 
     if results_found:
       for idx, res in enumerate(results_found, 1):
@@ -291,11 +289,10 @@ if start_btn:
         )
     else:
       st.warning(
-          "لم يتم العثور على نتائج مطابقة حتى الآن. افتح سجل التشخيص بالأسفل"
-          " لمعرفة ما حدث بالتفصيل."
+          "لم يتم العثور على نتائج مطابقة. افتح سجل الفحص والتشخيص بالأسفل لمعرفة"
+          " التفاصيل."
       )
 
-    # سجل التشخيص التفصيلي
     with st.expander("🛠️ اضغط هنا لعرض سجل الفحص والتشخيص (Debug Logs)"):
       for log in debug_logs:
         st.markdown(log)
