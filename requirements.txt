@@ -1,4 +1,5 @@
 streamlit
-duckduckgo_search>=6.0.0
 google-generativeai
 requests
+googlesearch-python
+beautifulsoup4
