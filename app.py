@@ -1,12 +1,13 @@
 import os
 import re
-from duckduckgo_search import DDGS
+import urllib.parse
+from googlesearch import search
 import google.generativeai as genai
 import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="منظومة الرصد الذكي - Gemini 3.5 Flash-Lite",
+    page_title="الرصد الشامل لمنصات التواصل - Google & Gemini",
     page_icon="📡",
     layout="wide",
 )
@@ -40,32 +41,27 @@ with st.sidebar:
       type="password",
   )
 
-  # تحديد النموذج المعتمد
   model_choice = st.selectbox(
-      "نموذج الذكاء الاصطناعي:",
+      "إصدار نموذج Gemini:",
       options=[
           "gemini-3.5-flash-lite",
-          "gemini-3.5-flash",
           "gemini-1.5-flash",
           "gemini-2.0-flash",
       ],
       index=0,
-      help="تم تعيين Gemini 3.5 Flash-Lite كخيار افتراضي مجاني وسريع",
   )
 
-  # زر فحص الاتصال بالنموذج
-  if st.button("🧪 فحص المفتاح والاتصال بالنموذج"):
+  if st.button("🧪 فحص الاتصال بالنموذج"):
     if not gemini_api_key:
-      st.error("يرجى كتابة المفتاح أولاً.")
+      st.error("يرجى إدخال المفتاح أولاً.")
     else:
       try:
         genai.configure(api_key=gemini_api_key)
         m = genai.GenerativeModel(model_choice)
         res = m.generate_content("قل مرحباً باختصار")
         st.success(f"✅ الاتصال ناجح بالنموذج: {model_choice}!")
-        st.info(f"رد النموذج: {res.text.strip()}")
       except Exception as err:
-        st.error(f"❌ خطأ في الاتصال بالنموذج: {err}")
+        st.error(f"❌ خطأ: {err}")
 
   st.divider()
   st.header("📲 إعدادات Telegram")
@@ -80,34 +76,80 @@ with st.sidebar:
   send_telegram = st.checkbox("إرسال التنبيهات إلى Telegram", value=True)
 
   st.divider()
-  max_results = st.slider("عدد النتائج لكل منصة:", 5, 20, 8)
+  max_results = st.slider("عدد النتائج لكل منصة:", 3, 15, 6)
 
 # الواجهة الرئيسية
-st.title("📡 الرصد الشامل عبر منصات التواصل (Gemini 3.5 Flash-Lite)")
+st.title("📡 الرصد الشامل لشبكات التواصل (Google Search + Gemini)")
 st.write(
-    "رصد المحتوى المنشور عبر المنصات باستخدام البحث المباشر والتقييم الذكي عبر"
-    f" **{model_choice}**."
+    "رصد المحتوى المنشور عبر محرك بحث Google لضمان جلب كافة المنشورات العربية،"
+    f" مع التحليل الذكي عبر **{model_choice}**."
 )
 
 col1, col2 = st.columns(2)
 with col1:
   target_domain = st.text_input(
       "🎯 المجال المستهدف للتقييم:",
-      value="القانون الرياضي والنزاعات الرياضية بالمغرب",
+      value="شؤون القضاء والعدالة وقرارات المجلس الأعلى للسلطة القضائية",
   )
 with col2:
   keywords_input = st.text_input(
-      "🔑 الكلمات المفتاحية (كلمات رئيسية مباشرة):",
-      value="التحكيم الرياضي, الطاس, الجامعة الملكية, نزاع",
+      "🔑 الكلمات المفتاحية للرصد:",
+      value="المجلس الأعلى للسلطة القضائية, القضاء المغربي, محكمة النقض",
   )
 
 platforms_selected = st.multiselect(
     "🌐 المنصات المراد رصدها:",
-    options=["YouTube", "X (Twitter)", "Facebook", "TikTok"],
-    default=["YouTube", "X (Twitter)", "Facebook"],
+    options=["YouTube", "Facebook", "X (Twitter)", "TikTok"],
+    default=["YouTube", "Facebook", "X (Twitter)"],
 )
 
-start_btn = st.button("🚀 بدء الرصد والتحليل الآن", type="primary")
+start_btn = st.button("🚀 بدء الرصد الشامل والتحليل الآن", type="primary")
+
+
+def search_google(query, max_count):
+  """البحث في Google وجلب النتائج المباشرة"""
+  results = []
+  try:
+    for item in search(
+        query, num_results=max_count, lang="ar", advanced=True, sleep_interval=1
+    ):
+      results.append({
+          "href": item.url,
+          "title": item.title or "منشور بدون عنوان",
+          "body": item.description or "",
+      })
+  except Exception as e:
+    st.error(f"تنبيه أثناء البحث في Google: {e}")
+  return results
+
+
+def search_youtube_direct(query, max_count):
+  """البحث المباشر في يوتيوب كنسخة احتياطية فائقة السرعة"""
+  results = []
+  try:
+    encoded = urllib.parse.quote(query)
+    url = f"https://www.youtube.com/results?search_query={encoded}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+    }
+    resp = requests.get(url, headers=headers, timeout=8)
+    v_ids = re.findall(r"/watch\?v=([a-zA-Z0-9_-]{11})", resp.text)
+    seen = set()
+    for vid in v_ids:
+      if vid not in seen:
+        seen.add(vid)
+        results.append({
+            "href": f"https://www.youtube.com/watch?v={vid}",
+            "title": f"فيديو يوتيوب: {query}",
+            "body": f"فيديو منشور على يوتيوب يتعلق بموضوع {query}",
+        })
+        if len(results) >= max_count:
+          break
+  except Exception:
+    pass
+  return results
 
 
 def extract_account_from_url(url, platform):
@@ -145,14 +187,13 @@ def analyze_with_ai(title, snippet, domain, key, model_name):
 أنت مساعد خبير في رصد المحتوى الرقمي.
 المجال المطلوب: {domain}
 
-المحتوى المرصود:
+المنشور المرصود:
 - العنوان: {title}
 - المقتطف: {snippet}
 
-المطلوب:
-هل هذا المنشور يتناول المجال المطلوب أو يرتبط به بشكل واضح؟
-أجب حصراً بإحدى الصيغتين:
-YES: [جملة واحدة موجزة توضح الفكرة المطابقة]
+هل يرتبط هذا المحتوى بالمجال المطلوب؟
+أجب بإحدى الصيغتين فقط:
+YES: [جملة واحدة توضح فكرة المحتوى]
 أو
 NO
 """
@@ -189,13 +230,13 @@ if start_btn:
   if not gemini_api_key:
     st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي.")
   elif not keywords_input:
-    st.warning("⚠️ يرجى إدخال كلمات البحث المفتاحية.")
+    st.warning("⚠️ يرجى إدخال الكلمات المفتاحية.")
   else:
     raw_keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
     platform_domains = {
         "YouTube": "youtube.com",
-        "X (Twitter)": "x.com",
         "Facebook": "facebook.com",
+        "X (Twitter)": "x.com",
         "TikTok": "tiktok.com",
     }
 
@@ -203,75 +244,68 @@ if start_btn:
     seen_links = set()
     debug_logs = []
 
-    with st.spinner(f"جارٍ البحث والتحليل باستخدام {model_choice}..."):
-      with DDGS() as ddgs:
-        for platform in platforms_selected:
-          p_domain = platform_domains.get(platform, "")
+    with st.spinner("جارٍ فحص Google وتحليل النتائج بواسطة Gemini..."):
+      for platform in platforms_selected:
+        p_domain = platform_domains.get(platform, "")
 
-          for kw in raw_keywords[:2]:
-            search_query = f"site:{p_domain} {kw}"
-            debug_logs.append(
-                f"🔍 **استعلام ({platform})**: `{search_query}`"
+        for kw in raw_keywords[:2]:
+          search_query = f"site:{p_domain} {kw}"
+          debug_logs.append(
+              f"🔍 **استعلام Google ({platform})**: `{search_query}`"
+          )
+
+          # البحث عبر Google
+          raw_results = search_google(search_query, max_results)
+
+          # إذا كانت المنصة يوتيوب ولم يجد جوجل نتائج، نستخدم البحث المباشر
+          if platform == "YouTube" and len(raw_results) == 0:
+            raw_results = search_youtube_direct(kw, max_results)
+
+          debug_logs.append(
+              f"📊 **{platform}** للكلمة `{kw}`: عثر محرك البحث على"
+              f" {len(raw_results)} نتيجة أولية."
+          )
+
+          for item in raw_results:
+            link = item.get("href", "")
+            title = item.get("title", "")
+            snippet = item.get("body", "")
+
+            if not link or link in seen_links:
+              continue
+            seen_links.add(link)
+
+            is_match, reason, error_msg = analyze_with_ai(
+                title, snippet, target_domain, gemini_api_key, model_choice
             )
 
-            try:
-              raw_results = list(
-                  ddgs.text(search_query, max_results=max_results)
-              )
-              debug_logs.append(
-                  f"📊 **{platform}** للكلمة `{kw}`: تم العثور على"
-                  f" {len(raw_results)} نتيجة أولية."
-              )
+            if is_match:
+              acc = extract_account_from_url(link, platform)
+              results_found.append({
+                  "platform": platform,
+                  "account": acc,
+                  "title": title,
+                  "link": link,
+                  "reason": reason,
+                  "snippet": snippet,
+              })
+              debug_logs.append(f"✅ **تم اعتماده**: {title}")
 
-              for item in raw_results:
-                link = item.get("href", "")
-                title = item.get("title", "")
-                snippet = item.get("body", "")
-
-                if not link or link in seen_links:
-                  continue
-                seen_links.add(link)
-
-                # التحليل بواسطة النموذج المختار
-                is_match, reason, error_msg = analyze_with_ai(
-                    title, snippet, target_domain, gemini_api_key, model_choice
+              if send_telegram and telegram_token and telegram_chat_id:
+                send_tg_msg(
+                    telegram_token,
+                    telegram_chat_id,
+                    platform,
+                    acc,
+                    title,
+                    link,
+                    reason,
                 )
+            else:
+              debug_logs.append(f"❌ **مستبعد**: {title}")
 
-                if is_match:
-                  acc = extract_account_from_url(link, platform)
-                  results_found.append({
-                      "platform": platform,
-                      "account": acc,
-                      "title": title,
-                      "link": link,
-                      "reason": reason,
-                      "snippet": snippet,
-                  })
-                  debug_logs.append(f"✅ **تم اعتماده**: {title}")
-
-                  if send_telegram and telegram_token and telegram_chat_id:
-                    send_tg_msg(
-                        telegram_token,
-                        telegram_chat_id,
-                        platform,
-                        acc,
-                        title,
-                        link,
-                        reason,
-                    )
-                else:
-                  if error_msg.startswith("خطأ"):
-                    debug_logs.append(
-                        f"🚨 **خطأ في استدعاء الذكاء الاصطناعي**: {error_msg}"
-                    )
-                  else:
-                    debug_logs.append(f"❌ **مستبعد**: {title}")
-
-            except Exception as e:
-              debug_logs.append(f"⚠️ خطأ في البحث عبر {platform}: {e}")
-
-    # عرض النتائج
-    st.subheader(f"📋 النتائج المعتمدة ({len(results_found)})")
+    # عرض النتائج في بطاقات واضحة
+    st.subheader(f"📋 النتائج المعتمدة والمطابقة ({len(results_found)})")
 
     if results_found:
       for idx, res in enumerate(results_found, 1):
@@ -289,8 +323,7 @@ if start_btn:
         )
     else:
       st.warning(
-          "لم يتم العثور على نتائج مطابقة. افتح سجل الفحص والتشخيص بالأسفل لمعرفة"
-          " التفاصيل."
+          "لم يتم العثور على منشورات معتمدة. يمكنك مراجعة سجل الفحص بالأسفل."
       )
 
     with st.expander("🛠️ اضغط هنا لعرض سجل الفحص والتشخيص (Debug Logs)"):
