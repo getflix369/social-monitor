@@ -1,5 +1,4 @@
 streamlit
 google-generativeai
 requests
-googlesearch-python
-beautifulsoup4
+duckduckgo_search
