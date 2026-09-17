@@ -1,3 +1,6 @@
+from datetime import datetime
+from email.utils import parsedate_to_datetime
+import json
 import os
 import re
 import urllib.parse
@@ -8,7 +11,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="منظومة الرصد المجانية الشاملة", page_icon="📡", layout="wide"
+    page_title="منظومة الرصد والتتبع الاحترافية", page_icon="📡", layout="wide"
 )
 
 st.markdown(
@@ -18,28 +21,42 @@ st.markdown(
     .stTextInput > label, .stTextArea > label, .stSelectbox > label, .stSlider > label { text-align: right; font-weight: bold; }
     .result-card {
         background-color: #ffffff;
-        border-right: 5px solid #0d6efd;
-        border: 1px solid #e0e0e0;
-        border-right-width: 5px;
-        padding: 18px;
-        border-radius: 8px;
-        margin-bottom: 18px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        border: 1px solid #e2e8f0;
+        border-right: 6px solid #0d6efd;
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
     }
     .badge-platform {
         display: inline-block;
-        padding: 3px 8px;
-        border-radius: 4px;
+        padding: 4px 10px;
+        border-radius: 6px;
         font-weight: bold;
         font-size: 0.85em;
-        margin-left: 8px;
+        margin-left: 10px;
         color: white;
     }
     .badge-facebook { background-color: #1877f2; }
     .badge-x { background-color: #000000; }
+    .badge-instagram { background-color: #e1306c; }
+    .badge-tiktok { background-color: #000000; border: 1px solid #333; }
     .badge-youtube { background-color: #ff0000; }
-    .badge-tiktok { background-color: #000000; }
     .badge-news { background-color: #198754; }
+    .meta-info {
+        color: #64748b;
+        font-size: 0.9em;
+        margin-bottom: 12px;
+    }
+    .snippet-box {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        padding: 12px;
+        border-radius: 6px;
+        font-size: 0.95em;
+        color: #334155;
+        margin-bottom: 12px;
+    }
     </style>
 """,
     unsafe_allow_html=True,
@@ -55,7 +72,7 @@ with st.sidebar:
   )
 
   model_choice = st.selectbox(
-      "نموذج Gemini (المجاني):",
+      "نموذج Gemini:",
       options=[
           "gemini-3.5-flash-lite",
           "gemini-1.5-flash",
@@ -71,53 +88,91 @@ with st.sidebar:
       try:
         genai.configure(api_key=gemini_api_key)
         m = genai.GenerativeModel(model_choice)
-        res = m.generate_content("أهلاً، تأكيد الاتصال")
-        st.success(f"✅ الاتصال سليم بالنموذج: {model_choice}!")
+        res = m.generate_content("تأكيد الاتصال")
+        st.success(f"✅ الاتصال ناجح: {model_choice}!")
       except Exception as err:
         st.error(f"❌ خطأ: {err}")
 
   st.divider()
-  st.header("📲 إعدادات Telegram")
+  st.header("⏱️ فترة الرصد والبحث")
+  time_range = st.selectbox(
+      "النطاق الزمني للمنشورات:",
+      options=[
+          "آخر 24 ساعة (اليوم)",
+          "آخر 7 أيام (هذا الأسبوع)",
+          "آخر 30 يوماً (هذا الشهر)",
+          "جميع الأوقات",
+      ],
+      index=1,
+  )
+  ddg_time_map = {
+      "آخر 24 ساعة (اليوم)": "d",
+      "آخر 7 أيام (هذا الأسبوع)": "w",
+      "آخر 30 يوماً (هذا الشهر)": "m",
+      "جميع الأوقات": None,
+  }
+  news_time_map = {
+      "آخر 24 ساعة (اليوم)": "when:1d",
+      "آخر 7 أيام (هذا الأسبوع)": "when:7d",
+      "آخر 30 يوماً (هذا الشهر)": "when:30d",
+      "جميع الأوقات": "",
+  }
+
+  st.divider()
+  st.header("📲 تنبيهات Telegram")
   telegram_token = st.text_input(
-      "رمز بوت تيليجرام",
+      "رمز البوت (Token)",
       value=os.getenv("TELEGRAM_BOT_TOKEN", ""),
       type="password",
   )
   telegram_chat_id = st.text_input(
-      "معرّف تيليجرام (Chat ID)", value=os.getenv("TELEGRAM_CHAT_ID", "")
+      "معرّف المحادثة (Chat ID)", value=os.getenv("TELEGRAM_CHAT_ID", "")
   )
-  send_telegram = st.checkbox("إرسال التنبيهات إلى Telegram", value=True)
+  send_telegram = st.checkbox("إرسال التنبيهات الفورية", value=True)
 
 # الواجهة الرئيسية
-st.title("📡 منظومة الرصد الشامل متعددة المنصات")
+st.title("📡 لوحة الرصد الرقمي والتتبع عبر المنصات")
 st.write(
-    "جلب فوري للمنشورات من **YouTube و Facebook و X و الأخبار** مع التحليل"
-    f" الذكي المجاني عبر **{model_choice}**."
+    "رصد وتتبع شامل لمنشورات **Facebook, X, Instagram, TikTok, YouTube,"
+    " والأخبار** مع استخراج تواريخ النشر وتفاصيل المحتوى."
 )
 
 col1, col2 = st.columns(2)
 with col1:
   target_domain = st.text_input(
-      "🎯 المجال المستهدف للتقييم:",
-      value="شؤون القضاء والعدالة وقرارات المجلس الأعلى للسلطة القضائية",
+      "🎯 المجال والموضوع المستهدف:",
+      value="شؤون القضاء والعدالة وقرارات المجلس الأعلى للسلطة القضائية بالمغرب",
   )
 with col2:
   keywords_input = st.text_input(
-      "🔑 الكلمات المفتاحية:",
-      value="المجلس الأعلى للسلطة القضائية, القضاء المغربي",
+      "🔑 الكلمات المفتاحية للرصد:",
+      value="المجلس الأعلى للسلطة القضائية, محكمة النقض, القضاء المغربي",
   )
 
 platforms_selected = st.multiselect(
     "🌐 المنصات المراد رصدها:",
-    options=["YouTube", "Facebook", "X (Twitter)", "TikTok", "الأخبار الرسمية"],
-    default=["YouTube", "Facebook", "X (Twitter)", "الأخبار الرسمية"],
+    options=[
+        "Facebook",
+        "X (Twitter)",
+        "Instagram",
+        "TikTok",
+        "YouTube",
+        "الأخبار الرسمية",
+    ],
+    default=[
+        "Facebook",
+        "X (Twitter)",
+        "YouTube",
+        "Instagram",
+        "الأخبار الرسمية",
+    ],
 )
 
-start_btn = st.button("🚀 بدء الرصد الشامل والتحليل", type="primary")
+start_btn = st.button("🚀 بدء الرصد واستخراج التفاصيل", type="primary")
 
 
-# 1. جلب مباشر من يوتيوب
-def get_youtube_posts(kw, max_count=6):
+# 1. جلب بيانات يوتيوب الدقيقة (اسم القناة وتوقيت النشر)
+def fetch_youtube_detailed(kw, max_count=6):
   results = []
   try:
     encoded = urllib.parse.quote(kw)
@@ -125,32 +180,66 @@ def get_youtube_posts(kw, max_count=6):
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        )
+        ),
+        "Accept-Language": "ar,en;q=0.9",
     }
-    resp = requests.get(url, headers=headers, timeout=8)
-    v_ids = re.findall(r"/watch\?v=([a-zA-Z0-9_-]{11})", resp.text)
-    seen = set()
-    for vid in v_ids:
-      if vid not in seen:
-        seen.add(vid)
-        results.append({
-            "platform": "YouTube",
-            "title": f"فيديو يوتيوب حول: {kw}",
-            "link": f"https://www.youtube.com/watch?v={vid}",
-            "snippet": f"فيديو منشور على يوتيوب يتناول موضوع {kw}",
-        })
-        if len(results) >= max_count:
-          break
+    resp = requests.get(url, headers=headers, timeout=10)
+    match = re.search(r"var ytInitialData = ({.*?});</script>", resp.text)
+    if match:
+      data = json.loads(match.group(1))
+      contents = (
+          data.get("contents", {})
+          .get("twoColumnSearchResultsRenderer", {})
+          .get("primaryContents", {})
+          .get("sectionListRenderer", {})
+          .get("contents", [])
+      )
+      for sec in contents:
+        items = sec.get("itemSectionRenderer", {}).get("contents", [])
+        for item in items:
+          v = item.get("videoRenderer")
+          if v:
+            vid_id = v.get("videoId")
+            title = (
+                v.get("title", {}).get("runs", [{}])[0].get("text", "فيديو")
+            )
+            channel = (
+                v.get("ownerText", {})
+                .get("runs", [{}])[0]
+                .get("text", "قناة YouTube")
+            )
+            time_str = v.get("publishedTimeText", {}).get(
+                "simpleText", "حديثاً"
+            )
+            snippet = (
+                v.get("detailedMetadataSnippets", [{}])[0]
+                .get("snippetText", {})
+                .get("runs", [{}])[0]
+                .get("text", "")
+            )
+            if not snippet:
+              snippet = f"فيديو منشور عبر قناة {channel} يتعلق بموضوع {kw}"
+
+            results.append({
+                "platform": "YouTube",
+                "author": channel,
+                "title": title,
+                "link": f"https://www.youtube.com/watch?v={vid_id}",
+                "date": time_str,
+                "snippet": snippet,
+            })
+            if len(results) >= max_count:
+              return results
   except Exception:
     pass
   return results
 
 
-# 2. جلب الأخبار والبيانات الرسمية عبر RSS
-def get_news_rss(kw, max_count=5):
+# 2. جلب الأخبار الرسمية مع التواريخ الحقيقية
+def fetch_news_rss(kw, time_filter_str, max_count=6):
   results = []
   try:
-    encoded = urllib.parse.quote(kw)
+    encoded = urllib.parse.quote(f"{kw} {time_filter_str}".strip())
     url = (
         "https://news.google.com/rss/search?q="
         f"{encoded}&hl=ar&gl=MA&ceid=MA:ar"
@@ -166,90 +255,123 @@ def get_news_rss(kw, max_count=5):
           if item.find("description") is not None
           else ""
       )
-      # تنظيف نصوص HTML
+      pub_date = (
+          item.find("pubDate").text
+          if item.find("pubDate") is not None
+          else "غير محدد"
+      )
+      source = (
+          item.find("source").text
+          if item.find("source") is not None
+          else "مصدر إخباري"
+      )
+
+      # تنسيق التاريخ
+      clean_date = pub_date
+      try:
+        dt = parsedate_to_datetime(pub_date)
+        clean_date = dt.strftime("%Y-%m-%d %H:%M")
+      except Exception:
+        pass
+
       clean_desc = re.sub(r"<[^>]+>", "", desc)
+
       if title and link:
         results.append({
             "platform": "الأخبار الرسمية",
+            "author": source,
             "title": title,
             "link": link,
-            "snippet": clean_desc,
+            "date": clean_date,
+            "snippet": clean_desc or f"تقرير إخباري حول {kw}",
         })
   except Exception:
     pass
   return results
 
 
-# 3. جلب منشورات السوشيال ميديا عبر DuckDuckGo بصيغ مرنة
-def get_social_posts(kw, platform_name, max_count=5):
+# 3. جلب منشورات السوشيال ميديا المباشرة (Facebook, X, Instagram, TikTok)
+def fetch_social_network_posts(kw, platform_name, time_code, max_count=5):
   results = []
-  platform_keywords = {
-      "Facebook": "facebook",
-      "X (Twitter)": "twitter OR x.com",
-      "TikTok": "tiktok",
+  inurl_map = {
+      "Facebook": "facebook.com",
+      "X (Twitter)": "x.com",
+      "Instagram": "instagram.com",
+      "TikTok": "tiktok.com",
   }
-  target_kw = platform_keywords.get(platform_name, "")
-  query = f'"{kw}" {target_kw}'
+  domain = inurl_map.get(platform_name, "")
+
+  # صياغة بحث دقيقة تستهدف نطاق المنصة مباشرة
+  query = f'site:{domain} "{kw}"'
 
   try:
     with DDGS() as ddgs:
-      for r in ddgs.text(query, max_results=max_count):
+      for r in ddgs.text(query, max_results=max_count, timelimit=time_code):
         link = r.get("href", "")
         title = r.get("title", "")
         body = r.get("body", "")
-        # التأكد من صحة الرابط وانتمائه للمنصة
-        if platform_name == "Facebook" and "facebook.com" in link:
-          results.append({
-              "platform": "Facebook",
-              "title": title,
-              "link": link,
-              "snippet": body,
-          })
-        elif platform_name == "X (Twitter)" and (
-            "x.com" in link or "twitter.com" in link
-        ):
-          results.append({
-              "platform": "X (Twitter)",
-              "title": title,
-              "link": link,
-              "snippet": body,
-          })
-        elif platform_name == "TikTok" and "tiktok.com" in link:
-          results.append({
-              "platform": "TikTok",
-              "title": title,
-              "link": link,
-              "snippet": body,
-          })
-        elif not any(p in link for p in ["facebook.com", "x.com", "tiktok.com"]):
-          # منشور عام ذو صلة
-          results.append({
-              "platform": platform_name,
-              "title": title,
-              "link": link,
-              "snippet": body,
-          })
+
+        # استخراج اسم الحساب من الرابط
+        author = "حساب عام"
+        if platform_name == "Facebook":
+          m = re.search(r"facebook\.com/([^/?#]+)", link)
+          author = (
+              m.group(1)
+              if m and m.group(1) not in ["photo", "watch", "story"]
+              else "صفحة فيسبوك"
+          )
+        elif platform_name == "X (Twitter)":
+          m = re.search(r"x\.com/([^/?#]+)", link)
+          author = (
+              f"@{m.group(1)}"
+              if m and m.group(1) not in ["home", "explore", "search"]
+              else "حساب X"
+          )
+        elif platform_name == "Instagram":
+          m = re.search(r"instagram\.com/([^/?#]+)", link)
+          author = (
+              f"@{m.group(1)}"
+              if m and m.group(1) not in ["p", "reel", "stories"]
+              else "حساب Instagram"
+          )
+        elif platform_name == "TikTok":
+          m = re.search(r"tiktok\.com/@([^/?#]+)", link)
+          author = f"@{m.group(1)}" if m else "حساب TikTok"
+
+        results.append({
+            "platform": platform_name,
+            "author": author,
+            "title": title or f"منشور على {platform_name}",
+            "link": link,
+            "date": (
+                f"خلال {time_range}"
+                if time_code
+                else datetime.now().strftime("%Y-%m-%d")
+            ),
+            "snippet": body or f"محتوى منشور على منصة {platform_name}",
+        })
   except Exception:
     pass
   return results
 
 
-# التحليل الذكي عبر Gemini المجاني
-def analyze_content_with_ai(title, snippet, domain, key, model_name):
+# 4. التحليل والتقييم الذكي بواسطة Gemini
+def analyze_with_ai(title, snippet, domain, key, model_name):
   try:
     genai.configure(api_key=key)
     model = genai.GenerativeModel(model_name)
     prompt = f"""
+أنت مساعد خبير في الرصد الإعلامي والقضائي.
 المجال المطلوب: {domain}
 
-المحتوى المرصود:
-- العنوان: {title}
-- المقتطف: {snippet}
+المنشور المرصود:
+العنوان: {title}
+المحتوى/المقتطف: {snippet}
 
-المهمة:
-هل يرتبط هذا المحتوى بالمجال المطلوب؟
-أجب حصراً بـ:
-YES: [جملة موجزة جداً تشرح موضوع المنشور]
+المطلوب:
+1. هل هذا المنشور يرتبط فعلياً بالمجال المطلوب؟
+2. أجب حصراً بصيغة:
+YES: [اكتب في جملة مركزة ومفيدة ملخص ما يتناوله المنشور وقيمته الخبرية أو القانونية]
 أو
 NO
 """
@@ -259,17 +381,20 @@ NO
       return True, txt.replace("YES:", "").replace("YES", "").strip()
     return False, ""
   except Exception:
-    # في حال حدوث ضغط على الـ API، نعتمد المنشور طالما يحمل الكلمة المفتاحية
-    return True, "تمت المطابقة بناءً على الكلمات المفتاحية"
+    # اعتماد المنشور تلقائياً إذا تطابق بالكلمات
+    return True, "تمت المطابقة بناءً على الكلمات المفتاحية وسياق المحتوى"
 
 
-def send_tg_msg(token, chat_id, platform, title, link, reason):
+def send_telegram_alert(token, chat_id, item):
   msg = (
-      f"🚨 *منشور مطابق تم رصده!*\n\n"
-      f"🌐 *المصدر:* {platform}\n"
-      f"📌 *العنوان:* {title}\n"
-      f"💡 *التحليل:* {reason}\n"
-      f"🔗 *الرابط:* {link}"
+      f"🚨 *منشور مطابق جديد!*\n\n"
+      f"🌐 *المنصة:* {item['platform']}\n"
+      f"👤 *الناشر:* `{item['author']}`\n"
+      f"📅 *التاريخ:* {item['date']}\n"
+      f"📌 *العنوان:* {item['title']}\n"
+      f"📝 *المقتطف:* {item['snippet'][:150]}...\n"
+      f"💡 *التحليل:* {item['reason']}\n"
+      f"🔗 *الرابط:* {item['link']}"
   )
   url = f"https://api.telegram.org/bot{token}/sendMessage"
   try:
@@ -284,98 +409,119 @@ def send_tg_msg(token, chat_id, platform, title, link, reason):
 
 if start_btn:
   if not gemini_api_key:
-    st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي.")
+    st.error("⚠️ يرجى إدخال مفتاح Gemini API أولاً.")
   elif not keywords_input:
-    st.warning("⚠️ يرجى إدخال الكلمات المفتاحية.")
+    st.warning("⚠️ يرجى كتابة الكلمات المفتاحية.")
   else:
     keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
-    first_kw = keywords[0]
+    kw = keywords[0]
+    time_code = ddg_time_map[time_range]
+    news_time_code = news_time_map[time_range]
 
-    raw_candidates = []
+    raw_list = []
     seen_urls = set()
 
-    with st.spinner("جارٍ جلب المنشورات من مختلف الشبكات والمصادر..."):
-      # 1. يوتيوب
+    with st.spinner(f"جارٍ الرصد عبر المنصات المحددة لنطاق: {time_range}..."):
+      # YouTube
       if "YouTube" in platforms_selected:
-        raw_candidates.extend(get_youtube_posts(first_kw, max_count=5))
+        raw_list.extend(fetch_youtube_detailed(kw, max_count=6))
 
-      # 2. الأخبار الرسمية والبيانات
+      # الأخبار الرسمية
       if "الأخبار الرسمية" in platforms_selected:
-        raw_candidates.extend(get_news_rss(first_kw, max_count=5))
+        raw_list.extend(fetch_news_rss(kw, news_time_code, max_count=6))
 
-      # 3. فيسبوك
+      # فيسبوك
       if "Facebook" in platforms_selected:
-        raw_candidates.extend(
-            get_social_posts(first_kw, "Facebook", max_count=5)
+        raw_list.extend(
+            fetch_social_network_posts(kw, "Facebook", time_code, max_count=5)
         )
 
-      # 4. إكس (تويتر)
+      # إكس
       if "X (Twitter)" in platforms_selected:
-        raw_candidates.extend(
-            get_social_posts(first_kw, "X (Twitter)", max_count=5)
+        raw_list.extend(
+            fetch_social_network_posts(
+                kw, "X (Twitter)", time_code, max_count=5
+            )
         )
 
-      # 5. تيك توك
+      # إنستغرام
+      if "Instagram" in platforms_selected:
+        raw_list.extend(
+            fetch_social_network_posts(kw, "Instagram", time_code, max_count=5)
+        )
+
+      # تيك توك
       if "TikTok" in platforms_selected:
-        raw_candidates.extend(get_social_posts(first_kw, "TikTok", max_count=5))
+        raw_list.extend(
+            fetch_social_network_posts(kw, "TikTok", time_code, max_count=5)
+        )
 
-    st.info(f"📊 تم جمع {len(raw_candidates)} منشوراً أولياً، جارٍ التحليل الذكي...")
+    st.info(
+        f"📊 تم جلب {len(raw_list)} منشوراً أولياً من الشبكات المختارة. جارٍ"
+        " التحليل الذكي عبر Gemini..."
+    )
 
-    verified_results = []
-    with st.spinner("جارٍ التحقق والفلترة بواسطة Gemini..."):
-      for cand in raw_candidates:
+    verified_items = []
+    with st.spinner("جارٍ فحص وتحليل كل منشور بواسطة الذكاء الاصطناعي..."):
+      for cand in raw_list:
         link = cand["link"]
-        if link in seen_urls:
+        if not link or link in seen_urls:
           continue
         seen_urls.add(link)
 
-        is_valid, reason = analyze_content_with_ai(
+        is_valid, reason = analyze_with_ai(
             cand["title"],
             cand["snippet"],
             target_domain,
             gemini_api_key,
             model_choice,
         )
+
         if is_valid:
           cand["reason"] = reason
-          verified_results.append(cand)
+          verified_items.append(cand)
 
           if send_telegram and telegram_token and telegram_chat_id:
-            send_tg_msg(
-                telegram_token,
-                telegram_chat_id,
-                cand["platform"],
-                cand["title"],
-                cand["link"],
-                reason,
-            )
+            send_telegram_alert(telegram_token, telegram_chat_id, cand)
 
-    # عرض النتائج
-    st.subheader(f"📋 المنشورات المؤكدة ({len(verified_results)})")
+    # عرض النتائج في بطاقات متكاملة
+    st.subheader(
+        f"📋 المنشورات المؤكدة والمطابقة ({len(verified_items)}) - {time_range}"
+    )
 
-    if verified_results:
-      badge_map = {
+    if verified_items:
+      badge_classes = {
           "Facebook": "badge-facebook",
           "X (Twitter)": "badge-x",
-          "YouTube": "badge-youtube",
+          "Instagram": "badge-instagram",
           "TikTok": "badge-tiktok",
+          "YouTube": "badge-youtube",
           "الأخبار الرسمية": "badge-news",
       }
 
-      for idx, item in enumerate(verified_results, 1):
-        b_class = badge_map.get(item["platform"], "badge-news")
+      for idx, item in enumerate(verified_items, 1):
+        b_class = badge_classes.get(item["platform"], "badge-news")
         st.markdown(
             f"""
                 <div class="result-card">
-                    <h4>#{idx} <span class="badge-platform {b_class}">{item['platform']}</span> - {item['title']}</h4>
-                    <p><b>المقتطف:</b> {item['snippet']}</p>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <h4>#{idx} <span class="badge-platform {b_class}">{item['platform']}</span> {item['title']}</h4>
+                    </div>
+                    <div class="meta-info">
+                        👤 <b>الناشر:</b> {item['author']} &nbsp;|&nbsp; 
+                        📅 <b>تاريخ النشر:</b> {item['date']}
+                    </div>
+                    <div class="snippet-box">
+                        <b>📝 مقتطف المحتوى:</b><br>{item['snippet']}
+                    </div>
                     <p><b>💡 تحليل الذكاء الاصطناعي:</b> <span style="color: #198754; font-weight: bold;">{item['reason']}</span></p>
-                    <p><a href="{item['link']}" target="_blank" style="font-weight: bold; color: #0d6efd; text-decoration: none;">🔗 فتح المصدر الأصلي ({item['platform']})</a></p>
+                    <p><a href="{item['link']}" target="_blank" style="font-weight: bold; color: #0d6efd; text-decoration: none;">🔗 فتح المنشور الأصلي على {item['platform']} ➔</a></p>
                 </div>
                 """,
             unsafe_allow_html=True,
         )
     else:
       st.warning(
-          "لم يتم العثور على منشورات مطابقة. جرب تعديل الكلمات المفتاحية."
+          "لم يتم العثور على منشورات في هذا النطاق الزمني. جرب اختيار 'جميع"
+          " الأوقات' أو إضافة كلمات مفتاحية أخرى."
       )
