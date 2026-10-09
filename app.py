@@ -7,6 +7,7 @@ import sqlite3
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
+from duckduckgo_search import DDGS
 import google.generativeai as genai
 import requests
 import streamlit as st
@@ -66,6 +67,10 @@ st.markdown(
     }
     .badge-site { background-color: #1e3a8a; }
     .badge-yt { background-color: #dc2626; }
+    .badge-fb { background-color: #1877f2; }
+    .badge-x { background-color: #000000; }
+    .badge-insta { background-color: #e1306c; }
+    .badge-tiktok { background-color: #111111; }
     .meta-line { color: #64748b; font-size: 0.88em; margin: 8px 0; }
     .desc-box {
         background-color: #f8fafc;
@@ -106,29 +111,12 @@ st.markdown(
     }
     .status-pill-ok { background-color: #dcfce7; color: #15803d; border: 1px solid #86efac; }
     .status-pill-err { background-color: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
-    .social-link-btn {
-        display: block;
-        padding: 12px;
-        margin: 5px 0;
-        border-radius: 8px;
-        text-align: center;
-        color: white !important;
-        font-weight: bold;
-        text-decoration: none !important;
-    }
     @media (max-width: 768px) {
         .stApp { padding: 8px !important; }
         .result-card { padding: 14px !important; }
         h1 { font-size: 1.5rem !important; }
-        div[data-baseweb="tab-list"] {
-            overflow-x: auto !important;
-            flex-wrap: nowrap !important;
-        }
-        button[data-baseweb="tab"] {
-            font-size: 0.9rem !important;
-            padding: 8px 12px !important;
-            white-space: nowrap !important;
-        }
+        div[data-baseweb="tab-list"] { overflow-x: auto !important; flex-wrap: nowrap !important; }
+        button[data-baseweb="tab"] { font-size: 0.9rem !important; padding: 8px 12px !important; white-space: nowrap !important; }
     }
     </style>
 """,
@@ -239,20 +227,8 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-  if st.button("🧪 اختبار صلاحية المفتاح"):
-    if not gemini_api_key:
-      st.error("يرجى إدخال المفتاح أولاً.")
-    else:
-      try:
-        genai.configure(api_key=gemini_api_key)
-        m = genai.GenerativeModel(model_choice)
-        res = m.generate_content("اختبار")
-        st.success(f"✅ الاتصال سليم بالنموذج: {model_choice}")
-      except Exception as err:
-        st.error(f"❌ خطأ في الاتصال: {err}")
-
   st.divider()
-  st.header("⏱️ إعدادات الرصد")
+  st.header("⏱️ إعدادات الرصد والجدولة")
   time_range = st.selectbox(
       "النطاق الزمني للنشر:",
       options=[
@@ -261,34 +237,19 @@ with st.sidebar:
           "آخر 30 يوماً (هذا الشهر)",
           "جميع الأوقات",
       ],
-      index=0,
+      index=1,
   )
 
   auto_refresh = st.checkbox("🔄 تفعيل الرصد الدوري التلقائي (كل 15 دقيقة)")
   fetch_limit = st.slider(
-      "الحد الأقصى للأخبار المجلوبة:",
-      min_value=30,
-      max_value=200,
-      value=80,
-      step=10,
+      "الحد الأقصى لكل منصة:", min_value=10, max_value=80, value=30, step=10
   )
   send_telegram = st.checkbox("إرسال تنبيه إلى Telegram فورياً", value=True)
 
-  st.divider()
-  with st.expander("🌐 شبكة المواقع المغربية المشمولة (18+ موقعاً)"):
-    st.caption(
-        "• أخبارنا (Akhbarona)\n• أكادير 24 (Agadir24)\n• كشـ24 (Kech24)\n•"
-        " الأيام 24 (Alayam24)\n• مدار 21 (Madar21)\n• صباح أكادير"
-        " (SabahAgadir)\n• كود (Goud)\n• جريدة الصباح (Assabah)\n• صوت المغرب"
-        " (TheVoice.ma)\n• ناظورسيتي (NadorCity)\n• هسبريس (Hespress)\n• العمق"
-        " المغربي (Al3omk)\n• اليوم 24 (Alyaoum24)\n• زنقة 20 (Rue20)\n• Le360"
-        " المغرب\n• برلمان.كوم (Barlamane)\n• طنجة 24 (Tanja24)"
-    )
-
 st.title("⚖️ المرصد الوطني للعدالة والقضاء بالمغرب")
 st.write(
-    "رصد شامل لكافة ما يُنشر في **الصحف والمواقع المغربية الوطنية والجهوية**"
-    " وقنوات العدالة الرسمية."
+    "رصد شامل لمنشورات **الصحف والمواقع، فيسبوك، إكس (تويتر)، إنستغرام، تيك"
+    " توك، ويوتيوب** مع التحليل الذكي الموجه للمغرب."
 )
 
 col1, col2 = st.columns(2)
@@ -299,138 +260,46 @@ with col1:
   )
 with col2:
   keywords_input = st.text_input(
-      "🔑 كلمات البحث الإضافية (اختياري):",
-      value="المجلس الأعلى للسلطة القضائية, محكمة النقض",
+      "🔑 استعلام البحث الرئيسي:",
+      value="المجلس الأعلى للسلطة القضائية, القضاء المغربي, محكمة النقض",
   )
 
-start_btn = st.button("🚀 تشغيل الرصد الشامل والتحديث الآن", type="primary")
+start_btn = st.button("🚀 تشغيل الرصد الشامل لكافة المنصات الآن", type="primary")
 
 
-# 1. محرك التغطيات المباشرة للمواقع المغربية (خلاصات RSS المباشرة + الاستعلامات المخصصة)
-def fetch_moroccan_sites_content(time_mode, max_count=80):
+# 1. محرك المواقع والصحف المغربية
+def fetch_moroccan_sites(time_mode, max_count=40):
   results = []
-  seen_links = set()
-
+  seen = set()
   time_hours = 999999
-  time_operator = ""
+  time_op = ""
   if time_mode == "آخر 24 ساعة (اليوم فقط)":
     time_hours = 30
-    time_operator = "when:1d"
+    time_op = "when:1d"
   elif time_mode == "آخر 7 أيام (هذا الأسبوع)":
     time_hours = 180
-    time_operator = "when:7d"
+    time_op = "when:7d"
   elif time_mode == "آخر 30 يوماً (هذا الشهر)":
     time_hours = 750
-    time_operator = "when:30d"
+    time_op = "when:30d"
 
-  # قائمة تغذيات RSS المباشرة الشاملة للمواقع المطلوبة
-  moroccan_direct_feeds = [
-      ("أخبارنا المغربية (Akhbarona)", "https://www.akhbarona.com/feed"),
-      ("أكادير 24 (Agadir24)", "https://agadir24.info/feed"),
-      ("كشـ24 (Kech24)", "https://kech24.com/feed"),
-      ("الأيام 24 (Alayam24)", "https://www.alayam24.com/feed"),
-      ("مدار 21 (Madar21)", "https://madar21.com/feed"),
-      ("صباح أكادير (SabahAgadir)", "https://sabahagadir.ma/feed"),
-      ("كود (Goud)", "https://www.goud.ma/feed"),
-      ("جريدة الصباح (Assabah)", "https://assabah.ma/feed"),
-      ("صوت المغرب (TheVoice.ma)", "https://thevoice.ma/feed"),
-      ("ناظورسيتي (NadorCity)", "https://www.nadorcity.com/feed"),
-      ("هسبريس مجتمع وقضاء", "https://www.hespress.com/societe/feed"),
-      ("هسبريس العامة", "https://www.hespress.com/feed"),
-      ("العمق المغربي", "https://al3omk.com/feed"),
-      ("اليوم 24", "https://alyaoum24.com/feed"),
-      ("زنقة 20 (Rue20)", "https://rue20.com/feed"),
-      ("Le360 المغرب", "https://ar.le360.ma/rss/"),
-      ("برلمان.كوم", "https://www.barlamane.com/feed/"),
-      ("طنجة 24", "https://tanja24.com/feed/"),
-  ]
-
-  # استعلام مخصص يستهدف أسماء النطاقات المحددة بالاسم
-  target_sites_query = (
-      "(site:kech24.com OR site:agadir24.info OR site:madar21.com OR"
-      " site:alayam24.com OR site:assabah.ma OR site:thevoice.ma OR"
-      " site:nadorcity.com OR site:goud.ma OR site:sabahagadir.ma OR"
-      " site:akhbarona.com) (قضاء OR محكمة OR محاكمة OR عدالة OR 'وكيل الملك')"
-      f" {time_operator}".strip()
-  )
-
-  general_morocco_queries = [
-      target_sites_query,
-      f"المجلس الأعلى للسلطة القضائية {time_operator}".strip(),
-      f"القضاء المغربي OR المحاكم المغربية {time_operator}".strip(),
-      f"وزارة العدل المغربية OR النيابة العامة {time_operator}".strip(),
-      f"محكمة النقض المغرب {time_operator}".strip(),
-      f"وكيل الملك OR قاضي التحقيق المغرب {time_operator}".strip(),
-      f"هيئة المحامين بالمغرب {time_operator}".strip(),
-      f"محاكمة OR حكم قضائي المغرب {time_operator}".strip(),
+  queries = [
+      f"المجلس الأعلى للسلطة القضائية {time_op}".strip(),
+      f"القضاء المغربي OR المحاكم المغربية {time_op}".strip(),
+      f"وزارة العدل المغربية OR النيابة العامة {time_op}".strip(),
+      f"محكمة النقض المغرب {time_op}".strip(),
+      (
+          "(site:kech24.com OR site:agadir24.info OR site:madar21.com OR"
+          " site:alayam24.com OR site:assabah.ma OR site:thevoice.ma OR"
+          " site:nadorcity.com OR site:goud.ma OR site:akhbarona.com) (قضاء OR"
+          f" محكمة OR محاكمة) {time_op}".strip()
+      ),
   ]
 
   now = datetime.now(timezone.utc)
-  headers = {
-      "User-Agent": (
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-      )
-  }
+  headers = {"User-Agent": "Mozilla/5.0"}
 
-  # أولاً: فحص خلاصات المواقع المباشرة
-  for name, feed_url in moroccan_direct_feeds:
-    if len(results) >= max_count:
-      break
-    try:
-      resp = requests.get(feed_url, headers=headers, timeout=6)
-      root = ET.fromstring(resp.content)
-      for item in root.findall(".//item"):
-        link = item.find("link").text if item.find("link") is not None else ""
-        if not link or link in seen_links:
-          continue
-        title = (
-            item.find("title").text if item.find("title") is not None else ""
-        )
-        desc = (
-            item.find("description").text
-            if item.find("description") is not None
-            else ""
-        )
-        pdate = (
-            item.find("pubDate").text
-            if item.find("pubDate") is not None
-            else ""
-        )
-
-        ts = 0.0
-        disp_date = pdate
-        is_valid = True
-        if pdate:
-          try:
-            dt = parsedate_to_datetime(pdate)
-            ts = dt.timestamp()
-            disp_date = dt.strftime("%Y-%m-%d %H:%M")
-            if (now - dt).total_seconds() / 3600.0 > time_hours:
-              is_valid = False
-          except Exception:
-            pass
-
-        if not is_valid:
-          continue
-
-        clean_d = re.sub(r"<[^>]+>", "", desc)
-        results.append({
-            "platform": "مواقع وصحف",
-            "source": name,
-            "title": title,
-            "link": link,
-            "date": disp_date,
-            "timestamp": ts,
-            "snippet": clean_d,
-        })
-        seen_links.add(link)
-        if len(results) >= max_count:
-          break
-    except Exception:
-      pass
-
-  # ثانياً: فحص استعلامات Google News المغربية
-  for q in general_morocco_queries:
+  for q in queries:
     if len(results) >= max_count:
       break
     try:
@@ -442,7 +311,7 @@ def fetch_moroccan_sites_content(time_mode, max_count=80):
       root = ET.fromstring(resp.content)
       for item in root.findall(".//item"):
         link = item.find("link").text if item.find("link") is not None else ""
-        if not link or link in seen_links:
+        if not link or link in seen:
           continue
         title = (
             item.find("title").text if item.find("title") is not None else ""
@@ -478,7 +347,6 @@ def fetch_moroccan_sites_content(time_mode, max_count=80):
 
         if not is_valid:
           continue
-
         clean_d = re.sub(r"<[^>]+>", "", desc)
         results.append({
             "platform": "مواقع وصحف",
@@ -489,22 +357,22 @@ def fetch_moroccan_sites_content(time_mode, max_count=80):
             "timestamp": ts,
             "snippet": clean_d,
         })
-        seen_links.add(link)
+        seen.add(link)
         if len(results) >= max_count:
           break
     except Exception:
       pass
-
   return results
 
 
-# 2. محرك جلب يوتيوب المغربي المفرز زمنياً
-def fetch_moroccan_youtube(time_mode, max_count=10):
+# 2. محرك يوتيوب مع فلترة إيجابية صارمة (يمنع الفيديوهات القديمة منعاً باتاً)
+def fetch_youtube_strictly_recent(time_mode, max_count=15):
   results = []
   if time_mode == "جميع الأوقات":
     return results
+
   try:
-    url = "https://www.youtube.com/results?search_query=القضاء+المغربي+المحكمة+المجلس+الاعلى+للسلطة+القضائية&sp=CAI%253D"
+    url = "https://www.youtube.com/results?search_query=القضاء+المغربي+المجلس+الاعلى+للسلطة+القضائية&sp=CAI%253D"
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -531,15 +399,68 @@ def fetch_moroccan_youtube(time_mode, max_count=10):
                 "simpleText", ""
             ).lower()
 
-            if any(
-                w in time_str
-                for w in ["سنة", "عام", "أشهر", "شهور", "شهر", "year", "month"]
-            ):
+            # الفلترة الإيجابية الصارمة:
+            # استبعاد قاطع لأي صيغ للسنوات والشهور والأسابيع (بالمفرد والمثنى والجمع بالعربية والإنجليزية)
+            forbidden_words = [
+                "سنة",
+                "سنتين",
+                "سنوات",
+                "عام",
+                "عامين",
+                "أعوام",
+                "شهر",
+                "شهرين",
+                "أشهر",
+                "شهور",
+                "أسبوع",
+                "أسبوعين",
+                "أسابيع",
+                "year",
+                "years",
+                "month",
+                "months",
+                "week",
+                "weeks",
+            ]
+            if any(fw in time_str for fw in forbidden_words):
               continue
-            if time_mode == "آخر 24 ساعة (اليوم فقط)" and not any(
-                w in time_str for w in ["ساعة", "ساعات", "دقيقة", "دقائق"]
-            ):
-              continue
+
+            # في آخر 24 ساعة: لا نقبل إلا الساعات والدقائق فقط
+            if time_mode == "آخر 24 ساعة (اليوم فقط)":
+              if not any(
+                  w in time_str
+                  for w in [
+                      "دقيقة",
+                      "دقائق",
+                      "ساعة",
+                      "ساعات",
+                      "minute",
+                      "hour",
+                      "hours",
+                  ]
+              ):
+                continue
+
+            # في آخر 7 أيام: نقبل فقط الساعات، الدقائق، والأيام من 1 إلى 7
+            if time_mode == "آخر 7 أيام (هذا الأسبوع)":
+              valid_week = any(
+                  w in time_str
+                  for w in [
+                      "دقيقة",
+                      "دقائق",
+                      "ساعة",
+                      "ساعات",
+                      "يوم",
+                      "يومان",
+                      "أيام",
+                      "أمس",
+                      "day",
+                      "days",
+                      "yesterday",
+                  ]
+              )
+              if not valid_week:
+                continue
 
             vid_id = v.get("videoId")
             title = (
@@ -548,7 +469,7 @@ def fetch_moroccan_youtube(time_mode, max_count=10):
             channel = (
                 v.get("ownerText", {})
                 .get("runs", [{}])[0]
-                .get("text", "قناة مغربية")
+                .get("text", "قناة يوتيوب")
             )
             snippet = (
                 v.get("detailedMetadataSnippets", [{}])[0]
@@ -562,7 +483,7 @@ def fetch_moroccan_youtube(time_mode, max_count=10):
                 "source": f"YouTube: {channel}",
                 "title": title,
                 "link": f"https://www.youtube.com/watch?v={vid_id}",
-                "date": time_str or "حديثاً",
+                "date": time_str,
                 "timestamp": datetime.now().timestamp(),
                 "snippet": snippet or f"تغطية مصورة عبر قناة {channel}",
             })
@@ -573,8 +494,154 @@ def fetch_moroccan_youtube(time_mode, max_count=10):
   return results
 
 
-# 3. التحليل الصارم بـ Gemini (مغربي + قضائي حصراً)
-def analyze_with_gemini_strictly(title, snippet, key, model_name):
+# 3. محرك جلب منشورات فيسبوك (Facebook Posts Engine)
+def fetch_facebook_posts(time_mode, max_count=15):
+  results = []
+  time_limit = (
+      "d"
+      if "24 ساعة" in time_mode
+      else ("w" if "7 أيام" in time_mode else None)
+  )
+  queries = [
+      'site:facebook.com "المجلس الأعلى للسلطة القضائية"',
+      'site:facebook.com "القضاء المغربي" OR "محكمة النقض المغرب"',
+      'site:facebook.com "وكيل الملك" المغرب',
+  ]
+  seen = set()
+  try:
+    with DDGS() as ddgs:
+      for q in queries:
+        if len(results) >= max_count:
+          break
+        for r in ddgs.text(q, max_results=max_count, timelimit=time_limit):
+          link = r.get("href", "")
+          if not link or "facebook.com" not in link or link in seen:
+            continue
+          seen.add(link)
+
+          title = r.get("title", "")
+          body = r.get("body", "")
+
+          # استخراج اسم الصفحة أو الناشر
+          author = "صفحة فيسبوك مغربية"
+          m = re.search(r"facebook\.com/([^/?#]+)", link)
+          if m and m.group(1) not in ["photo", "watch", "story", "share"]:
+            author = f"صفحة: {m.group(1)}"
+
+          results.append({
+              "platform": "Facebook",
+              "source": author,
+              "title": title or "منشور على فيسبوك حول القضاء المغربي",
+              "link": link,
+              "date": f"خلال {time_mode}",
+              "timestamp": datetime.now().timestamp(),
+              "snippet": body or "منشور متداول على منصة فيسبوك بالمغرب",
+          })
+          if len(results) >= max_count:
+            break
+        time.sleep(0.5)
+  except Exception:
+    pass
+  return results
+
+
+# 4. محرك جلب تغريدات إكس (Twitter/X Engine)
+def fetch_twitter_posts(time_mode, max_count=15):
+  results = []
+  time_limit = (
+      "d"
+      if "24 ساعة" in time_mode
+      else ("w" if "7 أيام" in time_mode else None)
+  )
+  queries = [
+      '(site:x.com OR site:twitter.com) "المجلس الأعلى للسلطة القضائية"',
+      '(site:x.com OR site:twitter.com) "القضاء المغربي"',
+  ]
+  seen = set()
+  try:
+    with DDGS() as ddgs:
+      for q in queries:
+        if len(results) >= max_count:
+          break
+        for r in ddgs.text(q, max_results=max_count, timelimit=time_limit):
+          link = r.get("href", "")
+          if (
+              not link
+              or not any(d in link for d in ["x.com", "twitter.com"])
+              or link in seen
+          ):
+            continue
+          seen.add(link)
+
+          title = r.get("title", "")
+          body = r.get("body", "")
+
+          author = "تغريدة على X"
+          m = re.search(r"(?:x\.com|twitter\.com)/([^/?#]+)", link)
+          if m and m.group(1) not in ["home", "explore", "search"]:
+            author = f"@{m.group(1)}"
+
+          results.append({
+              "platform": "X (Twitter)",
+              "source": author,
+              "title": title or "تغريدة على منصة X حول القضاء المغربي",
+              "link": link,
+              "date": f"خلال {time_mode}",
+              "timestamp": datetime.now().timestamp(),
+              "snippet": body or "تغريدة متداولة على منصة X بالمغرب",
+          })
+          if len(results) >= max_count:
+            break
+        time.sleep(0.5)
+  except Exception:
+    pass
+  return results
+
+
+# 5. محرك جلب تيك توك وإنستغرام (TikTok & Instagram Engine)
+def fetch_tiktok_and_insta(time_mode, max_count=15):
+  results = []
+  seen = set()
+  queries = [
+      (
+          "TikTok",
+          'site:tiktok.com "المجلس الأعلى للسلطة القضائية" OR "القضاء المغربي"',
+      ),
+      (
+          "Instagram",
+          'site:instagram.com "المجلس الأعلى للسلطة القضائية" OR "القضاء'
+          ' المغربي"',
+      ),
+  ]
+  try:
+    with DDGS() as ddgs:
+      for plat, q in queries:
+        for r in ddgs.text(q, max_results=max_count // 2):
+          link = r.get("href", "")
+          if not link or link in seen:
+            continue
+          seen.add(link)
+
+          title = r.get("title", "")
+          body = r.get("body", "")
+
+          results.append({
+              "platform": plat,
+              "source": f"حساب {plat}",
+              "title": title or f"محتوى على {plat} حول القضاء المغربي",
+              "link": link,
+              "date": f"خلال {time_mode}",
+              "timestamp": datetime.now().timestamp(),
+              "snippet": body or f"مقطع متداول على منصة {plat}",
+          })
+        time.sleep(0.5)
+  except Exception:
+    pass
+  return results
+
+
+# 6. التحليل الصارم بـ Gemini
+def analyze_strictly_with_gemini(title, snippet, key, model_name):
   negative_countries = [
       "مصر",
       "الجزائر",
@@ -600,16 +667,17 @@ def analyze_with_gemini_strictly(title, snippet, key, model_name):
     prompt = f"""
 أنت قاضٍ ومستشار قانوني ورئيس تحرير لمرصد متخصص حصرياً في شؤون القضاء والعدالة بالمملكة المغربية.
 
-بيانات المادة:
+المحتوى المرصود:
 العنوان: {title}
 المقتطف: {snippet}
 
-المهمة - أجب بناءً على شرطين حاسمين معاً:
-1. هل هذا الخبر يخص المملكة المغربية حصراً؟ (إذا كان خبراً دولياً أو أجنبياً أجب بـ NO).
-2. هل يتعلق مباشرة أو ضمناً بقطاع العدالة، القضاء، المحاكم، النيابة العامة، المجلس الأعلى للسلطة القضائية، القضاة، المحامين، أو قضايا وتحقيقات بمحاكم المغرب؟ (إذا كان خبراً سياسياً عاماً أو رياضياً أو حوادث عادية بدون بعد قضائي، أجب بـ NO).
+المهمة:
+تحقق بناءً على شرطين حاسمين معاً:
+1. هل هذا المحتوى يخص المملكة المغربية حصراً؟ (إذا كان دولياً أو أجنبياً أجب بـ NO).
+2. هل يتعلق مباشرة أو ضمناً بقطاع العدالة، القضاء، المحاكم، النيابة العامة، المجلس الأعلى للسلطة القضائية، القضاة، المحامين، أو قضايا وتحقيقات بمحاكم المغرب؟ (إذا كان خبراً عاماً أو سياسياً أو حوادث عادية بدون بعد قضائي، أجب بـ NO).
 
-إذا تطابق الشرطان معاً، أجب حصراً بـ:
-YES: [جملة مركزة تلخص الجانب القضائي والقانوني المغربي للخبر]
+إذا تطابق الشرطان، أجب بـ:
+YES: [جملة مركزة تلخص الجانب القضائي والقانوني المغربي للمحتوى]
 أو
 NO
 """
@@ -628,9 +696,6 @@ NO
         "فاس",
         "مراكش",
         "طنجة",
-        "سلا",
-        "مكناس",
-        "وجدة",
         "أكادير",
         "الناظور",
         "تطوان",
@@ -645,36 +710,22 @@ NO
         "وكيل الملك",
         "محام",
         "قاضي",
-        "استئناف",
-        "نقض",
         "محاكمة",
-        "حكم قضائي",
         "وزارة العدل",
     ]
-    is_morocco = any(
-        k in f"{title} {snippet}" for k in morocco_keywords
-    ) or any(
-        k in title
-        for k in [
-            "المجلس الأعلى للسلطة القضائية",
-            "نادي قضاة",
-            "كشـ24",
-            "أكادير 24",
-            "أخبارنا",
-            "ناظورسيتي",
-        ]
-    )
+    is_morocco = any(k in f"{title} {snippet}" for k in morocco_keywords)
     is_justice = any(k in f"{title} {snippet}" for k in justice_keywords)
     if is_morocco and is_justice:
-      return True, "تم التحقق من صلة الخبر بالقضاء المغربي"
+      return True, "تم التحقق من صلة المحتوى بالقضاء المغربي"
     return False, ""
 
 
 def send_tg_notification(token, chat_id, item):
   msg = (
       f"⚖️ *مرصد القضاء المغربي | خبر مطابق*\n\n"
+      f"🌐 *المنصة:* {item['platform']}\n"
       f"📰 *المصدر:* {item['source']}\n"
-      f"📅 *تاريخ النشر:* {item['date']}\n"
+      f"📅 *التاريخ:* {item['date']}\n"
       f"📌 *العنوان:* {item['title']}\n"
       f"💡 *التحليل:* {item['ai_analysis']}\n"
       f"🔗 *الرابط:* {item['link']}"
@@ -689,11 +740,17 @@ def send_tg_notification(token, chat_id, item):
     pass
 
 
-def execute_monitoring():
-  st.toast("🔍 جارٍ مسح الصحف المغربية المحددة وقنوات القضاء...")
+# تنفيذ الرصد الشامل عبر كافة المنصات
+def execute_full_monitoring():
+  st.toast("🔍 جارٍ مسح الصحف، فيسبوك، إكس، تيك توك، وإنستغرام...")
   raw_items = []
-  raw_items.extend(fetch_moroccan_sites_content(time_range, max_count=80))
-  raw_items.extend(fetch_moroccan_youtube(time_range, max_count=10))
+
+  # جلب من كافة المصادر
+  raw_items.extend(fetch_moroccan_sites(time_range, max_count=fetch_limit))
+  raw_items.extend(fetch_youtube_strictly_recent(time_range, max_count=15))
+  raw_items.extend(fetch_facebook_posts(time_range, max_count=15))
+  raw_items.extend(fetch_twitter_posts(time_range, max_count=15))
+  raw_items.extend(fetch_tiktok_and_insta(time_range, max_count=15))
 
   conn = sqlite3.connect("morocco_justice_hub.db")
   c = conn.cursor()
@@ -704,7 +761,7 @@ def execute_monitoring():
     if c.fetchone():
       continue
 
-    is_valid, reason = analyze_with_gemini_strictly(
+    is_valid, reason = analyze_strictly_with_gemini(
         item["title"], item["snippet"], gemini_api_key, model_choice
     )
     if is_valid:
@@ -740,178 +797,105 @@ if start_btn:
     st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي أولاً.")
   else:
     save_config(gemini_api_key, telegram_token, telegram_chat_id)
-    with st.spinner("جارٍ فحص المواقع المغربية ومطابقة المحتوى بذكاء..."):
-      added, total_scanned = execute_monitoring()
+    with st.spinner("جارٍ فحص المنصات ومطابقة المحتوى بذكاء..."):
+      added, total_scanned = execute_full_monitoring()
       st.success(
-          f"✅ اكتمل الفحص! تم فحص {total_scanned} مادة، وإضافة {added} خبراً"
-          f" قضائياً جديداً لنطاق ({time_range})."
+          f"✅ اكتمل الفحص! تم فحص {total_scanned} مادة عبر مختلف المنصات،"
+          f" وإضافة {added} مادة قضائية جديدة لنطاق ({time_range})."
       )
 
-# واجهة العرض
+# واجهة العرض والتبويبات
 conn = sqlite3.connect("morocco_justice_hub.db")
 c = conn.cursor()
 c.execute(
     "SELECT platform, source, title, link, date_published, snippet,"
     " ai_analysis, fetched_at FROM items ORDER BY pub_timestamp DESC,"
-    " fetched_at DESC LIMIT 200"
+    " fetched_at DESC LIMIT 250"
 )
 all_records = c.fetchall()
 conn.close()
 
 news_items = [r for r in all_records if r[0] == "مواقع وصحف"]
 yt_items = [r for r in all_records if r[0] == "YouTube"]
+fb_items = [r for r in all_records if r[0] == "Facebook"]
+x_items = [r for r in all_records if r[0] == "X (Twitter)"]
+insta_tiktok_items = [r for r in all_records if r[0] in ["Instagram", "TikTok"]]
 
-tab_news, tab_yt, tab_fb, tab_x, tab_insta, tab_stats = st.tabs([
-    f"📰 الصحف والمواقع المغربية ({len(news_items)})",
+tab_news, tab_fb, tab_x, tab_yt, tab_insta, tab_stats = st.tabs([
+    f"📰 الصحف والمواقع ({len(news_items)})",
+    f"🟦 فيسبوك ({len(fb_items)})",
+    f"⬛ منصة إكس ({len(x_items)})",
     f"📺 يوتيوب ({len(yt_items)})",
-    "🟦 فيسبوك (Facebook)",
-    "⬛ منصة إكس (Twitter)",
-    "🟪 إنستغرام وتيك توك",
-    "📊 إحصائيات المرصد والمصادر",
+    f"🟪 إنستغرام وتيك توك ({len(insta_tiktok_items)})",
+    "📊 إحصائيات المرصد",
 ])
+
+
+def render_cards(items_list, badge_class, btn_text):
+  if items_list:
+    for idx, row in enumerate(items_list, 1):
+      plat, src, title, link, d_pub, snip, ai_note, f_at = row
+      st.markdown(
+          f"""
+            <div class="result-card">
+                <h4>#{idx} <span class="badge {badge_class}">{plat}</span> {title}</h4>
+                <div class="meta-line">
+                    👤 <b>الناشر / الحساب:</b> {src} &nbsp;|&nbsp; 
+                    📅 <b>تاريخ النشر:</b> <span style="font-weight: bold; color:#1e3a8a;">{d_pub}</span> &nbsp;|&nbsp; 
+                    ⏱️ <b>وقت الرصد:</b> {f_at}
+                </div>
+                <div class="desc-box">
+                    <b>📝 مقتطف المحتوى:</b><br>{snip}
+                </div>
+                <div class="ai-box">
+                    <b>💡 التقييم القضائي (Gemini):</b> {ai_note}
+                </div>
+                <p><a href="{link}" target="_blank" class="action-btn">🔗 {btn_text} ➔</a></p>
+            </div>
+            """,
+          unsafe_allow_html=True,
+      )
+  else:
+    st.info("لا توجد منشورات مسجلة في هذا التبويب حالياً لهذا النطاق الزمني.")
+
 
 with tab_news:
   st.subheader(
       "📰 مقالات وأخبار المواقع والصحف المغربية (مرتبة من الأحدث إلى الأقدم)"
   )
-  if news_items:
-    for idx, row in enumerate(news_items, 1):
-      _, src, title, link, d_pub, snip, ai_note, f_at = row
-      st.markdown(
-          f"""
-            <div class="result-card">
-                <h4>#{idx} <span class="badge badge-site">{src}</span> {title}</h4>
-                <div class="meta-line">
-                    📅 <b>تاريخ النشر:</b> <span style="color: #1e3a8a; font-weight: bold;">{d_pub}</span> &nbsp;|&nbsp; 
-                    ⏱️ <b>وقت الرصد:</b> {f_at}
-                </div>
-                <div class="desc-box">
-                    <b>📝 مقتطف المقال:</b><br>{snip}
-                </div>
-                <div class="ai-box">
-                    <b>💡 التقييم القضائي (Gemini):</b> {ai_note}
-                </div>
-                <p><a href="{link}" target="_blank" class="action-btn">🔗 قراءة المقال بالكامل من المصدر الأصلي ➔</a></p>
-            </div>
-            """,
-          unsafe_allow_html=True,
-      )
-  else:
-    st.info(
-        "لا توجد مقالات مسجلة حالياً. اضغط على زر 'تشغيل الرصد الشامل والتحديث"
-        " الآن'."
-    )
+  render_cards(
+      news_items, "badge-site", "قراءة المقال بالكامل من المصدر الأصلي"
+  )
+
+with tab_fb:
+  st.subheader("🟦 منشورات وتفاعلات فيسبوك (Facebook)")
+  render_cards(fb_items, "badge-fb", "فتح المنشور الأصلي على فيسبوك")
+
+with tab_x:
+  st.subheader("⬛ تغريدات منصة X (Twitter)")
+  render_cards(x_items, "badge-x", "فتح التغريدة على منصة X")
 
 with tab_yt:
   st.subheader("📺 الفيديوهات والتغطيات القضائية الحديثة (YouTube)")
-  if yt_items:
-    for idx, row in enumerate(yt_items, 1):
-      _, src, title, link, d_pub, snip, ai_note, f_at = row
-      st.markdown(
-          f"""
-            <div class="result-card">
-                <h4>#{idx} <span class="badge badge-yt">YouTube</span> {title}</h4>
-                <div class="meta-line">
-                    👤 <b>القناة:</b> {src.replace('YouTube: ', '')} &nbsp;|&nbsp; 
-                    📅 <b>تاريخ النشر:</b> <span style="color: #dc2626; font-weight: bold;">{d_pub}</span>
-                </div>
-                <div class="desc-box">
-                    <b>📝 ملخص الفيديو:</b><br>{snip}
-                </div>
-                <div class="ai-box">
-                    <b>💡 التحليل القضائي:</b> {ai_note}
-                </div>
-                <p><a href="{link}" target="_blank" class="action-btn" style="background-color: #dc2626;">▶️ مشاهدة الفيديو على YouTube ➔</a></p>
-            </div>
-            """,
-          unsafe_allow_html=True,
-      )
-  else:
-    st.info("لا توجد مقاطع يوتيوب حديثة مسجلة في هذا النطاق الزمني.")
-
-with tab_fb:
-  st.subheader("🟦 رصد منشورات وتفاعلات فيسبوك (Facebook)")
-  fb_kw = urllib.parse.quote(
-      "المجلس الأعلى للسلطة القضائية OR القضاء المغربي"
-  )
-  st.markdown(
-      f"""
-    <div style="background-color:#f0f2f5; padding:20px; border-radius:10px; margin-bottom:15px;">
-        <h4>🔍 روابط الاستعلام الحي اللحظي على فيسبوك المغرب:</h4>
-        <a href="https://www.facebook.com/search/posts/?q={fb_kw}" target="_blank" class="social-link-btn" style="background-color: #1877f2;">
-            🔎 فتح أحدث منشورات فيسبوك حول القضاء والعدالة بالمغرب (مباشر)
-        </a>
-    </div>
-    """,
-      unsafe_allow_html=True,
-  )
-
-with tab_x:
-  st.subheader("⬛ رصد التغريدات اللحظية على منصة X (Twitter)")
-  x_kw = urllib.parse.quote("القضاء المغربي OR المحاكم المغربية")
-  st.markdown(
-      f"""
-    <div style="background-color:#f8fafc; padding:20px; border-radius:10px; border:1px solid #e2e8f0;">
-        <h4>⚡ بحث التغريدات اللحظي (Live Feed):</h4>
-        <a href="https://x.com/search?q={x_kw}&f=live" target="_blank" class="social-link-btn" style="background-color: #000000;">
-            🐦 استعراض أحدث التغريدات اللحظية حول القضاء المغربي
-        </a>
-    </div>
-    """,
-      unsafe_allow_html=True,
-  )
+  render_cards(yt_items, "badge-yt", "مشاهدة الفيديو على YouTube")
 
 with tab_insta:
-  st.subheader("🟪 إنستغرام وتيك توك")
-  c_in1, c_in2 = st.columns(2)
-  with c_in1:
-    st.markdown(
-        f"""
-        <div style="background-color:#fdf2f8; padding:15px; border-radius:10px; border:1px solid #fbcfe8;">
-            <h4>📸 Instagram</h4>
-            <a href="https://www.instagram.com/explore/tags/{urllib.parse.quote('القضاء_المغربي')}/" target="_blank" class="social-link-btn" style="background-color: #e1306c;">
-                وسم #القضاء_المغربي
-            </a>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-  with c_in2:
-    st.markdown(
-        f"""
-        <div style="background-color:#f1f5f9; padding:15px; border-radius:10px; border:1px solid #cbd5e1;">
-            <h4>🎵 TikTok</h4>
-            <a href="https://www.tiktok.com/search?q={urllib.parse.quote('القضاء المغربي')}" target="_blank" class="social-link-btn" style="background-color: #111111;">
-                مقاطع تيك توك: القضاء المغربي
-            </a>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+  st.subheader("🟪 مقاطع إنستغرام وتيك توك (Instagram & TikTok)")
+  render_cards(
+      insta_tiktok_items, "badge-insta", "مشاهدة المحتوى على المنصة الأصلية"
+  )
 
 with tab_stats:
-  st.subheader("📊 إحصائيات المرصد والمصادر المغطاة")
-  col_m1, col_m2, col_m3 = st.columns(3)
-  with col_m1:
+  st.subheader("📊 إحصائيات المرصد وتوزيع المواد عبر المنصات")
+  c1, c2, c3, c4 = st.columns(4)
+  with c1:
     st.metric("إجمالي المواد المرصودة", len(all_records))
-  with col_m2:
-    st.metric("مقالات الصحف والمواقع", len(news_items))
-  with col_m3:
-    st.metric("فيديوهات يوتيوب", len(yt_items))
-
-  if all_records:
-    st.divider()
-    st.write("📈 **توزيع الأخبار حسب المصادر والمواقع المغربية:**")
-    source_counts = {}
-    for r in all_records:
-      s = r[1]
-      source_counts[s] = source_counts.get(s, 0) + 1
-
-    sorted_sources = sorted(
-        source_counts.items(), key=lambda x: x[1], reverse=True
-    )
-    for s_name, count in sorted_sources:
-      st.write(f"- **{s_name}**: {count} مقالاً مسجلاً")
+  with c2:
+    st.metric("الصحف والمواقع", len(news_items))
+  with c3:
+    st.metric("فيسبوك و X", len(fb_items) + len(x_items))
+  with c4:
+    st.metric("يوتيوب والميديا", len(yt_items) + len(insta_tiktok_items))
 
 if auto_refresh:
   time.sleep(900)
