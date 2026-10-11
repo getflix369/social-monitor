@@ -123,44 +123,48 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-CONFIG_FILE = "credentials.json"
+# 1. جلب المفاتيح مع إعطاء الأولوية القصوى لخزنة Streamlit Secrets الدائمة
+ARCHIVE_JSON_FILE = "articles_archive.json"
 
 
-def load_config():
-  cfg = {
-      "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
-      "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
-      "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
-  }
-  if os.path.exists(CONFIG_FILE):
-    try:
-      with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-        cfg.update(json.load(f))
-    except Exception:
-      pass
-  return cfg
+def get_credentials():
+  # محاولة القراءة من أسرار Streamlit أولاً
+  gemini_k = ""
+  tg_tok = ""
+  tg_ch = ""
 
-
-def save_config(gemini_k, tg_tok, tg_ch):
   try:
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-      json.dump(
-          {
-              "gemini_api_key": gemini_k.strip(),
-              "telegram_bot_token": tg_tok.strip(),
-              "telegram_chat_id": tg_ch.strip(),
-          },
-          f,
-          ensure_ascii=False,
-          indent=2,
-      )
+    gemini_k = st.secrets.get("GEMINI_API_KEY", "")
+    tg_tok = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+    tg_ch = st.secrets.get("TELEGRAM_CHAT_ID", "")
   except Exception:
     pass
 
+  # بدائل البيئة أو الملف المحلي إن وجدت
+  if not gemini_k:
+    gemini_k = os.getenv("GEMINI_API_KEY", "")
+  if not tg_tok:
+    tg_tok = os.getenv("TELEGRAM_BOT_TOKEN", "")
+  if not tg_ch:
+    tg_ch = os.getenv("TELEGRAM_CHAT_ID", "")
 
-saved_cfg = load_config()
+  if os.path.exists("credentials.json"):
+    try:
+      with open("credentials.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+        gemini_k = gemini_k or data.get("gemini_api_key", "")
+        tg_tok = tg_tok or data.get("telegram_bot_token", "")
+        tg_ch = tg_ch or data.get("telegram_chat_id", "")
+    except Exception:
+      pass
+
+  return gemini_k, tg_tok, tg_ch
 
 
+gemini_default, tg_tok_default, tg_ch_default = get_credentials()
+
+
+# 2. تهيئة قاعدة البيانات المحلية واسترجاع الأرشيف المحفوظ
 def init_db():
   conn = sqlite3.connect("morocco_justice_hub.db")
   c = conn.cursor()
@@ -178,32 +182,101 @@ def init_db():
         )
     """)
   conn.commit()
+
+  # إذا كان هناك ملف أرشيف محفوظ على القرص أو المستودع، نقوم باستيراده تلقائياً
+  if os.path.exists(ARCHIVE_JSON_FILE):
+    try:
+      with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
+        archived_data = json.load(f)
+        for it in archived_data:
+          c.execute(
+              """
+                    INSERT OR IGNORE INTO items (link, platform, source, title, date_published, pub_timestamp, snippet, ai_analysis, fetched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+              (
+                  it.get("link"),
+                  it.get("platform"),
+                  it.get("source"),
+                  it.get("title"),
+                  it.get("date_published"),
+                  it.get("pub_timestamp", 0.0),
+                  it.get("snippet"),
+                  it.get("ai_analysis"),
+                  it.get("fetched_at", datetime.now().isoformat()),
+              ),
+          )
+      conn.commit()
+    except Exception:
+      pass
+
   conn.close()
 
 
 init_db()
+
+
+# حفظ نسخة احتياطية من قاعدة البيانات إلى ملف JSON لتفادي فقدانها
+def export_db_to_archive_json():
+  try:
+    conn = sqlite3.connect("morocco_justice_hub.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT link, platform, source, title, date_published, pub_timestamp,"
+        " snippet, ai_analysis, fetched_at FROM items"
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    items_list = []
+    for r in rows:
+      items_list.append({
+          "link": r[0],
+          "platform": r[1],
+          "source": r[2],
+          "title": r[3],
+          "date_published": r[4],
+          "pub_timestamp": r[5],
+          "snippet": r[6],
+          "ai_analysis": r[7],
+          "fetched_at": r[8],
+      })
+
+    with open(ARCHIVE_JSON_FILE, "w", encoding="utf-8") as f:
+      json.dump(items_list, f, ensure_ascii=False, indent=2)
+  except Exception:
+    pass
+
 
 # الشريط الجانبي
 with st.sidebar:
   st.header("⚙️ إعدادات المنظومة")
 
   gemini_api_key = st.text_input(
-      "مفتاح Gemini API:",
-      value=saved_cfg.get("gemini_api_key", ""),
-      type="password",
+      "مفتاح Gemini API:", value=gemini_default, type="password"
   )
   telegram_token = st.text_input(
-      "رمز بوت تيليجرام (Token):",
-      value=saved_cfg.get("telegram_bot_token", ""),
-      type="password",
+      "رمز بوت تيليجرام (Token):", value=tg_tok_default, type="password"
   )
   telegram_chat_id = st.text_input(
-      "معرّف تيليجرام (Chat ID):", value=saved_cfg.get("telegram_chat_id", "")
+      "معرّف تيليجرام (Chat ID):", value=tg_ch_default
   )
 
-  if st.button("💾 حفظ المفاتيح بشكل دائم"):
-    save_config(gemini_api_key, telegram_token, telegram_chat_id)
-    st.toast("✅ تم حفظ المفاتيح بنجاح ولن يُطلب إدخالها ثانية.")
+  # حفظ محلي إضافي
+  if st.button("💾 حفظ المفاتيح محلياً"):
+    try:
+      with open("credentials.json", "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "gemini_api_key": gemini_api_key.strip(),
+                "telegram_bot_token": telegram_token.strip(),
+                "telegram_chat_id": telegram_chat_id.strip(),
+            },
+            f,
+        )
+      st.toast("✅ تم حفظ المفاتيح.")
+    except Exception:
+      pass
 
   model_choice = st.selectbox(
       "نموذج الذكاء الاصطناعي:",
@@ -215,12 +288,23 @@ with st.sidebar:
       index=0,
   )
 
+  # شارة حالة المفاتيح
+  is_from_secrets = bool(
+      st.secrets.get("GEMINI_API_KEY") if hasattr(st, "secrets") else False
+  )
   if gemini_api_key:
-    st.markdown(
-        f'<div class="status-pill status-pill-ok">🟢 المفتاح محفوظ ومفعّل'
-        f" ({model_choice})</div>",
-        unsafe_allow_html=True,
-    )
+    if is_from_secrets:
+      st.markdown(
+          f'<div class="status-pill status-pill-ok">🔒 المفاتيح مثبتة في'
+          f' Streamlit Secrets<br>({model_choice}) - دائمة للأبد</div>',
+          unsafe_allow_html=True,
+      )
+    else:
+      st.markdown(
+          f'<div class="status-pill status-pill-ok">🟢 المفتاح نشط'
+          f" ({model_choice})</div>",
+          unsafe_allow_html=True,
+      )
   else:
     st.markdown(
         '<div class="status-pill status-pill-err">🔴 المفتاح غير مسجل</div>',
@@ -242,14 +326,68 @@ with st.sidebar:
 
   auto_refresh = st.checkbox("🔄 تفعيل الرصد الدوري التلقائي (كل 15 دقيقة)")
   fetch_limit = st.slider(
-      "الحد الأقصى لكل منصة:", min_value=10, max_value=80, value=30, step=10
+      "الحد الأقصى للأخبار المجلوبة:",
+      min_value=20,
+      max_value=120,
+      value=60,
+      step=10,
   )
   send_telegram = st.checkbox("إرسال تنبيه إلى Telegram فورياً", value=True)
 
+  st.divider()
+  st.header("💾 حماية واستعادة الأرشيف")
+  st.caption("احفظ أرشيف الأخبار لضمان عدم تصفيره عند سكون الموقع:")
+
+  # زر تحميل الأرشيف كملف JSON
+  if os.path.exists(ARCHIVE_JSON_FILE):
+    with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
+      archive_bytes = f.read()
+    st.download_button(
+        label="📥 تنزيل نسخة احتياطية من الأرشيف",
+        data=archive_bytes,
+        file_name="morocco_justice_backup.json",
+        mime="application/json",
+    )
+
+  # خيار رفع واستعادة أرشيف سابق
+  uploaded_backup = st.file_uploader(
+      "📤 استعادة أرشيف سابق (ملف JSON):", type=["json"]
+  )
+  if uploaded_backup is not None:
+    try:
+      imported_items = json.load(uploaded_backup)
+      conn = sqlite3.connect("morocco_justice_hub.db")
+      c = conn.cursor()
+      for it in imported_items:
+        c.execute(
+            """
+                INSERT OR IGNORE INTO items (link, platform, source, title, date_published, pub_timestamp, snippet, ai_analysis, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                it.get("link"),
+                it.get("platform"),
+                it.get("source"),
+                it.get("title"),
+                it.get("date_published"),
+                it.get("pub_timestamp", 0.0),
+                it.get("snippet"),
+                it.get("ai_analysis"),
+                it.get("fetched_at", datetime.now().isoformat()),
+            ),
+        )
+      conn.commit()
+      conn.close()
+      export_db_to_archive_json()
+      st.success("✅ تمت استعادة كافة الأخبار بنجاح إلى قاعدة البيانات!")
+      st.rerun()
+    except Exception as e:
+      st.error(f"خطأ أثناء استعادة الأرشيف: {e}")
+
 st.title("⚖️ المرصد الوطني للعدالة والقضاء بالمغرب")
 st.write(
-    "رصد شامل لمنشورات **الصحف والمواقع، فيسبوك، إكس (تويتر)، إنستغرام، تيك"
-    " توك، ويوتيوب** مع التحليل الذكي الموجه للمغرب."
+    "رصد وتتبع إخباري دائم ومستمر لقطاع العدالة والقضاء، محمي من فقدان"
+    " البيانات."
 )
 
 col1, col2 = st.columns(2)
@@ -264,11 +402,11 @@ with col2:
       value="المجلس الأعلى للسلطة القضائية, القضاء المغربي, محكمة النقض",
   )
 
-start_btn = st.button("🚀 تشغيل الرصد الشامل لكافة المنصات الآن", type="primary")
+start_btn = st.button("🚀 تشغيل الرصد الشامل والتحديث الآن", type="primary")
 
 
 # 1. محرك المواقع والصحف المغربية
-def fetch_moroccan_sites(time_mode, max_count=40):
+def fetch_moroccan_sites(time_mode, max_count=60):
   results = []
   seen = set()
   time_hours = 999999
@@ -283,22 +421,105 @@ def fetch_moroccan_sites(time_mode, max_count=40):
     time_hours = 750
     time_op = "when:30d"
 
+  moroccan_direct_feeds = [
+      ("أخبارنا المغربية (Akhbarona)", "https://www.akhbarona.com/feed"),
+      ("أكادير 24 (Agadir24)", "https://agadir24.info/feed"),
+      ("كشـ24 (Kech24)", "https://kech24.com/feed"),
+      ("الأيام 24 (Alayam24)", "https://www.alayam24.com/feed"),
+      ("مدار 21 (Madar21)", "https://madar21.com/feed"),
+      ("صباح أكادير (SabahAgadir)", "https://sabahagadir.ma/feed"),
+      ("كود (Goud)", "https://www.goud.ma/feed"),
+      ("جريدة الصباح (Assabah)", "https://assabah.ma/feed"),
+      ("صوت المغرب (TheVoice.ma)", "https://thevoice.ma/feed"),
+      ("ناظورسيتي (NadorCity)", "https://www.nadorcity.com/feed"),
+      ("هسبريس مجتمع وقضاء", "https://www.hespress.com/societe/feed"),
+      ("هسبريس العامة", "https://www.hespress.com/feed"),
+      ("العمق المغربي", "https://al3omk.com/feed"),
+      ("اليوم 24", "https://alyaoum24.com/feed"),
+      ("زنقة 20 (Rue20)", "https://rue20.com/feed"),
+      ("Le360 المغرب", "https://ar.le360.ma/rss/"),
+      ("برلمان.كوم", "https://www.barlamane.com/feed/"),
+      ("طنجة 24", "https://tanja24.com/feed/"),
+  ]
+
+  target_sites_query = (
+      "(site:kech24.com OR site:agadir24.info OR site:madar21.com OR"
+      " site:alayam24.com OR site:assabah.ma OR site:thevoice.ma OR"
+      " site:nadorcity.com OR site:goud.ma OR site:akhbarona.com) (قضاء OR"
+      f" محكمة OR محاكمة) {time_op}".strip()
+  )
+
   queries = [
+      target_sites_query,
       f"المجلس الأعلى للسلطة القضائية {time_op}".strip(),
       f"القضاء المغربي OR المحاكم المغربية {time_op}".strip(),
       f"وزارة العدل المغربية OR النيابة العامة {time_op}".strip(),
       f"محكمة النقض المغرب {time_op}".strip(),
-      (
-          "(site:kech24.com OR site:agadir24.info OR site:madar21.com OR"
-          " site:alayam24.com OR site:assabah.ma OR site:thevoice.ma OR"
-          " site:nadorcity.com OR site:goud.ma OR site:akhbarona.com) (قضاء OR"
-          f" محكمة OR محاكمة) {time_op}".strip()
-      ),
+      f"وكيل الملك OR قاضي التحقيق المغرب {time_op}".strip(),
+      f"هيئة المحامين بالمغرب {time_op}".strip(),
+      f"محاكمة OR حكم قضائي المغرب {time_op}".strip(),
   ]
 
   now = datetime.now(timezone.utc)
   headers = {"User-Agent": "Mozilla/5.0"}
 
+  # فحص الخلاصات المباشرة
+  for name, feed_url in moroccan_direct_feeds:
+    if len(results) >= max_count:
+      break
+    try:
+      resp = requests.get(feed_url, headers=headers, timeout=6)
+      root = ET.fromstring(resp.content)
+      for item in root.findall(".//item"):
+        link = item.find("link").text if item.find("link") is not None else ""
+        if not link or link in seen:
+          continue
+        title = (
+            item.find("title").text if item.find("title") is not None else ""
+        )
+        desc = (
+            item.find("description").text
+            if item.find("description") is not None
+            else ""
+        )
+        pdate = (
+            item.find("pubDate").text
+            if item.find("pubDate") is not None
+            else ""
+        )
+
+        ts = 0.0
+        disp_date = pdate
+        is_valid = True
+        if pdate:
+          try:
+            dt = parsedate_to_datetime(pdate)
+            ts = dt.timestamp()
+            disp_date = dt.strftime("%Y-%m-%d %H:%M")
+            if (now - dt).total_seconds() / 3600.0 > time_hours:
+              is_valid = False
+          except Exception:
+            pass
+
+        if not is_valid:
+          continue
+        clean_d = re.sub(r"<[^>]+>", "", desc)
+        results.append({
+            "platform": "مواقع وصحف",
+            "source": name,
+            "title": title,
+            "link": link,
+            "date": disp_date,
+            "timestamp": ts,
+            "snippet": clean_d,
+        })
+        seen.add(link)
+        if len(results) >= max_count:
+          break
+    except Exception:
+      pass
+
+  # فحص استعلامات Google News المغرب
   for q in queries:
     if len(results) >= max_count:
       break
@@ -362,11 +583,12 @@ def fetch_moroccan_sites(time_mode, max_count=40):
           break
     except Exception:
       pass
+
   return results
 
 
-# 2. محرك يوتيوب مع فلترة إيجابية صارمة (يمنع الفيديوهات القديمة منعاً باتاً)
-def fetch_youtube_strictly_recent(time_mode, max_count=15):
+# 2. محرك يوتيوب مع فلترة إيجابية صارمة
+def fetch_youtube_strictly_recent(time_mode, max_count=12):
   results = []
   if time_mode == "جميع الأوقات":
     return results
@@ -399,8 +621,7 @@ def fetch_youtube_strictly_recent(time_mode, max_count=15):
                 "simpleText", ""
             ).lower()
 
-            # الفلترة الإيجابية الصارمة:
-            # استبعاد قاطع لأي صيغ للسنوات والشهور والأسابيع (بالمفرد والمثنى والجمع بالعربية والإنجليزية)
+            # الفلترة الإيجابية الصارمة
             forbidden_words = [
                 "سنة",
                 "سنتين",
@@ -425,7 +646,6 @@ def fetch_youtube_strictly_recent(time_mode, max_count=15):
             if any(fw in time_str for fw in forbidden_words):
               continue
 
-            # في آخر 24 ساعة: لا نقبل إلا الساعات والدقائق فقط
             if time_mode == "آخر 24 ساعة (اليوم فقط)":
               if not any(
                   w in time_str
@@ -441,7 +661,6 @@ def fetch_youtube_strictly_recent(time_mode, max_count=15):
               ):
                 continue
 
-            # في آخر 7 أيام: نقبل فقط الساعات، الدقائق، والأيام من 1 إلى 7
             if time_mode == "آخر 7 أيام (هذا الأسبوع)":
               valid_week = any(
                   w in time_str
@@ -494,8 +713,8 @@ def fetch_youtube_strictly_recent(time_mode, max_count=15):
   return results
 
 
-# 3. محرك جلب منشورات فيسبوك (Facebook Posts Engine)
-def fetch_facebook_posts(time_mode, max_count=15):
+# 3. محرك منشورات فيسبوك
+def fetch_facebook_posts(time_mode, max_count=10):
   results = []
   time_limit = (
       "d"
@@ -505,7 +724,6 @@ def fetch_facebook_posts(time_mode, max_count=15):
   queries = [
       'site:facebook.com "المجلس الأعلى للسلطة القضائية"',
       'site:facebook.com "القضاء المغربي" OR "محكمة النقض المغرب"',
-      'site:facebook.com "وكيل الملك" المغرب',
   ]
   seen = set()
   try:
@@ -522,8 +740,7 @@ def fetch_facebook_posts(time_mode, max_count=15):
           title = r.get("title", "")
           body = r.get("body", "")
 
-          # استخراج اسم الصفحة أو الناشر
-          author = "صفحة فيسبوك مغربية"
+          author = "صفحة فيسبوك"
           m = re.search(r"facebook\.com/([^/?#]+)", link)
           if m and m.group(1) not in ["photo", "watch", "story", "share"]:
             author = f"صفحة: {m.group(1)}"
@@ -531,7 +748,7 @@ def fetch_facebook_posts(time_mode, max_count=15):
           results.append({
               "platform": "Facebook",
               "source": author,
-              "title": title or "منشور على فيسبوك حول القضاء المغربي",
+              "title": title or "منشور فيسبوك حول القضاء المغربي",
               "link": link,
               "date": f"خلال {time_mode}",
               "timestamp": datetime.now().timestamp(),
@@ -545,8 +762,8 @@ def fetch_facebook_posts(time_mode, max_count=15):
   return results
 
 
-# 4. محرك جلب تغريدات إكس (Twitter/X Engine)
-def fetch_twitter_posts(time_mode, max_count=15):
+# 4. محرك تغريدات إكس (Twitter/X)
+def fetch_twitter_posts(time_mode, max_count=10):
   results = []
   time_limit = (
       "d"
@@ -598,8 +815,8 @@ def fetch_twitter_posts(time_mode, max_count=15):
   return results
 
 
-# 5. محرك جلب تيك توك وإنستغرام (TikTok & Instagram Engine)
-def fetch_tiktok_and_insta(time_mode, max_count=15):
+# 5. محرك تيك توك وإنستغرام
+def fetch_tiktok_and_insta(time_mode, max_count=10):
   results = []
   seen = set()
   queries = [
@@ -740,17 +957,16 @@ def send_tg_notification(token, chat_id, item):
     pass
 
 
-# تنفيذ الرصد الشامل عبر كافة المنصات
+# تنفيذ دورة الرصد وحفظ الأرشيف تلقائياً
 def execute_full_monitoring():
   st.toast("🔍 جارٍ مسح الصحف، فيسبوك، إكس، تيك توك، وإنستغرام...")
   raw_items = []
 
-  # جلب من كافة المصادر
   raw_items.extend(fetch_moroccan_sites(time_range, max_count=fetch_limit))
-  raw_items.extend(fetch_youtube_strictly_recent(time_range, max_count=15))
-  raw_items.extend(fetch_facebook_posts(time_range, max_count=15))
-  raw_items.extend(fetch_twitter_posts(time_range, max_count=15))
-  raw_items.extend(fetch_tiktok_and_insta(time_range, max_count=15))
+  raw_items.extend(fetch_youtube_strictly_recent(time_range, max_count=12))
+  raw_items.extend(fetch_facebook_posts(time_range, max_count=10))
+  raw_items.extend(fetch_twitter_posts(time_range, max_count=10))
+  raw_items.extend(fetch_tiktok_and_insta(time_range, max_count=10))
 
   conn = sqlite3.connect("morocco_justice_hub.db")
   c = conn.cursor()
@@ -789,6 +1005,10 @@ def execute_full_monitoring():
         send_tg_notification(telegram_token, telegram_chat_id, item)
 
   conn.close()
+
+  # تحديث ملف الأرشيف الثابت لمنع التصفير
+  export_db_to_archive_json()
+
   return new_count, len(raw_items)
 
 
@@ -796,7 +1016,6 @@ if start_btn:
   if not gemini_api_key:
     st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي أولاً.")
   else:
-    save_config(gemini_api_key, telegram_token, telegram_chat_id)
     with st.spinner("جارٍ فحص المنصات ومطابقة المحتوى بذكاء..."):
       added, total_scanned = execute_full_monitoring()
       st.success(
