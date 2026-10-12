@@ -108,12 +108,20 @@ st.markdown(
     }
     .status-pill-ok { background-color: #dcfce7; color: #15803d; border: 1px solid #86efac; }
     .status-pill-err { background-color: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
-    .custom-monitor-box {
-        background-color: #f0fdf4;
-        border: 1px solid #86efac;
+    .custom-box {
+        background-color: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-right: 5px solid #059669;
         padding: 18px;
         border-radius: 12px;
-        margin-bottom: 20px;
+        margin-bottom: 22px;
+    }
+    .target-item-row {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 10px;
     }
     @media (max-width: 768px) {
         .stApp { padding: 8px !important; }
@@ -132,12 +140,14 @@ TARGET_PROFILES_FILE = "monitored_profiles.json"
 CONFIG_FILE = "credentials.json"
 
 
+# 1. نظام حفظ الإعدادات
 def load_config():
   cfg = {
       "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
       "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
       "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
       "auto_refresh": False,
+      "refresh_interval": "15 دقيقة",
       "time_range": "آخر 7 أيام (هذا الأسبوع)",
   }
   try:
@@ -223,6 +233,7 @@ def save_target_profiles(profiles_list):
     pass
 
 
+# 2. تهيئة قاعدة البيانات واستيراد الأرشيف التلقائي
 def init_db():
   conn = sqlite3.connect("morocco_justice_hub.db")
   c = conn.cursor()
@@ -242,6 +253,7 @@ def init_db():
     """)
   conn.commit()
 
+  # استيراد الأرشيف الدائم إن وجد
   if os.path.exists(ARCHIVE_JSON_FILE):
     try:
       with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
@@ -304,20 +316,15 @@ def export_db_to_archive_json():
     pass
 
 
-# دالة حساب الطابع الزمني الرقمي بدقة
 def calculate_precise_timestamp(date_str):
   now = datetime.now(timezone.utc)
   if not date_str:
     return now.timestamp()
-
-  # إذا كان بتنسيق RFC القياسي
   try:
-    dt = parsedate_to_datetime(date_str)
-    return dt.timestamp()
+    return parsedate_to_datetime(date_str).timestamp()
   except Exception:
     pass
 
-  # إذا كان بصيغة نسبية (ساعة، يوم، دقيقة...)
   s = date_str.lower()
   try:
     num_match = re.search(r"(\d+)", s)
@@ -333,16 +340,12 @@ def calculate_precise_timestamp(date_str):
       return now.timestamp() - (val * 7 * 86400)
   except Exception:
     pass
-
   return now.timestamp()
 
 
-# دالة تحليل وتفكيك أي رابط أو اسم لقناة أو صفحة مستهدفة
 def parse_target_source(raw_input, selected_platform):
   raw = raw_input.strip()
-  # إزالة البروتوكولات
   clean = re.sub(r"^https?://(www\.)?", "", raw)
-
   platform = selected_platform
   query = ""
   name = raw
@@ -378,7 +381,6 @@ def parse_target_source(raw_input, selected_platform):
     query = f"site:tiktok.com/@{slug}"
     name = f"حساب TikTok: @{slug}"
   else:
-    # اسم عادي أو نطاق موقع
     if "." in raw and not " " in raw:
       platform = "مواقع وصحف"
       query = f"site:{raw}"
@@ -399,6 +401,16 @@ def parse_target_source(raw_input, selected_platform):
   return platform, name, query
 
 
+# قائمة مدة الرصد التلقائي القابلة للتخصيص
+INTERVAL_OPTIONS = {
+    "15 دقيقة": 900,
+    "ساعة واحدة": 3600,
+    "3 ساعات": 10800,
+    "6 ساعات": 21600,
+    "12 ساعة": 43200,
+    "24 ساعة (يوم كامل)": 86400,
+}
+
 # الشريط الجانبي
 with st.sidebar:
   st.header("⚙️ إعدادات المنظومة")
@@ -414,16 +426,15 @@ with st.sidebar:
       type="password",
   )
   telegram_chat_id = st.text_input(
-      "معرّف تيليجرام (Chat ID):",
-      value=current_cfg.get("telegram_chat_id", ""),
+      "معرّف تيليجرام (Chat ID):", value=current_cfg.get("telegram_chat_id", "")
   )
 
-  if st.button("💾 حفظ المفاتيح والإعدادات"):
+  if st.button("💾 حفظ الإعدادات والمفاتيح"):
     current_cfg["gemini_api_key"] = gemini_api_key
     current_cfg["telegram_bot_token"] = telegram_token
     current_cfg["telegram_chat_id"] = telegram_chat_id
     save_config(current_cfg)
-    st.toast("✅ تم حفظ الإعدادات بنجاح.")
+    st.toast("✅ تم حفظ الإعدادات.")
 
   model_choice = st.selectbox(
       "نموذج الذكاء الاصطناعي:",
@@ -448,13 +459,35 @@ with st.sidebar:
     )
 
   st.divider()
-  st.header("⏱️ الجدولة والرصد الدوري")
+  st.header("⏱️ الجدولة والرصد الدوري المخصص")
+
+  # اختيار مدة الرصد الدوري
+  saved_interval = current_cfg.get("refresh_interval", "15 دقيقة")
+  interval_keys = list(INTERVAL_OPTIONS.keys())
+  default_idx = (
+      interval_keys.index(saved_interval)
+      if saved_interval in interval_keys
+      else 0
+  )
+
+  selected_interval_label = st.selectbox(
+      "دورية الرصد التلقائي:",
+      options=interval_keys,
+      index=default_idx,
+      help="اختر المدة الزمنية لتكرار الفحص الآلي",
+  )
+
   auto_refresh_enabled = st.checkbox(
-      "🔄 تفعيل الرصد الدوري التلقائي (كل 15 دقيقة)",
+      f"🔄 تفعيل الرصد الدوري التلقائي (كل {selected_interval_label})",
       value=current_cfg.get("auto_refresh", False),
   )
-  if auto_refresh_enabled != current_cfg.get("auto_refresh", False):
+
+  if (
+      auto_refresh_enabled != current_cfg.get("auto_refresh", False)
+      or selected_interval_label != saved_interval
+  ):
     current_cfg["auto_refresh"] = auto_refresh_enabled
+    current_cfg["refresh_interval"] = selected_interval_label
     save_config(current_cfg)
 
   time_range = st.selectbox(
@@ -474,75 +507,155 @@ with st.sidebar:
   send_telegram = st.checkbox("إرسال تنبيه إلى Telegram فورياً", value=True)
 
   st.divider()
-  st.header("💾 الأرشيف الاحتياطي")
+  st.header("🛡️ حماية الأرشيف عند تحديث الكود")
+  st.caption(
+      "قبل أن تُحدث كود الموقع على GitHub، نزل نسخة احتياطية من هنا، وبعد"
+      " التحديث ارفعها فوراً حتى لا تفقد أي خبر:"
+  )
+
   if os.path.exists(ARCHIVE_JSON_FILE):
     with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
       st.download_button(
-          "📥 تنزيل الأرشيف كاملاً (JSON)",
+          "📥 تنزيل نسخة احتياطية من الأرشيف (قبل التحديث)",
           f.read(),
           file_name="morocco_justice_backup.json",
           mime="application/json",
       )
 
+  uploaded_bk = st.file_uploader(
+      "📤 استعادة الأرشيف (بعد تحديث الكود):", type=["json"]
+  )
+  if uploaded_bk is not None:
+    try:
+      imported = json.load(uploaded_bk)
+      conn = sqlite3.connect("morocco_justice_hub.db")
+      c = conn.cursor()
+      for it in imported:
+        c.execute(
+            """
+                INSERT OR IGNORE INTO items (link, platform, source, title, date_published, pub_timestamp, snippet, ai_analysis, is_target_profile, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                it.get("link"),
+                it.get("platform"),
+                it.get("source"),
+                it.get("title"),
+                it.get("date_published"),
+                it.get("pub_timestamp", 0.0),
+                it.get("snippet"),
+                it.get("ai_analysis"),
+                it.get("is_target_profile", 0),
+                it.get("fetched_at", datetime.now().isoformat()),
+            ),
+        )
+      conn.commit()
+      conn.close()
+      export_db_to_archive_json()
+      st.success("✅ تمت استعادة كافة الأخبار السابقة بنجاح!")
+      st.rerun()
+    except Exception as e:
+      st.error(f"خطأ أثناء استعادة الأرشيف: {e}")
+
 st.title("⚖️ المرصد الوطني للعدالة والقضاء بالمغرب")
 st.write(
-    "رصد شامل للمواقع والمنصات، مع ميزة **الرصد المخصص لصفحة أو قناة معينة**"
-    " وعرض النتائج مرتبة من **الأحدث إلى الأقدم أولاً** عبر كافة المصادر."
+    "رصد شامل للمواقع والمنصات، مع ميزة **إضافة روابط متعددة للرصد المخصص**"
+    " والجدولة المرنة، وترتيب **الأحدث أولاً**."
 )
 
 # ==========================================
-# 1. صندوق ميزة الرصد المخصص لصفحة أو قناة معينة
+# 1. قسم الرصد المخصص لروابط متعددة مع زر إضافة رابط جديد
 # ==========================================
-st.markdown(
-    '<div class="custom-monitor-box"><h4>🎯 ميزة الرصد المخصص: تتبع صفحة أو'
-    " قناة محددة بالرابط أو الاسم</h4><p style='color:#166534; font-size:0.9em;'"
-    ">ضع رابط أي صفحة (Facebook, YouTube, X, LinkedIn, TikTok, أو موقع إخباري)"
-    " أو اسمها لجلب ما تنشره وتلخيصه حصراً:</p></div>",
-    unsafe_allow_html=True,
-)
+st.markdown("### 🎯 الرصد المخصص: تتبع روابط وقنوات وصفحات متعددة")
 
-c_t1, c_t2, c_t3 = st.columns([3, 2, 2])
-with c_t1:
-  custom_target_input = st.text_input(
-      "رابط الصفحة/القناة أو اسمها:",
-      value="https://www.facebook.com/cspj.ma",
-      placeholder="مثال: https://www.facebook.com/page_name أو @channel",
-  )
-with c_t2:
-  custom_target_platform = st.selectbox(
-      "المنصة المستهدفة:",
-      options=[
-          "كشف تلقائي من الرابط",
-          "Facebook",
-          "YouTube",
-          "X (Twitter)",
-          "LinkedIn",
-          "TikTok",
-          "مواقع وصحف",
-      ],
-      index=0,
-  )
-with c_t3:
-  custom_target_kw = st.text_input(
-      "كلمة مفتاحية للحصر داخل الصفحة (اختياري):",
-      value="",
-      placeholder="اتركه فارغاً لجلب كل ما تنشره الصفحة",
-  )
+# إدارة الروابط في session_state
+if "dynamic_targets" not in st.session_state:
+  st.session_state.dynamic_targets = [
+      {
+          "url": "https://www.facebook.com/cspj.ma",
+          "platform": "Facebook",
+          "kw": "",
+      },
+      {"url": "https://www.youtube.com/@CSPJ_Maroc", "platform": "YouTube", "kw": ""},
+  ]
+
+# زر إضافة رابط جديد
+c_btn_add, c_btn_clear = st.columns([1, 4])
+with c_btn_add:
+  if st.button("➕ إضافة رابط جديد"):
+    st.session_state.dynamic_targets.append(
+        {"url": "", "platform": "كشف تلقائي من الرابط", "kw": ""}
+    )
+    st.rerun()
+
+# عرض حقول الروابط المضافة ديناميكياً
+targets_to_run = []
+for idx, item in enumerate(st.session_state.dynamic_targets):
+  with st.container():
+    c_u1, c_u2, c_u3, c_u4 = st.columns([4, 2, 3, 1])
+    with c_u1:
+      item["url"] = st.text_input(
+          f"رابط أو اسم الصفحة/القناة #{idx+1}:",
+          value=item.get("url", ""),
+          key=f"t_url_{idx}",
+          placeholder="مثال: https://facebook.com/page أو @channel",
+      )
+    with c_u2:
+      item["platform"] = st.selectbox(
+          "المنصة:",
+          options=[
+              "كشف تلقائي من الرابط",
+              "Facebook",
+              "YouTube",
+              "X (Twitter)",
+              "LinkedIn",
+              "TikTok",
+              "مواقع وصحف",
+          ],
+          index=[
+              "كشف تلقائي من الرابط",
+              "Facebook",
+              "YouTube",
+              "X (Twitter)",
+              "LinkedIn",
+              "TikTok",
+              "مواقع وصحف",
+          ].index(item.get("platform", "كشف تلقائي من الرابط")),
+          key=f"t_plat_{idx}",
+      )
+    with c_u3:
+      item["kw"] = st.text_input(
+          "كلمة مفتاحية للحصر (اختياري):",
+          value=item.get("kw", ""),
+          key=f"t_kw_{idx}",
+          placeholder="اتركه فارغاً لكل منشورات الحساب",
+      )
+    with c_u4:
+      st.write("")
+      st.write("")
+      if st.button("❌", key=f"del_{idx}", help="إزالة هذا الرابط"):
+        st.session_state.dynamic_targets.pop(idx)
+        st.rerun()
+
+    if item["url"].strip():
+      targets_to_run.append(item)
 
 col_run_t1, col_run_t2 = st.columns([2, 1])
 with col_run_t1:
-  run_custom_target_btn = st.button(
-      "🎯 تشغيل الرصد المخصص لهذه الصفحة/القناة الآن", type="primary"
+  run_all_custom_btn = st.button(
+      f"🎯 تشغيل الرصد المخصص لكافة الروابط المضافة ({len(targets_to_run)})"
+      " الآن",
+      type="primary",
   )
 with col_run_t2:
-  save_to_permanent = st.checkbox(
-      "💾 حفظ هذه الصفحة في قائمة المتابعة الدائمة", value=False
+  save_all_targets = st.checkbox(
+      "💾 حفظ هذه القائمة في الرصد التلقائي الدائم", value=True
   )
 
 st.divider()
 
 # ==========================================
-# 2. حقول الرصد العام للمرصد
+# 2. حقول الرصد العام للكلمة المفتاحية
 # ==========================================
 st.markdown("### 🌐 الرصد العام الشامل للكلمة المفتاحية:")
 col_g1, col_g2 = st.columns(2)
@@ -560,7 +673,6 @@ with col_g2:
 start_general_btn = st.button("🚀 بدء الرصد العام للكلمة عبر كافة المنصات")
 
 
-# دالة معاملات الوقت
 def get_time_params(time_mode):
   if time_mode == "آخر 24 ساعة (اليوم فقط)":
     return 30, "when:1d", "d"
@@ -571,72 +683,76 @@ def get_time_params(time_mode):
   return 999999, "", None
 
 
-# تنفيذ الرصد المخصص لصفحة أو قناة معينة
-def execute_specific_target_monitor(
-    target_raw, platform_choice, sub_kw, time_mode
-):
-  auto_p, disp_name, query_str = parse_target_source(
-      target_raw,
-      "Facebook"
-      if platform_choice == "كشف تلقائي من الرابط"
-      else platform_choice,
-  )
-  final_platform = (
-      auto_p if platform_choice == "كشف تلقائي من الرابط" else platform_choice
-  )
-
+# دالة تنفيذ الرصد لقائمة روابط مخصصة
+def execute_multi_target_monitor(targets_list, time_mode):
   max_h, time_op, _ = get_time_params(time_mode)
   now = datetime.now(timezone.utc)
   headers = {"User-Agent": "Mozilla/5.0"}
 
-  full_q = f"{query_str}"
-  if sub_kw.strip():
-    full_q += f' "{sub_kw.strip()}"'
-  if time_op:
-    full_q += f" {time_op}"
-
   results = []
   seen = set()
 
-  try:
-    enc = urllib.parse.quote(full_q.strip())
-    url = f"https://news.google.com/rss/search?q={enc}&hl=ar&gl=MA&ceid=MA:ar"
-    resp = requests.get(url, headers=headers, timeout=9)
-    root = ET.fromstring(resp.content)
-    for item in root.findall(".//item")[:15]:
-      link = item.find("link").text if item.find("link") is not None else ""
-      if not link or link in seen:
-        continue
-      title = item.find("title").text if item.find("title") is not None else ""
-      desc = (
-          item.find("description").text
-          if item.find("description") is not None
-          else ""
-      )
-      pdate = (
-          item.find("pubDate").text if item.find("pubDate") is not None else ""
-      )
+  for t in targets_list:
+    raw_u = t["url"].strip()
+    if not raw_u:
+      continue
+    auto_p, disp_name, query_str = parse_target_source(
+        raw_u,
+        "Facebook" if t["platform"] == "كشف تلقائي من الرابط" else t["platform"],
+    )
+    final_p = (
+        auto_p if t["platform"] == "كشف تلقائي من الرابط" else t["platform"]
+    )
 
-      ts = calculate_precise_timestamp(pdate)
-      if (now.timestamp() - ts) / 3600.0 > max_h:
-        continue
+    full_q = f"{query_str}"
+    if t["kw"].strip():
+      full_q += f' "{t["kw"].strip()}"'
+    if time_op:
+      full_q += f" {time_op}"
 
-      clean_d = re.sub(r"<[^>]+>", "", desc)
-      results.append({
-          "platform": final_platform,
-          "source": f"⭐ {disp_name}",
-          "title": title,
-          "link": link,
-          "date": pdate or datetime.now().strftime("%Y-%m-%d %H:%M"),
-          "timestamp": ts,
-          "snippet": clean_d or f"منشور صادر عن {disp_name}",
-          "is_target": 1,
-      })
-      seen.add(link)
-  except Exception:
-    pass
+    try:
+      enc = urllib.parse.quote(full_q.strip())
+      url = f"https://news.google.com/rss/search?q={enc}&hl=ar&gl=MA&ceid=MA:ar"
+      resp = requests.get(url, headers=headers, timeout=9)
+      root = ET.fromstring(resp.content)
+      for item in root.findall(".//item")[:10]:
+        link = item.find("link").text if item.find("link") is not None else ""
+        if not link or link in seen:
+          continue
+        title = (
+            item.find("title").text if item.find("title") is not None else ""
+        )
+        desc = (
+            item.find("description").text
+            if item.find("description") is not None
+            else ""
+        )
+        pdate = (
+            item.find("pubDate").text
+            if item.find("pubDate") is not None
+            else ""
+        )
 
-  return results, disp_name, final_platform, full_q
+        ts = calculate_precise_timestamp(pdate)
+        if (now.timestamp() - ts) / 3600.0 > max_h:
+          continue
+
+        clean_d = re.sub(r"<[^>]+>", "", desc)
+        results.append({
+            "platform": final_p,
+            "source": f"⭐ {disp_name}",
+            "title": title,
+            "link": link,
+            "date": pdate or datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "timestamp": ts,
+            "snippet": clean_d or f"منشور صادر عن {disp_name}",
+            "is_target": 1,
+        })
+        seen.add(link)
+    except Exception:
+      pass
+
+  return results
 
 
 # محركات الرصد العام
@@ -711,7 +827,6 @@ def fetch_moroccan_sites(user_kw, time_mode, max_count=35):
           break
     except Exception:
       pass
-
   return results
 
 
@@ -764,7 +879,6 @@ def fetch_youtube_posts(user_kw, time_mode, max_count=15):
         break
   except Exception:
     pass
-
   return results
 
 
@@ -826,7 +940,6 @@ def fetch_social_network_posts(user_kw, platform_name, time_mode, max_count=15):
         break
   except Exception:
     pass
-
   return results
 
 
@@ -930,46 +1043,51 @@ def process_and_save_items(items_list, user_kw):
   return new_count
 
 
-# تنفيذ زر الرصد المخصص
-if run_custom_target_btn:
-  if not custom_target_input.strip():
-    st.warning("⚠️ يرجى وضع رابط الصفحة/القناة أو اسمها أولاً.")
+# تنفيذ رصد الروابط المتعددة
+if run_all_custom_btn:
+  if not targets_to_run:
+    st.warning("⚠️ يرجى إضافة رابط واحد على الأقل.")
   elif not gemini_api_key:
     st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي.")
   else:
     with st.spinner(
-        "جارٍ تشغيل الرصد المخصص للصفحة المستهدفة واستخراج المنشورات..."
+        f"جارٍ فحص {len(targets_to_run)} رابط وصفحة مستهدفة واستخراج"
+        " الملخصات..."
     ):
-      c_items, d_name, d_plat, d_query = execute_specific_target_monitor(
-          custom_target_input,
-          custom_target_platform,
-          custom_target_kw,
-          time_range,
-      )
+      c_items = execute_multi_target_monitor(targets_to_run, time_range)
 
-      if save_to_permanent:
+      if save_all_targets:
         cur_targets = load_target_profiles()
-        if not any(t.get("query") == d_query for t in cur_targets):
-          cur_targets.append({
-              "name": d_name,
-              "platform": d_plat,
-              "query": d_query,
-              "enabled": True,
-          })
-          save_target_profiles(cur_targets)
-          st.toast(
-              f"💾 تمت إضافة '{d_name}' إلى قائمة المراقبة الدائمة بنجاح!"
+        for t in targets_to_run:
+          auto_p, d_name, d_query = parse_target_source(
+              t["url"],
+              "Facebook"
+              if t["platform"] == "كشف تلقائي من الرابط"
+              else t["platform"],
           )
+          if not any(
+              existing.get("query") == d_query for existing in cur_targets
+          ):
+            cur_targets.append({
+                "name": d_name,
+                "platform": auto_p
+                if t["platform"] == "كشف تلقائي من الرابط"
+                else t["platform"],
+                "query": d_query,
+                "enabled": True,
+            })
+        save_target_profiles(cur_targets)
+        st.toast("💾 تم حفظ كافة الروابط في قائمة المراقبة الدائمة بنجاح!")
 
       added_custom = process_and_save_items(
-          c_items, custom_target_kw.strip() or d_name
+          c_items, "القضاء والعدالة بالمغرب والمواضيع المتابعة"
       )
       st.success(
-          f"🎯 اكتمل الرصد المخصص لـ '{d_name}'! تم العثور على {len(c_items)}"
-          f" مادة، وإضافة {added_custom} منشوراً جديداً بالملخص والروابط."
+          f"🎯 اكتمل الرصد لكافة الروابط المضافة! تم جلب {len(c_items)} مادة،"
+          f" وإضافة {added_custom} منشوراً جديداً بالملخص والروابط."
       )
 
-# تنفيذ زر الرصد العام
+# تنفيذ الرصد العام
 if start_general_btn:
   clean_kw = keywords_input.strip()
   if not clean_kw:
@@ -1015,9 +1133,7 @@ if start_general_btn:
           f" قضائية جديدة تطابق الكلمة '{clean_kw}'."
       )
 
-# ==========================================
 # استرجاع قاعدة البيانات بفرز صارم: الأحدث أولاً عبر كافة المصادر
-# ==========================================
 conn = sqlite3.connect("morocco_justice_hub.db")
 c = conn.cursor()
 c.execute(
@@ -1098,7 +1214,6 @@ tab_unified, tab_targets, tab_news, tab_fb, tab_x, tab_yt, tab_other, tab_manage
     "⚙️ إدارة الصفحات المتابعة",
 ])
 
-# 1. التبويب الرئيسي: الخلاصة الموحدة الشاملة مفرزة بالأحدث أولاً
 with tab_unified:
   st.subheader(
       "🌐 الخلاصة الموحدة الشاملة (مرتبة بالأحدث دقيقة بدقيقة عبر كافة المنصات"
@@ -1106,41 +1221,34 @@ with tab_unified:
   )
   st.caption(
       "هذا التبويب يجمع لك كل ما تم رصده في مكان واحد، حيث تظهر أحدث مادة تم"
-      " نشرها في أي منصة في قمة الترتيب."
+      " نشرها في أي منصة في قمة الترتيب كـ #1."
   )
   render_cards(all_records)
 
-# 2. تبويب الرصد المخصص
 with tab_targets:
   st.subheader("🎯 منشورات وفيديوهات الصفحات والقنوات المستهدفة حصرياً")
   render_cards(target_records)
 
-# 3. تبويب الصحف
 with tab_news:
   st.subheader("📰 مقالات وتقارير الصحف والمواقع المغربية (الأحدث أولاً)")
   render_cards(news_items)
 
-# 4. تبويب فيسبوك
 with tab_fb:
   st.subheader("🟦 منشورات وتفاعلات فيسبوك (Facebook)")
   render_cards(fb_items)
 
-# 5. تبويب إكس
 with tab_x:
   st.subheader("⬛ تغريدات منصة X (Twitter)")
   render_cards(x_items)
 
-# 6. تبويب يوتيوب
 with tab_yt:
   st.subheader("📺 الفيديوهات والتغطيات المرئية الحديثة (YouTube)")
   render_cards(yt_items)
 
-# 7. لينكد إن وتيك توك وإنستغرام
 with tab_other:
   st.subheader("🟪 منشورات ومقاطع LinkedIn و TikTok و Instagram")
   render_cards(other_social)
 
-# 8. إدارة الصفحات المستهدفة
 with tab_manage:
   st.subheader("⚙️ إدارة قائمة القنوات والصفحات المتابعة تلقائياً")
   profiles_data = load_target_profiles()
@@ -1158,7 +1266,8 @@ with tab_manage:
     save_target_profiles(profiles_data)
     st.toast("✅ تم تحديث القائمة بنجاح.")
 
-# التحديث الدوري كل 15 دقيقة
+# الرصد الدوري التلقائي حسب المدة المحددة بدقة
 if auto_refresh_enabled:
-  time.sleep(900)
+  sleep_seconds = INTERVAL_OPTIONS.get(selected_interval_label, 900)
+  time.sleep(sleep_seconds)
   st.rerun()
