@@ -22,7 +22,8 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    html, body, [class*="css"], .stApp {
+    /* فرض الاتجاه العربي الأصيل */
+    html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"], .main, .block-container, [data-testid="stMain"] {
         direction: rtl !important;
         text-align: right !important;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
@@ -31,27 +32,27 @@ st.markdown(
         direction: rtl !important;
         text-align: right !important;
     }
-    [data-testid="stHorizontalBlock"] {
-        direction: rtl !important;
-        flex-direction: row !important;
-    }
-    [data-testid="column"] {
-        direction: rtl !important;
-        text-align: right !important;
-    }
+    [data-testid="stHorizontalBlock"] { direction: rtl !important; flex-direction: row !important; }
+    [data-testid="column"] { direction: rtl !important; text-align: right !important; }
+
+    /* تبويبات عصرية وأنيقة ومختصرة */
     div[data-baseweb="tab-list"] {
         direction: rtl !important;
         justify-content: flex-start !important;
         flex-direction: row !important;
-        gap: 8px !important;
+        gap: 6px !important;
+        border-bottom: 2px solid #e2e8f0 !important;
     }
     button[data-baseweb="tab"] {
         direction: rtl !important;
-        text-align: right !important;
-        font-size: 1.05rem !important;
-        font-weight: bold !important;
-        padding: 10px 18px !important;
+        text-align: center !important;
+        font-size: 0.98rem !important;
+        font-weight: 700 !important;
+        padding: 8px 16px !important;
+        border-radius: 8px 8px 0 0 !important;
+        white-space: nowrap !important;
     }
+
     input, textarea, select, .stTextInput input, .stTextArea textarea, [data-baseweb="input"], [data-baseweb="base-input"] {
         direction: rtl !important;
         text-align: right !important;
@@ -64,35 +65,52 @@ st.markdown(
         direction: rtl !important;
         text-align: right !important;
     }
+
+    /* نظام ألوان وبطاقات المنصات العصري */
     .result-card {
         direction: rtl !important;
         text-align: right !important;
         background-color: #ffffff;
         border: 1px solid #e2e8f0;
-        border-right: 6px solid #1e3a8a !important;
-        border-left: 1px solid #e2e8f0 !important;
         padding: 18px;
         border-radius: 12px;
         margin-bottom: 16px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.04);
+        box-shadow: 0 3px 8px rgba(0,0,0,0.03);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
+    .result-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 14px rgba(0,0,0,0.06);
+    }
+
+    /* ألوان الإطارات المخصصة لكل منصة */
+    .border-facebook { border-right: 6px solid #1877f2 !important; }
+    .border-x { border-right: 6px solid #0f1419 !important; }
+    .border-youtube { border-right: 6px solid #e02424 !important; }
+    .border-instagram { border-right: 6px solid #e1306c !important; }
+    .border-tiktok { border-right: 6px solid #111111 !important; }
+    .border-linkedin { border-right: 6px solid #0a66c2 !important; }
+    .border-news { border-right: 6px solid #1e3a8a !important; }
+    .border-target { border-right: 6px solid #059669 !important; }
+
+    /* الشارات العصرية بألوان الباستيل الناعمة */
     .badge {
         display: inline-block;
         padding: 4px 10px;
         border-radius: 6px;
-        font-weight: bold;
-        font-size: 0.85em;
+        font-weight: 700;
+        font-size: 0.82em;
         margin-left: 8px;
-        color: white;
     }
-    .badge-site { background-color: #1e3a8a; }
-    .badge-yt { background-color: #dc2626; }
-    .badge-fb { background-color: #1877f2; }
-    .badge-x { background-color: #000000; }
-    .badge-insta { background-color: #e1306c; }
-    .badge-tiktok { background-color: #111111; }
-    .badge-linkedin { background-color: #0a66c2; }
-    .badge-target { background-color: #059669; }
+    .badge-facebook { background-color: #e7f3ff; color: #1877f2; border: 1px solid #bedaff; }
+    .badge-x { background-color: #f3f4f6; color: #111827; border: 1px solid #d1d5db; }
+    .badge-youtube { background-color: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+    .badge-instagram { background-color: #fdf2f8; color: #db2777; border: 1px solid #fbcfe8; }
+    .badge-tiktok { background-color: #f1f5f9; color: #0f172a; border: 1px solid #cbd5e1; }
+    .badge-linkedin { background-color: #eff6ff; color: #0284c7; border: 1px solid #bae6fd; }
+    .badge-news { background-color: #f0f9ff; color: #1e3a8a; border: 1px solid #bae6fd; }
+    .badge-target { background-color: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+
     .meta-line { color: #64748b; font-size: 0.88em; margin: 8px 0; }
     .desc-box {
         direction: rtl !important;
@@ -101,8 +119,8 @@ st.markdown(
         border: 1px solid #e2e8f0;
         padding: 12px;
         border-radius: 8px;
-        font-size: 0.95em;
-        color: #1e293b;
+        font-size: 0.94em;
+        color: #334155;
         line-height: 1.6;
         margin-bottom: 12px;
     }
@@ -115,17 +133,17 @@ st.markdown(
         border-radius: 8px;
         color: #166534;
         font-size: 0.92em;
-        margin-bottom: 10px;
+        margin-bottom: 12px;
     }
     .action-btn {
         display: inline-block;
-        padding: 8px 16px;
+        padding: 8px 18px;
         border-radius: 6px;
-        background-color: #1e3a8a;
         color: white !important;
         text-decoration: none !important;
-        font-weight: bold;
-        font-size: 0.9em;
+        font-weight: 700;
+        font-size: 0.88em;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     .status-pill {
         padding: 6px 12px;
@@ -137,12 +155,13 @@ st.markdown(
     }
     .status-pill-ok { background-color: #dcfce7; color: #15803d; border: 1px solid #86efac; }
     .status-pill-err { background-color: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+
     @media (max-width: 768px) {
-        .stApp { padding: 8px !important; }
+        .stApp { padding: 6px !important; }
         .result-card { padding: 14px !important; }
-        h1 { font-size: 1.5rem !important; }
+        h1 { font-size: 1.4rem !important; }
         div[data-baseweb="tab-list"] { overflow-x: auto !important; flex-wrap: nowrap !important; }
-        button[data-baseweb="tab"] { font-size: 0.9rem !important; padding: 8px 12px !important; white-space: nowrap !important; }
+        button[data-baseweb="tab"] { font-size: 0.86rem !important; padding: 6px 10px !important; }
     }
     </style>
 """,
@@ -154,16 +173,13 @@ CUSTOM_TARGETS_FILE = "custom_targets.json"
 CONFIG_FILE = "credentials.json"
 
 
-# 1. نظام الحفظ الدائم للروابط المخصصة
 def load_custom_targets():
-  # قراءة الروابط من Streamlit Secrets إن وجدت
   try:
     if "CUSTOM_TARGETS" in st.secrets:
       return json.loads(st.secrets["CUSTOM_TARGETS"])
   except Exception:
     pass
 
-  # قراءة الروابط من الملف الدائم
   if os.path.exists(CUSTOM_TARGETS_FILE):
     try:
       with open(CUSTOM_TARGETS_FILE, "r", encoding="utf-8") as f:
@@ -173,7 +189,6 @@ def load_custom_targets():
     except Exception:
       pass
 
-  # القائمة الافتراضية الأولية
   return [
       {
           "url": "https://www.facebook.com/cspj.ma",
@@ -192,7 +207,6 @@ def save_custom_targets(targets_list):
     pass
 
 
-# 2. نظام حفظ واسترجاع الإعدادات والمفاتيح
 def load_config():
   cfg = {
       "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
@@ -235,7 +249,6 @@ def save_config(cfg_dict):
 current_cfg = load_config()
 
 
-# 3. تهيئة قاعدة البيانات واستيراد الأرشيف
 def init_db():
   conn = sqlite3.connect("morocco_justice_hub.db")
   c = conn.cursor()
@@ -259,7 +272,6 @@ def init_db():
     try:
       with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
         content = json.load(f)
-        # دعم الملف سواء كان قائمة مقالات مباشرة أو كائن يحتوي على الأخبار والروابط
         articles_data = (
             content.get("articles", []) if isinstance(content, dict) else content
         )
@@ -291,7 +303,6 @@ def init_db():
 init_db()
 
 
-# تصدير نسخة مدمجة تشمل المقالات وقائمة الروابط المخصصة معاً
 def export_db_and_targets():
   try:
     conn = sqlite3.connect("morocco_justice_hub.db")
@@ -317,7 +328,6 @@ def export_db_and_targets():
           "fetched_at": r[9],
       })
 
-    # دمج المقالات مع الروابط المخصصة
     export_payload = {
         "articles": items_list,
         "custom_targets": load_custom_targets(),
@@ -489,7 +499,7 @@ with st.sidebar:
   )
 
   auto_refresh_enabled = st.checkbox(
-      f"🔄 تفعيل الرصد الدوري التلقائي (كل {selected_interval_label})",
+      f"🔄 تفعيل الرصد الدوري (كل {selected_interval_label})",
       value=current_cfg.get("auto_refresh", False),
   )
 
@@ -519,27 +529,23 @@ with st.sidebar:
 
   st.divider()
   st.header("🛡️ حماية واستعادة البيانات")
-  st.caption("احفظ نسخة تشمل الأخبار وقائمة الروابط المخصصة لاستعادتها فوراً:")
 
-  # تصدير ملف النسخة الاحتياطية المدمج
   export_db_and_targets()
   if os.path.exists(ARCHIVE_JSON_FILE):
     with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
       st.download_button(
-          "📥 تنزيل الأرشيف والروابط المخصصة (JSON)",
+          "📥 تنزيل الأرشيف والروابط المخصصة",
           f.read(),
           file_name="morocco_justice_full_backup.json",
           mime="application/json",
       )
 
-  # استعادة الأرشيف والروابط معاً
   uploaded_bk = st.file_uploader(
       "📤 استعادة الأرشيف والروابط المخصصة:", type=["json"]
   )
   if uploaded_bk is not None:
     try:
       imported_content = json.load(uploaded_bk)
-      # 1. استعادة المقالات
       articles_part = (
           imported_content.get("articles", [])
           if isinstance(imported_content, dict)
@@ -569,7 +575,6 @@ with st.sidebar:
       conn.commit()
       conn.close()
 
-      # 2. استعادة الروابط المخصصة
       if (
           isinstance(imported_content, dict)
           and "custom_targets" in imported_content
@@ -578,25 +583,19 @@ with st.sidebar:
         st.session_state.dynamic_targets = imported_content["custom_targets"]
 
       export_db_and_targets()
-      st.success(
-          "✅ تمت استعادة كافة الأخبار والروابط المخصصة بنجاح إلى المنظومة!"
-      )
+      st.success("✅ تمت استعادة كافة الأخبار والروابط المخصصة بنجاح!")
       st.rerun()
     except Exception as e:
       st.error(f"خطأ أثناء الاستعادة: {e}")
 
 st.title("⚖️ المرصد الوطني للعدالة والقضاء بالمغرب")
 st.write(
-    "رصد شامل للمواقع والمنصات، مع حفظ دائم **للروابط المخصصة** والجدولة"
-    " التلقائية وترتيب **الأحدث أولاً**."
+    "رصد شامل للمواقع والمنصات، مصنف بألوان مميزة ومرتب حسب **الأحدث أولاً**."
 )
 
-# ==========================================
-# 1. قسم الرصد المخصص لروابط متعددة مع الحفظ التلقائي الدائم
-# ==========================================
-st.markdown("### 🎯 الرصد المخصص: تتبع روابط وقنوات وصفحات متعددة (محفوظة دائماً)")
+# قسم الرصد المخصص
+st.markdown("### 🎯 الرصد المخصص لروابط متعددة")
 
-# تحميل الروابط المحفوظة مسبقاً في session_state
 if "dynamic_targets" not in st.session_state:
   st.session_state.dynamic_targets = load_custom_targets()
 
@@ -609,9 +608,9 @@ with c_btn_add:
     save_custom_targets(st.session_state.dynamic_targets)
     st.rerun()
 with c_btn_save:
-  if st.button("💾 حفظ الروابط الحالية بشكل دائم الآن"):
+  if st.button("💾 حفظ الروابط الحالية بشكل دائم"):
     save_custom_targets(st.session_state.dynamic_targets)
-    st.toast("✅ تم حفظ قائمة الروابط في القرص الثابت ولن تختفي بعد التحديث.")
+    st.toast("✅ تم حفظ قائمة الروابط بنجاح.")
 
 targets_to_run = []
 has_changes = False
@@ -621,7 +620,7 @@ for idx, item in enumerate(st.session_state.dynamic_targets):
     c_u1, c_u2, c_u3, c_u4 = st.columns([4, 2, 3, 1])
     with c_u1:
       new_url = st.text_input(
-          f"رابط أو اسم الصفحة/القناة #{idx+1}:",
+          f"الرابط #{idx+1}:",
           value=item.get("url", ""),
           key=f"t_url_{idx}",
           placeholder="مثال: https://facebook.com/page أو @channel",
@@ -651,10 +650,10 @@ for idx, item in enumerate(st.session_state.dynamic_targets):
 
     with c_u3:
       new_kw = st.text_input(
-          "كلمة مفتاحية للحصر (اختياري):",
+          "كلمة مفتاحية (اختياري):",
           value=item.get("kw", ""),
           key=f"t_kw_{idx}",
-          placeholder="اتركه فارغاً لكل منشورات الحساب",
+          placeholder="اتركه فارغاً لجلب كل المنشورات",
       )
       if new_kw != item.get("kw", ""):
         item["kw"] = new_kw
@@ -663,7 +662,7 @@ for idx, item in enumerate(st.session_state.dynamic_targets):
     with c_u4:
       st.write("")
       st.write("")
-      if st.button("❌", key=f"del_{idx}", help="إزالة هذا الرابط"):
+      if st.button("❌", key=f"del_{idx}", help="إزالة"):
         st.session_state.dynamic_targets.pop(idx)
         save_custom_targets(st.session_state.dynamic_targets)
         st.rerun()
@@ -671,34 +670,31 @@ for idx, item in enumerate(st.session_state.dynamic_targets):
     if item["url"].strip():
       targets_to_run.append(item)
 
-# حفظ التعديلات تلقائياً في الملف الثابت
 if has_changes:
   save_custom_targets(st.session_state.dynamic_targets)
 
 run_all_custom_btn = st.button(
-    f"🎯 تشغيل الرصد المخصص لكافة الروابط المضافة ({len(targets_to_run)}) الآن",
+    f"🎯 تشغيل الرصد المخصص لكافة الروابط ({len(targets_to_run)})",
     type="primary",
 )
 
 st.divider()
 
-# ==========================================
-# 2. حقول الرصد العام
-# ==========================================
+# حقول الرصد العام
 st.markdown("### 🌐 الرصد العام الشامل للكلمة المفتاحية:")
 col_g1, col_g2 = st.columns(2)
 with col_g1:
   target_domain = st.text_input(
-      "🎯 نطاق التقييم والفلترة:",
+      "🎯 نطاق التقييم:",
       value="شؤون القضاء والعدالة والمحاكم والنيابة العامة بالمملكة المغربية حصراً",
   )
 with col_g2:
   keywords_input = st.text_input(
-      "🔑 استعلام البحث العام (الكلمة المفتاحية المعتمدة):",
+      "🔑 استعلام البحث الرئيسي:",
       value="المجلس الأعلى للسلطة القضائية",
   )
 
-start_general_btn = st.button("🚀 بدء الرصد العام للكلمة عبر كافة المنصات")
+start_general_btn = st.button("🚀 بدء الرصد العام عبر كل المنصات")
 
 
 def get_time_params(time_mode):
@@ -986,7 +982,7 @@ def generate_ai_executive_summary(
 العنوان: {title}
 المحتوى/المقتطف: {snippet}
 
-المطلوب بدقة:
+المطلوب:
 1. هل هذا الخبر أو المنشور يخص المغرب ويتناول الموضوع المطلوب ({user_kw}) أو الشأن القضائي/القانوني المرتبط به؟ إذا كان خبراً خارج السياق تماماً أجب بـ NO فقط.
 2. إذا كان مطابقاً، أجب بالصيغة التالية تماماً:
 YES: [اكتب ملخصاً إخبارياً تنفيذياً وافياً في 2 إلى 3 جمل مركزة، يوضح بدقة ما ورد في المنشور/الفيديو، مع إبراز القرارات أو الوقائع القانونية والموقف الصادر].
@@ -1077,17 +1073,14 @@ if run_all_custom_btn:
     st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي.")
   else:
     save_custom_targets(st.session_state.dynamic_targets)
-    with st.spinner(
-        f"جارٍ فحص {len(targets_to_run)} رابط وصفحة مستهدفة واستخراج"
-        " الملخصات..."
-    ):
+    with st.spinner(f"جارٍ فحص {len(targets_to_run)} رابط وصفحة مستهدفة..."):
       c_items = execute_multi_target_monitor(targets_to_run, time_range)
       added_custom = process_and_save_items(
           c_items, "القضاء والعدالة بالمغرب والمواضيع المتابعة"
       )
       st.success(
           f"🎯 اكتمل الرصد! تم جلب {len(c_items)} مادة، وإضافة {added_custom}"
-          " منشوراً جديداً بالملخص والروابط."
+          " منشوراً جديداً."
       )
 
 if start_general_btn:
@@ -1156,37 +1149,44 @@ other_social = [
 ]
 
 
+# دالة تحديد الألوان والهوية البصرية لكل منصة
+def get_platform_design(plat, is_t):
+  if is_t:
+    return "border-target", "badge-target", "رصد مخصص", "#059669"
+  p = plat.lower()
+  if "facebook" in p or "فيسبوك" in p:
+    return "border-facebook", "badge-facebook", "فيسبوك", "#1877f2"
+  elif "x" in p or "twitter" in p or "تويتر" in p or "إكس" in p:
+    return "border-x", "badge-x", "إكس", "#0f1419"
+  elif "youtube" in p or "يوتيوب" in p:
+    return "border-youtube", "badge-youtube", "يوتيوب", "#dc2626"
+  elif "instagram" in p or "إنستغرام" in p:
+    return "border-instagram", "badge-instagram", "إنستغرام", "#db2777"
+  elif "tiktok" in p or "تيك توك" in p:
+    return "border-tiktok", "badge-tiktok", "تيك توك", "#0f172a"
+  elif "linkedin" in p or "لينكد" in p:
+    return "border-linkedin", "badge-linkedin", "لينكدإن", "#0284c7"
+  return "border-news", "badge-news", "صحافة", "#1e3a8a"
+
+
 def render_cards(items_list):
   if items_list:
     for idx, row in enumerate(items_list, 1):
       plat, src, title, link, d_pub, _, snip, ai_note, is_t, f_at = row
-
-      badge_map = {
-          "Facebook": "badge-fb",
-          "X (Twitter)": "badge-x",
-          "YouTube": "badge-yt",
-          "Instagram": "badge-insta",
-          "TikTok": "badge-tiktok",
-          "LinkedIn": "badge-linkedin",
-          "مواقع وصحف": "badge-site",
-      }
-      b_class = badge_map.get(plat, "badge-site")
-      card_border = (
-          "border-right: 6px solid #059669 !important;"
-          if is_t
-          else "border-right: 6px solid #1e3a8a !important;"
+      border_cls, badge_cls, p_label, btn_color = get_platform_design(
+          plat, is_t
       )
       is_target_tag = (
-          " <span class='badge badge-target'>⭐ رصد مخصص</span>" if is_t else ""
+          " <span class='badge badge-target'>⭐ مخصص</span>" if is_t else ""
       )
 
       st.markdown(
           f"""
-            <div class="result-card" style="{card_border}">
-                <h4>#{idx} <span class="badge {b_class}">{plat}</span>{is_target_tag} {title}</h4>
+            <div class="result-card {border_cls}">
+                <h4>#{idx} <span class="badge {badge_cls}">{p_label}</span>{is_target_tag} {title}</h4>
                 <div class="meta-line">
-                    🏛️ <b>المصدر / الحساب:</b> {src} &nbsp;|&nbsp; 
-                    📅 <b>تاريخ النشر:</b> <span style="font-weight: bold; color:#1e3a8a;">{d_pub}</span> &nbsp;|&nbsp; 
+                    🏛️ <b>الجهة / الناشر:</b> {src} &nbsp;|&nbsp; 
+                    📅 <b>تاريخ النشر:</b> <span style="font-weight: bold; color: {btn_color};">{d_pub}</span> &nbsp;|&nbsp; 
                     ⏱️ <b>وقت الرصد:</b> {f_at}
                 </div>
                 <div class="desc-box">
@@ -1195,7 +1195,7 @@ def render_cards(items_list):
                 <div class="ai-box">
                     <b>💡 التقييم والملخص التنفيذي (Gemini):</b><br>{ai_note}
                 </div>
-                <p><a href="{link}" target="_blank" class="action-btn">🔗 مشاهدة الفيديو أو فتح المنشور كاملاً ➔</a></p>
+                <p><a href="{link}" target="_blank" class="action-btn" style="background-color: {btn_color};">🔗 فتح المنشور الأصلي ➔</a></p>
             </div>
             """,
           unsafe_allow_html=True,
@@ -1204,45 +1204,43 @@ def render_cards(items_list):
     st.info("لا توجد مواد مسجلة في هذا القسم حالياً.")
 
 
-tab_unified, tab_targets, tab_news, tab_fb, tab_x, tab_yt, tab_other = st.tabs([
-    f"⭐ الخلاصة الموحدة - الأحدث أولاً ({len(all_records)})",
-    f"🎯 الرصد المخصص والصفحات ({len(target_records)})",
-    f"📰 الصحف والمواقع ({len(news_items)})",
-    f"🟦 فيسبوك ({len(fb_items)})",
-    f"⬛ منصة إكس ({len(x_items)})",
-    f"📺 يوتيوب ({len(yt_items)})",
-    f"🟪 لينكد إن وتيك توك ({len(other_social)})",
+# واجهة التبويبات المختصرة بكلمة أو كلمتين فقط لتناسب كافة الشاشات
+tab_all, tab_custom, tab_press, tab_facebook, tab_x_plat, tab_youtube, tab_others = st.tabs([
+    f"الكل ({len(all_records)})",
+    f"المخصصة ({len(target_records)})",
+    f"الصحف ({len(news_items)})",
+    f"فيسبوك ({len(fb_items)})",
+    f"إكس ({len(x_items)})",
+    f"يوتيوب ({len(yt_items)})",
+    f"أخرى ({len(other_social)})",
 ])
 
-with tab_unified:
-  st.subheader(
-      "🌐 الخلاصة الموحدة الشاملة (مرتبة بالأحدث دقيقة بدقيقة عبر كافة المنصات"
-      " والمواقع)"
-  )
+with tab_all:
+  st.subheader("🌐 الخلاصة الشاملة (الأحدث أولاً)")
   render_cards(all_records)
 
-with tab_targets:
-  st.subheader("🎯 منشورات وفيديوهات الصفحات والقنوات المستهدفة حصرياً")
+with tab_custom:
+  st.subheader("🎯 الرصد المخصص")
   render_cards(target_records)
 
-with tab_news:
-  st.subheader("📰 مقالات وتقارير الصحف والمواقع المغربية (الأحدث أولاً)")
+with tab_press:
+  st.subheader("📰 الصحف والمواقع المغربية")
   render_cards(news_items)
 
-with tab_fb:
-  st.subheader("🟦 منشورات وتفاعلات فيسبوك (Facebook)")
+with tab_facebook:
+  st.subheader("🟦 فيسبوك (Facebook)")
   render_cards(fb_items)
 
-with tab_x:
-  st.subheader("⬛ تغريدات منصة X (Twitter)")
+with tab_x_plat:
+  st.subheader("⬛ منصة إكس (Twitter)")
   render_cards(x_items)
 
-with tab_yt:
-  st.subheader("📺 الفيديوهات والتغطيات المرئية الحديثة (YouTube)")
+with tab_youtube:
+  st.subheader("📺 يوتيوب (YouTube)")
   render_cards(yt_items)
 
-with tab_other:
-  st.subheader("🟪 منشورات ومقاطع LinkedIn و TikTok و Instagram")
+with tab_others:
+  st.subheader("🟪 لينكد إن وتيك توك وإنستغرام")
   render_cards(other_social)
 
 if auto_refresh_enabled:
