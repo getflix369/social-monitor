@@ -342,14 +342,11 @@ def export_db_and_targets():
     pass
 
 
-# دالة حساب الطابع الزمني الصارم والدقيق
 def calculate_precise_timestamp(date_str):
   now = datetime.now(timezone.utc)
   if not date_str:
-    # إذا لم يكن هناك تاريخ مؤكد، نعطيه تاريخ الأمس لكي لا يقفز للقمة فوق الجديد
     return now.timestamp() - 86400
 
-  # تجربة قراءة تاريخ RFC الرسمي
   try:
     return parsedate_to_datetime(date_str).timestamp()
   except Exception:
@@ -373,7 +370,6 @@ def calculate_precise_timestamp(date_str):
   except Exception:
     pass
 
-  # افتراضي آمن: اعتباره قديماً لتفادي الترتيب الخاطئ
   return now.timestamp() - (2 * 86400)
 
 
@@ -536,8 +532,8 @@ with st.sidebar:
 
 st.title("⚖️ المرصد الوطني للعدالة والقضاء بالمغرب")
 st.write(
-    "رصد شامل للمستجدات القضائية: **الأخبار الحية (آخر 24 ساعة)** في"
-    " المقدمة، مع إحالة الأخبار السابقة إلى **الأرشيف الدائم**."
+    "رصد شامل وافتراضي لكافة مستجدات **المجلس الأعلى للسلطة القضائية، القضاء،"
+    " والعدالة بالمغرب**، مع إمكانية التخصيص بكلمة أو عدة كلمات إضافية."
 )
 
 # ==========================================
@@ -599,7 +595,7 @@ for idx, item in enumerate(st.session_state.dynamic_targets):
 
     with c_u3:
       new_kw = st.text_input(
-          "كلمة مفتاحية للحصر (اختياري):",
+          "كلمة مفتاحية للحصر داخل الحساب (اختياري):",
           value=item.get("kw", ""),
           key=f"t_kw_{idx}",
           placeholder="اتركه فارغاً لرصد كل منشورات الحساب",
@@ -631,26 +627,42 @@ run_all_custom_btn = st.button(
 st.divider()
 
 # ==========================================
-# 2. حقول الرصد العام للكلمة المفتاحية
+# 2. قسم الرصد العام الشامل (افتراضي قضائي تلقائي + تخصيص اختياري)
 # ==========================================
-st.markdown("### 🌐 الرصد العام الشامل للكلمة المفتاحية:")
-col_g1, col_g2 = st.columns(2)
+st.markdown("### 🌐 الرصد العام الشامل للعدالة والقضاء بالمغرب:")
+st.caption(
+    "يقوم النظام بالبحث **افتراضياً وتلقائياً** عن كل ما يتعلق بـ **المجلس"
+    " الأعلى للسلطة القضائية، القضاء بالمغرب، والمحاكم والعدالة**. الحقل أدناه"
+    " اختياري لتخصيص أو إضافة كلمات محددة."
+)
+
+col_g1, col_g2 = st.columns([1, 2])
 with col_g1:
-  target_domain = st.text_input(
-      "🎯 نطاق التقييم العام:",
-      value="شؤون القضاء والعدالة والمحاكم والنيابة العامة بالمملكة المغربية حصراً",
+  st.info(
+      "🏛️ **النطاق الافتراضي التلقائي:**\n\n• المجلس الأعلى للسلطة القضائية\n•"
+      " القضاء والمحاكم بالمغرب\n• العدالة والنيابة العامة ونادي القضاة"
   )
 with col_g2:
   keywords_input = st.text_input(
-      "🔑 استعلام البحث الرئيسي:",
-      value="المجلس الأعلى للسلطة القضائية",
+      "🔑 تخصيص البحث بكلمة أو كلمات إضافية (اختياري):",
+      value="",
+      placeholder=(
+          "اتركه فارغاً للرصد القضائي العام، أو اكتب للتخصيص: مثلاً: إضراب"
+          " المحامين، محاكمة، عفو..."
+      ),
+      help=(
+          "يمكنك كتابة كلمة واحدة أو عدة كلمات مفصولة بفاصلة لحصر وتخصيص"
+          " الرصد في موضوع معين"
+      ),
   )
 
-start_general_btn = st.button("🚀 بدء الرصد العام عبر كل المنصات")
+start_general_btn = st.button(
+    "🚀 تشغيل الرصد العام الشامل الآن", type="primary"
+)
 
 
 # ==========================================
-# دوال جلب المحتوى من القنوات والمواقع
+# محركات جلب المحتوى من القنوات والمواقع المخصصة
 # ==========================================
 def fetch_target_youtube_direct(url_or_handle):
   raw = url_or_handle.strip()
@@ -872,6 +884,23 @@ def fetch_target_social_direct(url_or_handle, platform_name):
   except Exception:
     pass
 
+  if not results:
+    try:
+      with DDGS() as ddgs:
+        for r in ddgs.text(query_str, max_results=8):
+          results.append({
+              "platform": platform_name,
+              "source": f"صفحة: {slug}",
+              "title": r.get("title", ""),
+              "link": r.get("href", ""),
+              "date": datetime.now().strftime("%Y-%m-%d"),
+              "timestamp": datetime.now().timestamp(),
+              "snippet": r.get("body", "")[:350],
+              "is_target": 1,
+          })
+    except Exception:
+      pass
+
   return results
 
 
@@ -921,21 +950,30 @@ def execute_multi_target_monitor(targets_list):
   return all_target_items
 
 
-def fetch_moroccan_sites(user_kw, max_count=35):
+# ==========================================
+# محرك الرصد العام الشامل (القضاء والعدالة بالمغرب افتراضياً + التخصيص)
+# ==========================================
+def fetch_moroccan_sites(custom_input, max_count=35):
   results = []
   seen = set()
   headers = {"User-Agent": "Mozilla/5.0"}
+
+  # الاستعلامات القضائية الافتراضية الصريحة والدقيقة
   queries = [
-      f'"{user_kw}" (المغرب OR مغربية) when:1d'.strip(),
-      (
-          f'"{user_kw}" (site:.ma OR site:hespress.com OR site:akhbarona.com OR'
-          " site:kech24.com OR site:agadir24.info OR site:madar21.com OR"
-          " site:alayam24.com OR site:assabah.ma OR site:thevoice.ma OR"
-          " site:nadorcity.com OR site:goud.ma OR site:al3omk.com OR"
-          " site:alyaoum24.com OR site:rue20.com) when:1d".strip()
-      ),
-      f"{user_kw} محكمة OR قضاء المغرب when:1d".strip(),
+      '"المجلس الأعلى للسلطة القضائية" when:1d',
+      '"القضاء المغربي" OR "المحاكم المغربية" when:1d',
+      '"العدالة بالمغرب" OR "وزارة العدل المغربية" when:1d',
+      '"محكمة النقض" OR "النيابة العامة بالمغرب" when:1d',
+      '"نادي قضاة المغرب" OR "هيئة المحامين بالمغرب" when:1d',
   ]
+
+  # إضافة كلمات التخصيص إن وجدت
+  cleaned = custom_input.strip()
+  if cleaned:
+    kws = [k.strip() for k in cleaned.split(",") if k.strip()]
+    for kw in kws:
+      queries.append(f'"{kw}" (المغرب OR مغربية) when:1d')
+      queries.append(f'"{kw}" (قضاء OR محكمة OR عدالة بالمغرب) when:1d')
 
   for q in queries:
     if len(results) >= max_count:
@@ -990,53 +1028,71 @@ def fetch_moroccan_sites(user_kw, max_count=35):
   return results
 
 
-def fetch_youtube_posts(user_kw, max_count=15):
+def fetch_youtube_posts(custom_input, max_count=15):
   results = []
   seen = set()
   headers = {"User-Agent": "Mozilla/5.0"}
-  query = f'site:youtube.com "{user_kw}" when:1d'.strip()
-  try:
-    enc = urllib.parse.quote(query)
-    url = f"https://news.google.com/rss/search?q={enc}&hl=ar&gl=MA&ceid=MA:ar"
-    resp = requests.get(url, headers=headers, timeout=8)
-    root = ET.fromstring(resp.content)
-    for item in root.findall(".//item"):
-      link = item.find("link").text if item.find("link") is not None else ""
-      if not link or link in seen or "youtube.com" not in link:
-        continue
-      title = item.find("title").text if item.find("title") is not None else ""
-      pdate = (
-          item.find("pubDate").text if item.find("pubDate") is not None else ""
-      )
-      desc = (
-          item.find("description").text
-          if item.find("description") is not None
-          else ""
-      )
 
-      results.append({
-          "platform": "YouTube",
-          "source": "قناة YouTube",
-          "title": title.replace(" - YouTube", ""),
-          "link": link,
-          "date": pdate,
-          "timestamp": calculate_precise_timestamp(pdate),
-          "snippet": (
-              re.sub(r"<[^>]+>", "", desc)
-              or f"فيديو يوتيوب حول موضوع: {user_kw}"
-          ),
-          "is_target": 0,
-      })
-      seen.add(link)
-      if len(results) >= max_count:
-        break
-  except Exception:
-    pass
+  # استعلامات يوتيوب بدون حصر خاطئ بـ OR داخل التنصيص
+  yt_queries = [
+      'site:youtube.com "المجلس الأعلى للسلطة القضائية" when:1d',
+      'site:youtube.com "القضاء المغربي" when:1d',
+  ]
+  cleaned = custom_input.strip()
+  if cleaned:
+    kws = [k.strip() for k in cleaned.split(",") if k.strip()]
+    for kw in kws:
+      yt_queries.append(f'site:youtube.com "{kw}" المغرب when:1d')
+
+  for query in yt_queries:
+    if len(results) >= max_count:
+      break
+    try:
+      enc = urllib.parse.quote(query)
+      url = f"https://news.google.com/rss/search?q={enc}&hl=ar&gl=MA&ceid=MA:ar"
+      resp = requests.get(url, headers=headers, timeout=8)
+      root = ET.fromstring(resp.content)
+      for item in root.findall(".//item"):
+        link = item.find("link").text if item.find("link") is not None else ""
+        if not link or link in seen or "youtube.com" not in link:
+          continue
+        title = (
+            item.find("title").text if item.find("title") is not None else ""
+        )
+        pdate = (
+            item.find("pubDate").text
+            if item.find("pubDate") is not None
+            else ""
+        )
+        desc = (
+            item.find("description").text
+            if item.find("description") is not None
+            else ""
+        )
+
+        results.append({
+            "platform": "YouTube",
+            "source": "قناة YouTube",
+            "title": title.replace(" - YouTube", ""),
+            "link": link,
+            "date": pdate,
+            "timestamp": calculate_precise_timestamp(pdate),
+            "snippet": (
+                re.sub(r"<[^>]+>", "", desc)
+                or "فيديو يوتيوب حول الشأن القضائي بالمغرب"
+            ),
+            "is_target": 0,
+        })
+        seen.add(link)
+        if len(results) >= max_count:
+          break
+    except Exception:
+      pass
 
   return results
 
 
-def fetch_social_network_posts(user_kw, platform_name, max_count=15):
+def fetch_social_network_posts(custom_input, platform_name, max_count=15):
   results = []
   seen = set()
   headers = {"User-Agent": "Mozilla/5.0"}
@@ -1048,81 +1104,113 @@ def fetch_social_network_posts(user_kw, platform_name, max_count=15):
       "Instagram": "site:instagram.com",
       "LinkedIn": "site:linkedin.com",
   }
-  target_site = domain_map.get(platform_name, "")
-  q = f'{target_site} "{user_kw}" when:1d'.strip()
+  site_tag = domain_map.get(platform_name, "")
 
-  try:
-    enc = urllib.parse.quote(q)
-    url = f"https://news.google.com/rss/search?q={enc}&hl=ar&gl=MA&ceid=MA:ar"
-    resp = requests.get(url, headers=headers, timeout=8)
-    root = ET.fromstring(resp.content)
-    for item in root.findall(".//item"):
-      link = item.find("link").text if item.find("link") is not None else ""
-      if not link or link in seen:
-        continue
-      title = item.find("title").text if item.find("title") is not None else ""
-      desc = (
-          item.find("description").text
-          if item.find("description") is not None
-          else ""
-      )
-      pdate = (
-          item.find("pubDate").text if item.find("pubDate") is not None else ""
-      )
+  queries = [
+      f'{site_tag} "المجلس الأعلى للسلطة القضائية" when:1d',
+      f'{site_tag} "القضاء المغربي" when:1d',
+  ]
+  cleaned = custom_input.strip()
+  if cleaned:
+    kws = [k.strip() for k in cleaned.split(",") if k.strip()]
+    for kw in kws:
+      queries.append(f'{site_tag} "{kw}" المغرب when:1d')
 
-      results.append({
-          "platform": platform_name,
-          "source": f"منشور {platform_name}",
-          "title": title,
-          "link": link,
-          "date": pdate,
-          "timestamp": calculate_precise_timestamp(pdate),
-          "snippet": (
-              re.sub(r"<[^>]+>", "", desc)
-              or f"منشور على {platform_name} حول {user_kw}"
-          ),
-          "is_target": 0,
-      })
-      seen.add(link)
-      if len(results) >= max_count:
-        break
-  except Exception:
-    pass
+  for q in queries:
+    if len(results) >= max_count:
+      break
+    try:
+      enc = urllib.parse.quote(q)
+      url = f"https://news.google.com/rss/search?q={enc}&hl=ar&gl=MA&ceid=MA:ar"
+      resp = requests.get(url, headers=headers, timeout=8)
+      root = ET.fromstring(resp.content)
+      for item in root.findall(".//item"):
+        link = item.find("link").text if item.find("link") is not None else ""
+        if not link or link in seen:
+          continue
+        title = (
+            item.find("title").text if item.find("title") is not None else ""
+        )
+        desc = (
+            item.find("description").text
+            if item.find("description") is not None
+            else ""
+        )
+        pdate = (
+            item.find("pubDate").text
+            if item.find("pubDate") is not None
+            else ""
+        )
+
+        results.append({
+            "platform": platform_name,
+            "source": f"منشور {platform_name}",
+            "title": title,
+            "link": link,
+            "date": pdate,
+            "timestamp": calculate_precise_timestamp(pdate),
+            "snippet": (
+                re.sub(r"<[^>]+>", "", desc)
+                or f"منشور على {platform_name} حول الشأن القضائي بالمغرب"
+            ),
+            "is_target": 0,
+        })
+        seen.add(link)
+        if len(results) >= max_count:
+          break
+    except Exception:
+      pass
 
   return results
 
 
-def generate_ai_executive_summary(
-    title, snippet, user_kw, domain, key, model_name
-):
+# التحليل الذكي وتوليد ملخص تنفيذي بـ Gemini
+def generate_ai_executive_summary(title, snippet, custom_input, key, model_name):
   try:
     genai.configure(api_key=key)
     m = genai.GenerativeModel(model_name)
-    prompt = f"""
+
+    if custom_input.strip():
+      prompt = f"""
 أنت مستشار قضائي وإعلامي ومحلل محتوى مغربي.
-الموضوع المطلوب: {user_kw}
-المجال القانوني: {domain}
+الموضوع والكلمات المفتاحية المخصصة المطلوبة: {custom_input}
+المجال العام: شؤون القضاء والعدالة بالمملكة المغربية.
 
 المادة المرصودة:
 العنوان: {title}
 المحتوى: {snippet}
 
 المطلوب:
-1. هل هذا الخبر أو المنشور يخص المغرب ويتناول الموضوع المطلوب ({user_kw}) أو الشأن القضائي/القانوني المرتبط به؟ إذا كان خبراً خارج السياق تماماً أجب بـ NO فقط.
-2. إذا كان مطابقاً، أجب بالصيغة التالية:
-YES: [اكتب ملخصاً إخبارياً تنفيذياً في 2 إلى 3 جمل مركزة، يوضح بدقة موضوع المنشور/الفيديو، وأبرز القرارات أو الوقائع القانونية والموقف الصادر].
+1. هل هذا الخبر يخص المغرب ويتناول الموضوع والكلمات المطلوبة ({custom_input}) في إطار العدالة والقضاء؟ إذا كان خارج السياق أجب بـ NO فقط.
+2. إذا كان مطابقاً، أجب بـ:
+YES: [اكتب ملخصاً إخبارياً تنفيذياً في 2 إلى 3 جمل مركزة، يوضح بدقة موضوع المنشور/الفيديو، وأبرز الوقائع القانونية المعلنة].
 """
+    else:
+      prompt = f"""
+أنت مستشار قضائي وإعلامي ومحلل محتوى مغربي.
+المجال المطلوب: شؤون القضاء والعدالة، المحاكم، والمجلس الأعلى للسلطة القضائية بالمملكة المغربية عامة.
+
+المادة المرصودة:
+العنوان: {title}
+المحتوى: {snippet}
+
+المطلوب:
+1. هل هذا الخبر يخص المملكة المغربية ويتناول شؤون القضاء، المحاكم، المجلس الأعلى للسلطة القضائية، النيابة العامة، أو ملفات قضائية وقانونية بالمغرب؟ إذا كان خبراً دولياً أو خارج السياق أجب بـ NO فقط.
+2. إذا كان مطابقاً، أجب بـ:
+YES: [اكتب ملخصاً إخبارياً تنفيذياً في 2 إلى 3 جمل مركزة، يوضح بدقة ما ورد في الخبر وقيمته القضائية].
+"""
+
     res = m.generate_content(prompt)
     txt = res.text.strip()
     if txt.startswith("YES"):
       return True, txt.replace("YES:", "").replace("YES", "").strip()
     return False, ""
   except Exception:
-    return True, f"مادة إخبارية مطابقة للكلمة المفتاحية: {user_kw}"
+    return True, "خبر قضائي مغربي مطابق للنطاق المعتمد."
 
 
 def send_rich_telegram_alert(token, chat_id, item):
-  tag = "⭐ [رصد حصري من صفحة متابعة]" if item.get("is_target") else "⚖️ [رصد جديد]"
+  tag = "⭐ [رصد حصري من صفحة متابعة]" if item.get("is_target") else "⚖️ [رصد قضائي جديد]"
   msg = (
       f"{tag}\n\n"
       f"🌐 *المنصة:* {item['platform']}\n"
@@ -1143,7 +1231,7 @@ def send_rich_telegram_alert(token, chat_id, item):
     pass
 
 
-def process_and_save_items(items_list, user_kw, is_target_run=False):
+def process_and_save_items(items_list, custom_input, is_target_run=False):
   conn = sqlite3.connect("morocco_justice_hub.db")
   c = conn.cursor()
   new_count = 0
@@ -1153,7 +1241,6 @@ def process_and_save_items(items_list, user_kw, is_target_run=False):
     if c.fetchone():
       continue
 
-    # للصفحات المخصصة لا نرفض المنشورات بل نلخصها فوراً
     if is_target_run or it.get("is_target"):
       summary = ""
       try:
@@ -1179,8 +1266,7 @@ def process_and_save_items(items_list, user_kw, is_target_run=False):
       is_valid, summary = generate_ai_executive_summary(
           it["title"],
           it["snippet"],
-          user_kw,
-          target_domain,
+          custom_input,
           gemini_api_key,
           model_choice,
       )
@@ -1215,47 +1301,42 @@ def process_and_save_items(items_list, user_kw, is_target_run=False):
   return new_count
 
 
-# تنفيذ دورة الرصد العامة
 def run_general_monitoring_cycle():
-  clean_kw = keywords_input.strip()
-  if not clean_kw or not gemini_api_key:
+  if not gemini_api_key:
     return 0
+  custom_in = keywords_input.strip()
   raw_all = []
-  raw_all.extend(fetch_moroccan_sites(clean_kw, max_count=fetch_limit))
-  raw_all.extend(fetch_youtube_posts(clean_kw, max_count=15))
+  raw_all.extend(fetch_moroccan_sites(custom_in, max_count=fetch_limit))
+  raw_all.extend(fetch_youtube_posts(custom_in, max_count=15))
   raw_all.extend(
-      fetch_social_network_posts(clean_kw, "Facebook", max_count=10)
+      fetch_social_network_posts(custom_in, "Facebook", max_count=10)
   )
   raw_all.extend(
-      fetch_social_network_posts(clean_kw, "X (Twitter)", max_count=10)
+      fetch_social_network_posts(custom_in, "X (Twitter)", max_count=10)
   )
-  raw_all.extend(fetch_social_network_posts(clean_kw, "TikTok", max_count=10))
+  raw_all.extend(fetch_social_network_posts(custom_in, "TikTok", max_count=10))
   raw_all.extend(
-      fetch_social_network_posts(clean_kw, "Instagram", max_count=10)
+      fetch_social_network_posts(custom_in, "Instagram", max_count=10)
   )
   raw_all.extend(
-      fetch_social_network_posts(clean_kw, "LinkedIn", max_count=10)
+      fetch_social_network_posts(custom_in, "LinkedIn", max_count=10)
   )
 
-  # فحص الروابط المستهدفة أيضاً
   targets = load_custom_targets()
   if targets:
     raw_all.extend(execute_multi_target_monitor(targets))
 
-  return process_and_save_items(raw_all, clean_kw)
+  return process_and_save_items(raw_all, custom_in)
 
 
-# ==========================================
-# تشغيل الرصد التلقائي الدوري الحقيقي
-# ==========================================
+# الرصد الدوري التلقائي
 if auto_refresh_enabled and gemini_api_key:
   interval_sec = INTERVAL_OPTIONS.get(selected_interval_label, 900)
   last_run = current_cfg.get("last_auto_run", 0.0)
   now_ts = time.time()
 
-  # إذا حان موعد الرصد الدوري التلقائي
   if (now_ts - last_run) >= interval_sec:
-    with st.spinner(f"🔄 جارٍ تنفيذ الرصد الدوري التلقائي المبرمج..."):
+    with st.spinner("🔄 جارٍ تنفيذ الرصد الدوري التلقائي المبرمج..."):
       added_auto = run_general_monitoring_cycle()
       current_cfg["last_auto_run"] = now_ts
       current_cfg["last_run_time_str"] = datetime.now().strftime(
@@ -1267,7 +1348,7 @@ if auto_refresh_enabled and gemini_api_key:
       )
 
 
-# تنفيذ زر الرصد المخصص
+# زر تشغيل الرصد المخصص
 if run_all_custom_btn:
   if not targets_to_run:
     st.warning("⚠️ يرجى إضافة رابط واحد على الأقل في القائمة.")
@@ -1287,27 +1368,25 @@ if run_all_custom_btn:
           f" وإضافة {added_custom} منشوراً جديداً."
       )
 
-# تنفيذ زر الرصد العام
+# زر تشغيل الرصد العام الشامل
 if start_general_btn:
-  clean_kw = keywords_input.strip()
-  if not clean_kw:
-    st.warning("⚠️ يرجى إدخال الكلمة المفتاحية للبحث العام.")
-  elif not gemini_api_key:
-    st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي.")
+  if not gemini_api_key:
+    st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي أولاً.")
   else:
-    with st.spinner(f"جارٍ الرصد الشامل للكلمة: '{clean_kw}' عبر كل المنصات..."):
+    with st.spinner("جارٍ الرصد القضائي الشامل لكافة المواقع والمنصات..."):
       added = run_general_monitoring_cycle()
       current_cfg["last_auto_run"] = time.time()
       current_cfg["last_run_time_str"] = datetime.now().strftime(
           "%Y-%m-%d %H:%M:%S"
       )
       save_config(current_cfg)
-      st.success(f"✅ اكتمل الفحص! تم رصد وإضافة {added} مادة جديدة.")
+      st.success(
+          f"✅ اكتمل الرصد الشامل! تم رصد وإضافة {added} مادة قضائية جديدة غير"
+          " مكررة."
+      )
 
 
-# ==========================================
-# استرجاع وتقسيم البيانات: الأخبار الحية (آخر 24 ساعة) مقابل الأرشيف (> 24 ساعة)
-# ==========================================
+# استرجاع وتقسيم البيانات (24 ساعة حية مقابل الأرشيف)
 conn = sqlite3.connect("morocco_justice_hub.db")
 c = conn.cursor()
 c.execute(
@@ -1318,14 +1397,12 @@ c.execute(
 all_db_records = c.fetchall()
 conn.close()
 
-# معيار الـ 24 ساعة: أي مادة يزيد عمرها عن 24 ساعة (86400 ثانية) تحال إلى الأرشيف
 now_utc_ts = datetime.now(timezone.utc).timestamp()
 twenty_four_hours_ago = now_utc_ts - 86400
 
 live_records = [r for r in all_db_records if r[5] >= twenty_four_hours_ago]
 archive_records = [r for r in all_db_records if r[5] < twenty_four_hours_ago]
 
-# تصنيف الأخبار الحية لليوم حسب المنصة
 live_news = [r for r in live_records if r[0] == "مواقع وصحف"]
 live_yt = [r for r in live_records if r[0] == "YouTube"]
 live_fb = [r for r in live_records if r[0] == "Facebook"]
@@ -1405,7 +1482,7 @@ tab_live_all, tab_press, tab_facebook, tab_x_plat, tab_youtube, tab_others, tab_
 ])
 
 with tab_live_all:
-  st.subheader("🌐 الأخبار الحية لليوم (آخر 24 ساعة - الأحدث أولاً)")
+  st.subheader("🌐 الأخبار القضائية الحية لليوم (آخر 24 ساعة - الأحدث أولاً)")
   render_cards(live_records)
 
 with tab_press:
@@ -1428,7 +1505,6 @@ with tab_others:
   st.subheader("🟪 لينكد إن وتيك توك وإنستغرام")
   render_cards(live_other)
 
-# تبويب الأرشيف المخصص للأخبار الأقدم من 24 ساعة
 with tab_archive_all:
   st.subheader("🗄️ أرشيف الأخبار والمنشورات السابقة (أقدم من 24 ساعة)")
   st.caption(
@@ -1436,7 +1512,6 @@ with tab_archive_all:
       " هنا وتبقى محفوظة بشكل دائم دون حذف."
   )
 
-  # شريط بحث وفلترة داخل الأرشيف
   search_archive = st.text_input(
       "🔍 ابحث في سجلات الأرشيف:", placeholder="ابحث في الأخبار السابقة..."
   )
