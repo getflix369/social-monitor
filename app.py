@@ -25,27 +25,52 @@ st.markdown(
     html, body, [class*="css"], .stApp {
         direction: rtl !important;
         text-align: right !important;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
     }
-    .stTextInput input, .stTextArea textarea, .stSelectbox div, .stMultiSelect div {
+    p, span, div, h1, h2, h3, h4, h5, h6, label, [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] * {
         direction: rtl !important;
         text-align: right !important;
     }
-    button[data-baseweb="tab"] {
-        font-size: 1.05rem !important;
-        font-weight: bold !important;
+    [data-testid="stHorizontalBlock"] {
         direction: rtl !important;
-        padding: 10px 18px !important;
+        flex-direction: row !important;
+    }
+    [data-testid="column"] {
+        direction: rtl !important;
+        text-align: right !important;
     }
     div[data-baseweb="tab-list"] {
         direction: rtl !important;
         justify-content: flex-start !important;
+        flex-direction: row !important;
         gap: 8px !important;
     }
+    button[data-baseweb="tab"] {
+        direction: rtl !important;
+        text-align: right !important;
+        font-size: 1.05rem !important;
+        font-weight: bold !important;
+        padding: 10px 18px !important;
+    }
+    input, textarea, select, .stTextInput input, .stTextArea textarea, [data-baseweb="input"], [data-baseweb="base-input"] {
+        direction: rtl !important;
+        text-align: right !important;
+    }
+    .stSelectbox div, .stMultiSelect div, [data-baseweb="select"] * {
+        direction: rtl !important;
+        text-align: right !important;
+    }
+    [data-testid="stSidebar"], [data-testid="stSidebarContent"], [data-testid="stSidebar"] * {
+        direction: rtl !important;
+        text-align: right !important;
+    }
     .result-card {
+        direction: rtl !important;
+        text-align: right !important;
         background-color: #ffffff;
         border: 1px solid #e2e8f0;
-        border-right: 6px solid #1e3a8a;
+        border-right: 6px solid #1e3a8a !important;
+        border-left: 1px solid #e2e8f0 !important;
         padding: 18px;
         border-radius: 12px;
         margin-bottom: 16px;
@@ -70,6 +95,8 @@ st.markdown(
     .badge-target { background-color: #059669; }
     .meta-line { color: #64748b; font-size: 0.88em; margin: 8px 0; }
     .desc-box {
+        direction: rtl !important;
+        text-align: right !important;
         background-color: #f8fafc;
         border: 1px solid #e2e8f0;
         padding: 12px;
@@ -80,6 +107,8 @@ st.markdown(
         margin-bottom: 12px;
     }
     .ai-box {
+        direction: rtl !important;
+        text-align: right !important;
         background-color: #f0fdf4;
         border: 1px solid #bbf7d0;
         padding: 10px 14px;
@@ -108,21 +137,6 @@ st.markdown(
     }
     .status-pill-ok { background-color: #dcfce7; color: #15803d; border: 1px solid #86efac; }
     .status-pill-err { background-color: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
-    .custom-box {
-        background-color: #f8fafc;
-        border: 1px solid #cbd5e1;
-        border-right: 5px solid #059669;
-        padding: 18px;
-        border-radius: 12px;
-        margin-bottom: 22px;
-    }
-    .target-item-row {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        padding: 12px;
-        border-radius: 8px;
-        margin-bottom: 10px;
-    }
     @media (max-width: 768px) {
         .stApp { padding: 8px !important; }
         .result-card { padding: 14px !important; }
@@ -136,11 +150,49 @@ st.markdown(
 )
 
 ARCHIVE_JSON_FILE = "articles_archive.json"
-TARGET_PROFILES_FILE = "monitored_profiles.json"
+CUSTOM_TARGETS_FILE = "custom_targets.json"
 CONFIG_FILE = "credentials.json"
 
 
-# 1. نظام حفظ الإعدادات
+# 1. نظام الحفظ الدائم للروابط المخصصة
+def load_custom_targets():
+  # قراءة الروابط من Streamlit Secrets إن وجدت
+  try:
+    if "CUSTOM_TARGETS" in st.secrets:
+      return json.loads(st.secrets["CUSTOM_TARGETS"])
+  except Exception:
+    pass
+
+  # قراءة الروابط من الملف الدائم
+  if os.path.exists(CUSTOM_TARGETS_FILE):
+    try:
+      with open(CUSTOM_TARGETS_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        if isinstance(data, list) and len(data) > 0:
+          return data
+    except Exception:
+      pass
+
+  # القائمة الافتراضية الأولية
+  return [
+      {
+          "url": "https://www.facebook.com/cspj.ma",
+          "platform": "Facebook",
+          "kw": "",
+      },
+      {"url": "https://www.youtube.com/@CSPJ_Maroc", "platform": "YouTube", "kw": ""},
+  ]
+
+
+def save_custom_targets(targets_list):
+  try:
+    with open(CUSTOM_TARGETS_FILE, "w", encoding="utf-8") as f:
+      json.dump(targets_list, f, ensure_ascii=False, indent=2)
+  except Exception:
+    pass
+
+
+# 2. نظام حفظ واسترجاع الإعدادات والمفاتيح
 def load_config():
   cfg = {
       "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
@@ -183,57 +235,7 @@ def save_config(cfg_dict):
 current_cfg = load_config()
 
 
-def load_target_profiles():
-  default_targets = [
-      {
-          "name": "المجلس الأعلى للسلطة القضائية (CSPJ)",
-          "platform": "YouTube",
-          "query": "site:youtube.com/@CSPJ_Maroc OR site:youtube.com 'المجلس الأعلى للسلطة القضائية'",
-          "enabled": True,
-      },
-      {
-          "name": "المجلس الأعلى للسلطة القضائية (فيسبوك)",
-          "platform": "Facebook",
-          "query": "site:facebook.com/cspj.ma OR site:facebook.com 'المجلس الأعلى للسلطة القضائية'",
-          "enabled": True,
-      },
-      {
-          "name": "وزارة العدل المغربية",
-          "platform": "Facebook",
-          "query": "site:facebook.com/justice.gov.ma OR site:facebook.com 'وزارة العدل المغربية'",
-          "enabled": True,
-      },
-      {
-          "name": "رئاسة النيابة العامة بالمغرب",
-          "platform": "Facebook",
-          "query": "site:facebook.com/pmp.ma OR site:facebook.com 'رئاسة النيابة العامة بالمغرب'",
-          "enabled": True,
-      },
-      {
-          "name": "محكمة النقض المغربية",
-          "platform": "X (Twitter)",
-          "query": "(site:x.com OR site:twitter.com) 'محكمة النقض بالمغرب'",
-          "enabled": True,
-      },
-  ]
-  if os.path.exists(TARGET_PROFILES_FILE):
-    try:
-      with open(TARGET_PROFILES_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-    except Exception:
-      pass
-  return default_targets
-
-
-def save_target_profiles(profiles_list):
-  try:
-    with open(TARGET_PROFILES_FILE, "w", encoding="utf-8") as f:
-      json.dump(profiles_list, f, ensure_ascii=False, indent=2)
-  except Exception:
-    pass
-
-
-# 2. تهيئة قاعدة البيانات واستيراد الأرشيف التلقائي
+# 3. تهيئة قاعدة البيانات واستيراد الأرشيف
 def init_db():
   conn = sqlite3.connect("morocco_justice_hub.db")
   c = conn.cursor()
@@ -253,12 +255,15 @@ def init_db():
     """)
   conn.commit()
 
-  # استيراد الأرشيف الدائم إن وجد
   if os.path.exists(ARCHIVE_JSON_FILE):
     try:
       with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
-        archived = json.load(f)
-        for it in archived:
+        content = json.load(f)
+        # دعم الملف سواء كان قائمة مقالات مباشرة أو كائن يحتوي على الأخبار والروابط
+        articles_data = (
+            content.get("articles", []) if isinstance(content, dict) else content
+        )
+        for it in articles_data:
           c.execute(
               """
                     INSERT OR IGNORE INTO items (link, platform, source, title, date_published, pub_timestamp, snippet, ai_analysis, is_target_profile, fetched_at)
@@ -286,7 +291,8 @@ def init_db():
 init_db()
 
 
-def export_db_to_archive_json():
+# تصدير نسخة مدمجة تشمل المقالات وقائمة الروابط المخصصة معاً
+def export_db_and_targets():
   try:
     conn = sqlite3.connect("morocco_justice_hub.db")
     c = conn.cursor()
@@ -310,8 +316,16 @@ def export_db_to_archive_json():
           "is_target_profile": r[8],
           "fetched_at": r[9],
       })
+
+    # دمج المقالات مع الروابط المخصصة
+    export_payload = {
+        "articles": items_list,
+        "custom_targets": load_custom_targets(),
+        "exported_at": datetime.now().isoformat(),
+    }
+
     with open(ARCHIVE_JSON_FILE, "w", encoding="utf-8") as f:
-      json.dump(items_list, f, ensure_ascii=False, indent=2)
+      json.dump(export_payload, f, ensure_ascii=False, indent=2)
   except Exception:
     pass
 
@@ -401,7 +415,6 @@ def parse_target_source(raw_input, selected_platform):
   return platform, name, query
 
 
-# قائمة مدة الرصد التلقائي القابلة للتخصيص
 INTERVAL_OPTIONS = {
     "15 دقيقة": 900,
     "ساعة واحدة": 3600,
@@ -459,9 +472,8 @@ with st.sidebar:
     )
 
   st.divider()
-  st.header("⏱️ الجدولة والرصد الدوري المخصص")
+  st.header("⏱️ الجدولة والرصد الدوري")
 
-  # اختيار مدة الرصد الدوري
   saved_interval = current_cfg.get("refresh_interval", "15 دقيقة")
   interval_keys = list(INTERVAL_OPTIONS.keys())
   default_idx = (
@@ -474,7 +486,6 @@ with st.sidebar:
       "دورية الرصد التلقائي:",
       options=interval_keys,
       index=default_idx,
-      help="اختر المدة الزمنية لتكرار الفحص الآلي",
   )
 
   auto_refresh_enabled = st.checkbox(
@@ -507,30 +518,36 @@ with st.sidebar:
   send_telegram = st.checkbox("إرسال تنبيه إلى Telegram فورياً", value=True)
 
   st.divider()
-  st.header("🛡️ حماية الأرشيف عند تحديث الكود")
-  st.caption(
-      "قبل أن تُحدث كود الموقع على GitHub، نزل نسخة احتياطية من هنا، وبعد"
-      " التحديث ارفعها فوراً حتى لا تفقد أي خبر:"
-  )
+  st.header("🛡️ حماية واستعادة البيانات")
+  st.caption("احفظ نسخة تشمل الأخبار وقائمة الروابط المخصصة لاستعادتها فوراً:")
 
+  # تصدير ملف النسخة الاحتياطية المدمج
+  export_db_and_targets()
   if os.path.exists(ARCHIVE_JSON_FILE):
     with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
       st.download_button(
-          "📥 تنزيل نسخة احتياطية من الأرشيف (قبل التحديث)",
+          "📥 تنزيل الأرشيف والروابط المخصصة (JSON)",
           f.read(),
-          file_name="morocco_justice_backup.json",
+          file_name="morocco_justice_full_backup.json",
           mime="application/json",
       )
 
+  # استعادة الأرشيف والروابط معاً
   uploaded_bk = st.file_uploader(
-      "📤 استعادة الأرشيف (بعد تحديث الكود):", type=["json"]
+      "📤 استعادة الأرشيف والروابط المخصصة:", type=["json"]
   )
   if uploaded_bk is not None:
     try:
-      imported = json.load(uploaded_bk)
+      imported_content = json.load(uploaded_bk)
+      # 1. استعادة المقالات
+      articles_part = (
+          imported_content.get("articles", [])
+          if isinstance(imported_content, dict)
+          else imported_content
+      )
       conn = sqlite3.connect("morocco_justice_hub.db")
       c = conn.cursor()
-      for it in imported:
+      for it in articles_part:
         c.execute(
             """
                 INSERT OR IGNORE INTO items (link, platform, source, title, date_published, pub_timestamp, snippet, ai_analysis, is_target_profile, fetched_at)
@@ -551,111 +568,122 @@ with st.sidebar:
         )
       conn.commit()
       conn.close()
-      export_db_to_archive_json()
-      st.success("✅ تمت استعادة كافة الأخبار السابقة بنجاح!")
+
+      # 2. استعادة الروابط المخصصة
+      if (
+          isinstance(imported_content, dict)
+          and "custom_targets" in imported_content
+      ):
+        save_custom_targets(imported_content["custom_targets"])
+        st.session_state.dynamic_targets = imported_content["custom_targets"]
+
+      export_db_and_targets()
+      st.success(
+          "✅ تمت استعادة كافة الأخبار والروابط المخصصة بنجاح إلى المنظومة!"
+      )
       st.rerun()
     except Exception as e:
-      st.error(f"خطأ أثناء استعادة الأرشيف: {e}")
+      st.error(f"خطأ أثناء الاستعادة: {e}")
 
 st.title("⚖️ المرصد الوطني للعدالة والقضاء بالمغرب")
 st.write(
-    "رصد شامل للمواقع والمنصات، مع ميزة **إضافة روابط متعددة للرصد المخصص**"
-    " والجدولة المرنة، وترتيب **الأحدث أولاً**."
+    "رصد شامل للمواقع والمنصات، مع حفظ دائم **للروابط المخصصة** والجدولة"
+    " التلقائية وترتيب **الأحدث أولاً**."
 )
 
 # ==========================================
-# 1. قسم الرصد المخصص لروابط متعددة مع زر إضافة رابط جديد
+# 1. قسم الرصد المخصص لروابط متعددة مع الحفظ التلقائي الدائم
 # ==========================================
-st.markdown("### 🎯 الرصد المخصص: تتبع روابط وقنوات وصفحات متعددة")
+st.markdown("### 🎯 الرصد المخصص: تتبع روابط وقنوات وصفحات متعددة (محفوظة دائماً)")
 
-# إدارة الروابط في session_state
+# تحميل الروابط المحفوظة مسبقاً في session_state
 if "dynamic_targets" not in st.session_state:
-  st.session_state.dynamic_targets = [
-      {
-          "url": "https://www.facebook.com/cspj.ma",
-          "platform": "Facebook",
-          "kw": "",
-      },
-      {"url": "https://www.youtube.com/@CSPJ_Maroc", "platform": "YouTube", "kw": ""},
-  ]
+  st.session_state.dynamic_targets = load_custom_targets()
 
-# زر إضافة رابط جديد
-c_btn_add, c_btn_clear = st.columns([1, 4])
+c_btn_add, c_btn_save = st.columns([2, 3])
 with c_btn_add:
   if st.button("➕ إضافة رابط جديد"):
     st.session_state.dynamic_targets.append(
         {"url": "", "platform": "كشف تلقائي من الرابط", "kw": ""}
     )
+    save_custom_targets(st.session_state.dynamic_targets)
     st.rerun()
+with c_btn_save:
+  if st.button("💾 حفظ الروابط الحالية بشكل دائم الآن"):
+    save_custom_targets(st.session_state.dynamic_targets)
+    st.toast("✅ تم حفظ قائمة الروابط في القرص الثابت ولن تختفي بعد التحديث.")
 
-# عرض حقول الروابط المضافة ديناميكياً
 targets_to_run = []
+has_changes = False
+
 for idx, item in enumerate(st.session_state.dynamic_targets):
   with st.container():
     c_u1, c_u2, c_u3, c_u4 = st.columns([4, 2, 3, 1])
     with c_u1:
-      item["url"] = st.text_input(
+      new_url = st.text_input(
           f"رابط أو اسم الصفحة/القناة #{idx+1}:",
           value=item.get("url", ""),
           key=f"t_url_{idx}",
           placeholder="مثال: https://facebook.com/page أو @channel",
       )
+      if new_url != item.get("url", ""):
+        item["url"] = new_url
+        has_changes = True
+
     with c_u2:
-      item["platform"] = st.selectbox(
-          "المنصة:",
-          options=[
-              "كشف تلقائي من الرابط",
-              "Facebook",
-              "YouTube",
-              "X (Twitter)",
-              "LinkedIn",
-              "TikTok",
-              "مواقع وصحف",
-          ],
-          index=[
-              "كشف تلقائي من الرابط",
-              "Facebook",
-              "YouTube",
-              "X (Twitter)",
-              "LinkedIn",
-              "TikTok",
-              "مواقع وصحف",
-          ].index(item.get("platform", "كشف تلقائي من الرابط")),
-          key=f"t_plat_{idx}",
+      plat_opts = [
+          "كشف تلقائي من الرابط",
+          "Facebook",
+          "YouTube",
+          "X (Twitter)",
+          "LinkedIn",
+          "TikTok",
+          "مواقع وصحف",
+      ]
+      cur_p = item.get("platform", "كشف تلقائي من الرابط")
+      p_idx = plat_opts.index(cur_p) if cur_p in plat_opts else 0
+      new_plat = st.selectbox(
+          "المنصة:", options=plat_opts, index=p_idx, key=f"t_plat_{idx}"
       )
+      if new_plat != item.get("platform", ""):
+        item["platform"] = new_plat
+        has_changes = True
+
     with c_u3:
-      item["kw"] = st.text_input(
+      new_kw = st.text_input(
           "كلمة مفتاحية للحصر (اختياري):",
           value=item.get("kw", ""),
           key=f"t_kw_{idx}",
           placeholder="اتركه فارغاً لكل منشورات الحساب",
       )
+      if new_kw != item.get("kw", ""):
+        item["kw"] = new_kw
+        has_changes = True
+
     with c_u4:
       st.write("")
       st.write("")
       if st.button("❌", key=f"del_{idx}", help="إزالة هذا الرابط"):
         st.session_state.dynamic_targets.pop(idx)
+        save_custom_targets(st.session_state.dynamic_targets)
         st.rerun()
 
     if item["url"].strip():
       targets_to_run.append(item)
 
-col_run_t1, col_run_t2 = st.columns([2, 1])
-with col_run_t1:
-  run_all_custom_btn = st.button(
-      f"🎯 تشغيل الرصد المخصص لكافة الروابط المضافة ({len(targets_to_run)})"
-      " الآن",
-      type="primary",
-  )
-with col_run_t2:
-  save_all_targets = st.checkbox(
-      "💾 حفظ هذه القائمة في الرصد التلقائي الدائم", value=True
-  )
+# حفظ التعديلات تلقائياً في الملف الثابت
+if has_changes:
+  save_custom_targets(st.session_state.dynamic_targets)
+
+run_all_custom_btn = st.button(
+    f"🎯 تشغيل الرصد المخصص لكافة الروابط المضافة ({len(targets_to_run)}) الآن",
+    type="primary",
+)
 
 st.divider()
 
 # ==========================================
-# 2. حقول الرصد العام للكلمة المفتاحية
+# 2. حقول الرصد العام
 # ==========================================
 st.markdown("### 🌐 الرصد العام الشامل للكلمة المفتاحية:")
 col_g1, col_g2 = st.columns(2)
@@ -683,7 +711,6 @@ def get_time_params(time_mode):
   return 999999, "", None
 
 
-# دالة تنفيذ الرصد لقائمة روابط مخصصة
 def execute_multi_target_monitor(targets_list, time_mode):
   max_h, time_op, _ = get_time_params(time_mode)
   now = datetime.now(timezone.utc)
@@ -755,7 +782,6 @@ def execute_multi_target_monitor(targets_list, time_mode):
   return results
 
 
-# محركات الرصد العام
 def fetch_moroccan_sites(user_kw, time_mode, max_count=35):
   results = []
   seen = set()
@@ -879,6 +905,7 @@ def fetch_youtube_posts(user_kw, time_mode, max_count=15):
         break
   except Exception:
     pass
+
   return results
 
 
@@ -940,10 +967,10 @@ def fetch_social_network_posts(user_kw, platform_name, time_mode, max_count=15):
         break
   except Exception:
     pass
+
   return results
 
 
-# التحليل الذكي وتوليد ملخص تنفيذي
 def generate_ai_executive_summary(
     title, snippet, user_kw, domain, key, model_name
 ):
@@ -1039,55 +1066,30 @@ def process_and_save_items(items_list, user_kw):
         send_rich_telegram_alert(telegram_token, telegram_chat_id, it)
 
   conn.close()
-  export_db_to_archive_json()
+  export_db_and_targets()
   return new_count
 
 
-# تنفيذ رصد الروابط المتعددة
 if run_all_custom_btn:
   if not targets_to_run:
     st.warning("⚠️ يرجى إضافة رابط واحد على الأقل.")
   elif not gemini_api_key:
     st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي.")
   else:
+    save_custom_targets(st.session_state.dynamic_targets)
     with st.spinner(
         f"جارٍ فحص {len(targets_to_run)} رابط وصفحة مستهدفة واستخراج"
         " الملخصات..."
     ):
       c_items = execute_multi_target_monitor(targets_to_run, time_range)
-
-      if save_all_targets:
-        cur_targets = load_target_profiles()
-        for t in targets_to_run:
-          auto_p, d_name, d_query = parse_target_source(
-              t["url"],
-              "Facebook"
-              if t["platform"] == "كشف تلقائي من الرابط"
-              else t["platform"],
-          )
-          if not any(
-              existing.get("query") == d_query for existing in cur_targets
-          ):
-            cur_targets.append({
-                "name": d_name,
-                "platform": auto_p
-                if t["platform"] == "كشف تلقائي من الرابط"
-                else t["platform"],
-                "query": d_query,
-                "enabled": True,
-            })
-        save_target_profiles(cur_targets)
-        st.toast("💾 تم حفظ كافة الروابط في قائمة المراقبة الدائمة بنجاح!")
-
       added_custom = process_and_save_items(
           c_items, "القضاء والعدالة بالمغرب والمواضيع المتابعة"
       )
       st.success(
-          f"🎯 اكتمل الرصد لكافة الروابط المضافة! تم جلب {len(c_items)} مادة،"
-          f" وإضافة {added_custom} منشوراً جديداً بالملخص والروابط."
+          f"🎯 اكتمل الرصد! تم جلب {len(c_items)} مادة، وإضافة {added_custom}"
+          " منشوراً جديداً بالملخص والروابط."
       )
 
-# تنفيذ الرصد العام
 if start_general_btn:
   clean_kw = keywords_input.strip()
   if not clean_kw:
@@ -1133,7 +1135,7 @@ if start_general_btn:
           f" قضائية جديدة تطابق الكلمة '{clean_kw}'."
       )
 
-# استرجاع قاعدة البيانات بفرز صارم: الأحدث أولاً عبر كافة المصادر
+# استرجاع قاعدة البيانات بفرز صارم: الأحدث أولاً
 conn = sqlite3.connect("morocco_justice_hub.db")
 c = conn.cursor()
 c.execute(
@@ -1170,9 +1172,9 @@ def render_cards(items_list):
       }
       b_class = badge_map.get(plat, "badge-site")
       card_border = (
-          "border-right: 6px solid #059669;"
+          "border-right: 6px solid #059669 !important;"
           if is_t
-          else "border-right: 6px solid #1e3a8a;"
+          else "border-right: 6px solid #1e3a8a !important;"
       )
       is_target_tag = (
           " <span class='badge badge-target'>⭐ رصد مخصص</span>" if is_t else ""
@@ -1202,8 +1204,7 @@ def render_cards(items_list):
     st.info("لا توجد مواد مسجلة في هذا القسم حالياً.")
 
 
-# واجهة التبويبات المتقدمة
-tab_unified, tab_targets, tab_news, tab_fb, tab_x, tab_yt, tab_other, tab_manage = st.tabs([
+tab_unified, tab_targets, tab_news, tab_fb, tab_x, tab_yt, tab_other = st.tabs([
     f"⭐ الخلاصة الموحدة - الأحدث أولاً ({len(all_records)})",
     f"🎯 الرصد المخصص والصفحات ({len(target_records)})",
     f"📰 الصحف والمواقع ({len(news_items)})",
@@ -1211,17 +1212,12 @@ tab_unified, tab_targets, tab_news, tab_fb, tab_x, tab_yt, tab_other, tab_manage
     f"⬛ منصة إكس ({len(x_items)})",
     f"📺 يوتيوب ({len(yt_items)})",
     f"🟪 لينكد إن وتيك توك ({len(other_social)})",
-    "⚙️ إدارة الصفحات المتابعة",
 ])
 
 with tab_unified:
   st.subheader(
       "🌐 الخلاصة الموحدة الشاملة (مرتبة بالأحدث دقيقة بدقيقة عبر كافة المنصات"
       " والمواقع)"
-  )
-  st.caption(
-      "هذا التبويب يجمع لك كل ما تم رصده في مكان واحد، حيث تظهر أحدث مادة تم"
-      " نشرها في أي منصة في قمة الترتيب كـ #1."
   )
   render_cards(all_records)
 
@@ -1249,24 +1245,6 @@ with tab_other:
   st.subheader("🟪 منشورات ومقاطع LinkedIn و TikTok و Instagram")
   render_cards(other_social)
 
-with tab_manage:
-  st.subheader("⚙️ إدارة قائمة القنوات والصفحات المتابعة تلقائياً")
-  profiles_data = load_target_profiles()
-
-  for i, p in enumerate(profiles_data):
-    cp1, cp2, cp3 = st.columns([2, 3, 1])
-    with cp1:
-      st.markdown(f"**{p['name']}** ({p['platform']})")
-    with cp2:
-      st.caption(f"`{p['query']}`")
-    with cp3:
-      p["enabled"] = st.checkbox("مفعّل", value=p.get("enabled", True), key=f"pr_{i}")
-
-  if st.button("💾 حفظ تعديلات الحسابات"):
-    save_target_profiles(profiles_data)
-    st.toast("✅ تم تحديث القائمة بنجاح.")
-
-# الرصد الدوري التلقائي حسب المدة المحددة بدقة
 if auto_refresh_enabled:
   sleep_seconds = INTERVAL_OPTIONS.get(selected_interval_label, 900)
   time.sleep(sleep_seconds)
