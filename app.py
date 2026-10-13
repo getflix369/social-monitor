@@ -153,6 +153,14 @@ st.markdown(
     .status-pill-ok { background-color: #dcfce7; color: #15803d; border: 1px solid #86efac; }
     .status-pill-err { background-color: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
 
+    .monitor-panel {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        padding: 16px;
+        border-radius: 12px;
+        margin-bottom: 18px;
+    }
+
     @media (max-width: 768px) {
         .stApp { padding: 6px !important; }
         .result-card { padding: 14px !important; }
@@ -346,7 +354,6 @@ def calculate_precise_timestamp(date_str):
   now = datetime.now(timezone.utc)
   if not date_str:
     return now.timestamp() - 86400
-
   try:
     return parsedate_to_datetime(date_str).timestamp()
   except Exception:
@@ -365,8 +372,6 @@ def calculate_precise_timestamp(date_str):
       return now.timestamp() - (days * 86400)
     elif any(w in s for w in ["أسبوع", "أسبوعين", "أسابيع", "week"]):
       return now.timestamp() - (val * 7 * 86400)
-    elif any(w in s for w in ["شهر", "أشهر", "month"]):
-      return now.timestamp() - (val * 30 * 86400)
   except Exception:
     pass
 
@@ -449,10 +454,6 @@ with st.sidebar:
   auto_refresh_enabled = st.checkbox(
       f"🔄 تفعيل الرصد الدوري التلقائي (كل {selected_interval_label})",
       value=current_cfg.get("auto_refresh", False),
-      help=(
-          "عند تفعيل هذا الخيار وتشغيل الموقع، يتم فحص المصادر وجلب الجديد كل"
-          f" {selected_interval_label} تلقائياً"
-      ),
   )
 
   if (
@@ -523,39 +524,142 @@ with st.sidebar:
         st.session_state.dynamic_targets = imported_content["custom_targets"]
 
       export_db_and_targets()
-      st.success("✅ تمت استعادة كافة الأخبار السابقة والروابط بنجاح!")
+      st.success("✅ تمت استعادة كافة الأخبار السابقة بنجاح!")
       st.rerun()
     except Exception as e:
       st.error(f"خطأ أثناء الاستعادة: {e}")
 
 st.title("⚖️ المرصد الوطني للعدالة والقضاء بالمغرب")
 st.write(
-    "رصد شامل وسريع للمستجدات القضائية: **الأخبار الحية (آخر 24 ساعة)** في"
-    " التبويبات المباشرة، مع نقل الأخبار السابقة تلقائياً إلى **الأرشيف الدائم**."
+    "رصد شامل للمستجدات القضائية: **رصد شامل (الكل)**، **رصد خاص بكل منصة**، أو"
+    " **رصد مخصص لصفحات محددة** مع إمكانية إيقاف أي عملية وشريط تقدم تفاعلي."
 )
 
-# إدارة حالة إيقاف الرصد
-if "stop_requested" not in st.session_state:
-  st.session_state.stop_requested = False
+# إدارة حالة إيقاف كل عملية
+if "stop_flags" not in st.session_state:
+  st.session_state.stop_flags = {
+      "all": False,
+      "custom": False,
+      "press": False,
+      "fb": False,
+      "x": False,
+      "yt": False,
+      "other": False,
+  }
+
+# حقل الكلمات المفتاحية الاختياري
+col_k1, col_k2 = st.columns([1, 2])
+with col_k1:
+  st.info(
+      "🏛️ **الرصد الافتراضي:**\n\n• المجلس الأعلى للسلطة القضائية\n• القضاء"
+      " والمحاكم بالمغرب\n• النيابة العامة والعدالة"
+  )
+with col_k2:
+  keywords_input = st.text_input(
+      "🔑 تخصيص البحث بكلمة أو كلمات إضافية (اختياري):",
+      value="",
+      placeholder=(
+          "اتركه فارغاً للرصد القضائي العام، أو اكتب كلمات: مثلاً: إضراب"
+          " المحامين، محاكمة..."
+      ),
+  )
+
+st.divider()
 
 # ==========================================
-# 1. قسم الرصد المخصص لروابط وقنوات محددة
+# 1. لوحة الرصد الشامل (الكل) مع شريط التقدم وزر الإيقاف
 # ==========================================
-st.markdown("### 🎯 الرصد المخصص لروابط وقنوات وصفحات محددة")
+st.markdown("### 🌐 المستوى الأول: الرصد الشامل (الكل)")
+c_all_run, c_all_stop = st.columns([3, 1])
+with c_all_run:
+  btn_run_all = st.button(
+      "🚀 بدء الرصد الشامل (الكل)", type="primary", key="btn_run_all"
+  )
+with c_all_stop:
+  if st.button("🛑 إيقاف الرصد الشامل", key="btn_stop_all"):
+    st.session_state.stop_flags["all"] = True
+    st.warning("تم طلب إيقاف الرصد الشامل.")
+
+progress_placeholder = st.empty()
+status_placeholder = st.empty()
+
+st.divider()
+
+# ==========================================
+# 2. لوحة الرصد الخاص بكل منصة على حدة مع زر إيقاف لكل منها
+# ==========================================
+st.markdown("### 📱 المستوى الثاني: الرصد الخاص بكل منصة على حدة")
+st.caption(
+    "يمكنك رصد أي منصة بمفردها بنقرة واحدة، مع وجود زر إيقاف مخصص لكل منصة:"
+)
+
+c_p1, c_p2, c_p3 = st.columns(3)
+with c_p1:
+  st.markdown("##### 📰 الصحف والمواقع")
+  cp_run, cp_stop = st.columns([2, 1])
+  with cp_run:
+    btn_run_press = st.button("بدء رصد الصحف", key="btn_run_press")
+  with cp_stop:
+    if st.button("🛑 إيقاف", key="btn_stop_press"):
+      st.session_state.stop_flags["press"] = True
+
+with c_p2:
+  st.markdown("##### 🟦 فيسبوك (Facebook)")
+  cfb_run, cfb_stop = st.columns([2, 1])
+  with cfb_run:
+    btn_run_fb = st.button("بدء رصد فيسبوك", key="btn_run_fb")
+  with cfb_stop:
+    if st.button("🛑 إيقاف", key="btn_stop_fb"):
+      st.session_state.stop_flags["fb"] = True
+
+with c_p3:
+  st.markdown("##### ⬛ منصة إكس (Twitter)")
+  cx_run, cx_stop = st.columns([2, 1])
+  with cx_run:
+    btn_run_x = st.button("بدء رصد إكس", key="btn_run_x")
+  with cx_stop:
+    if st.button("🛑 إيقاف", key="btn_stop_x"):
+      st.session_state.stop_flags["x"] = True
+
+c_p4, c_p5, _ = st.columns([1, 1, 1])
+with c_p4:
+  st.markdown("##### 🟥 يوتيوب (YouTube)")
+  cyt_run, cyt_stop = st.columns([2, 1])
+  with cyt_run:
+    btn_run_yt = st.button("بدء رصد يوتيوب", key="btn_run_yt")
+  with cyt_stop:
+    if st.button("🛑 إيقاف", key="btn_stop_yt"):
+      st.session_state.stop_flags["yt"] = True
+
+with c_p5:
+  st.markdown("##### 🟪 تيك توك ولينكد إن")
+  cother_run, cother_stop = st.columns([2, 1])
+  with cother_run:
+    btn_run_other = st.button("بدء رصد المنصات الأخرى", key="btn_run_other")
+  with cother_stop:
+    if st.button("🛑 إيقاف", key="btn_stop_other"):
+      st.session_state.stop_flags["other"] = True
+
+st.divider()
+
+# ==========================================
+# 3. لوحة الرصد المخصص لروابط وقنوات محددة
+# ==========================================
+st.markdown("### 🎯 المستوى الثالث: الرصد المخصص لروابط وقنوات وصفحات محددة")
 
 if "dynamic_targets" not in st.session_state:
   st.session_state.dynamic_targets = load_custom_targets()
 
-c_btn_add, c_btn_save = st.columns([2, 3])
-with c_btn_add:
+c_add_t, c_save_t = st.columns([2, 3])
+with c_add_t:
   if st.button("➕ إضافة رابط جديد"):
     st.session_state.dynamic_targets.append(
         {"url": "", "platform": "كشف تلقائي من الرابط", "kw": ""}
     )
     save_custom_targets(st.session_state.dynamic_targets)
     st.rerun()
-with c_btn_save:
-  if st.button("💾 حفظ الروابط الحالية بشكل دائم"):
+with c_save_t:
+  if st.button("💾 حفظ الروابط الحالية"):
     save_custom_targets(st.session_state.dynamic_targets)
     st.toast("✅ تم حفظ قائمة الروابط بنجاح.")
 
@@ -597,10 +701,10 @@ for idx, item in enumerate(st.session_state.dynamic_targets):
 
     with c_u3:
       new_kw = st.text_input(
-          "كلمة مفتاحية للحصر داخل الحساب (اختياري):",
+          "كلمة مفتاحية للحصر (اختياري):",
           value=item.get("kw", ""),
           key=f"t_kw_{idx}",
-          placeholder="اتركه فارغاً لرصد كل منشورات الحساب",
+          placeholder="اتركه فارغاً لرصد كل المنشورات",
       )
       if new_kw != item.get("kw", ""):
         item["kw"] = new_kw
@@ -623,55 +727,19 @@ if has_changes:
 c_run_tgt, c_stop_tgt = st.columns([3, 1])
 with c_run_tgt:
   run_all_custom_btn = st.button(
-      f"🎯 تشغيل الرصد المخصص لكافة الروابط ({len(targets_to_run)}) الآن",
+      f"🎯 تشغيل الرصد المخصص للروابط المضافة ({len(targets_to_run)})",
       type="primary",
   )
 with c_stop_tgt:
-  if st.button("🛑 إيقاف الرصد فوراً", key="stop_btn_custom"):
-    st.session_state.stop_requested = True
-    st.warning("تم طلب إيقاف الرصد.")
+  if st.button("🛑 إيقاف الرصد المخصص", key="btn_stop_custom"):
+    st.session_state.stop_flags["custom"] = True
+    st.warning("تم طلب إيقاف الرصد المخصص.")
 
 st.divider()
 
-# ==========================================
-# 2. قسم الرصد العام الشامل
-# ==========================================
-st.markdown("### 🌐 الرصد العام الشامل للعدالة والقضاء بالمغرب:")
-st.caption(
-    "يرصد النظام **تلقائياً وافتراضياً** كل ما يتعلق بالمجلس الأعلى للسلطة"
-    " القضائية، المحاكم، والعدالة بالمغرب. الحقل أدناه اختياري لتخصيص أو إضافة"
-    " كلمات معينة."
-)
-
-col_g1, col_g2 = st.columns([1, 2])
-with col_g1:
-  st.info(
-      "🏛️ **النطاق القضائي التلقائي:**\n\n• المجلس الأعلى للسلطة القضائية\n•"
-      " القضاء والمحاكم بالمغرب\n• النيابة العامة والعدالة ونادي القضاة"
-  )
-with col_g2:
-  keywords_input = st.text_input(
-      "🔑 تخصيص البحث بكلمة أو كلمات إضافية (اختياري):",
-      value="",
-      placeholder=(
-          "اتركه فارغاً للرصد القضائي العام، أو اكتب كلمات: مثلاً: إضراب"
-          " المحامين، محاكمة..."
-      ),
-  )
-
-c_run_gen, c_stop_gen = st.columns([3, 1])
-with c_run_gen:
-  start_general_btn = st.button(
-      "🚀 تشغيل الرصد العام الشامل الآن", type="primary"
-  )
-with c_stop_gen:
-  if st.button("🛑 إيقاف الرصد", key="stop_btn_gen"):
-    st.session_state.stop_requested = True
-    st.warning("تم طلب إيقاف الرصد.")
-
 
 # ==========================================
-# محركات جلب المحتوى للقنوات والمواقع
+# محركات الجلب المتخصصة
 # ==========================================
 def fetch_target_youtube_direct(url_or_handle):
   raw = url_or_handle.strip()
@@ -791,6 +859,9 @@ def fetch_target_social_direct(url_or_handle, platform_name):
   elif "x.com/" in raw or "twitter.com/" in raw:
     m = re.search(r"(?:x\.com|twitter\.com)/([^/?#]+)", raw)
     slug = m.group(1) if m else raw
+  elif "tiktok.com/@" in raw:
+    m = re.search(r"tiktok\.com/@([^/?#]+)", raw)
+    slug = m.group(1) if m else raw
 
   domain_tags = {
       "Facebook": f'site:facebook.com "{slug}"',
@@ -830,12 +901,12 @@ def fetch_target_social_direct(url_or_handle, platform_name):
   return results
 
 
-def execute_multi_target_monitor(targets_list):
+def execute_multi_target_monitor(targets_list, stop_key="custom"):
   all_target_items = []
   seen_links = set()
 
   for t in targets_list:
-    if st.session_state.get("stop_requested"):
+    if st.session_state.stop_flags.get(stop_key) or st.session_state.stop_flags.get("all"):
       break
     u = t["url"].strip()
     if not u:
@@ -878,15 +949,11 @@ def execute_multi_target_monitor(targets_list):
   return all_target_items
 
 
-# ==========================================
-# محرك الرصد العام السريع (المصادر المغربية الأساسية)
-# ==========================================
-def fetch_moroccan_sites_quick(custom_input, max_count=20):
+def fetch_moroccan_sites_quick(custom_input, max_count=20, stop_key="all"):
   results = []
   seen = set()
   headers = {"User-Agent": "Mozilla/5.0"}
 
-  # استعلامات مركزة وسريعة
   queries = [
       '"المجلس الأعلى للسلطة القضائية" when:1d',
       '"القضاء المغربي" OR "محكمة النقض" when:1d',
@@ -897,7 +964,7 @@ def fetch_moroccan_sites_quick(custom_input, max_count=20):
     queries = [f'"{cleaned}" (قضاء OR محكمة OR عدالة بالمغرب) when:1d']
 
   for q in queries:
-    if st.session_state.get("stop_requested") or len(results) >= max_count:
+    if st.session_state.stop_flags.get(stop_key) or len(results) >= max_count:
       break
     try:
       enc = urllib.parse.quote(q)
@@ -950,7 +1017,7 @@ def fetch_moroccan_sites_quick(custom_input, max_count=20):
 
 
 def fetch_social_network_quick(
-    custom_input, platform_name, target_site, max_count=8
+    custom_input, platform_name, target_site, max_count=8, stop_key="all"
 ):
   results = []
   seen = set()
@@ -961,6 +1028,9 @@ def fetch_social_network_quick(
       else "المجلس الأعلى للسلطة القضائية OR القضاء المغربي"
   )
   q = f'{target_site} "{topic}" when:1d'.strip()
+
+  if st.session_state.stop_flags.get(stop_key):
+    return results
 
   try:
     enc = urllib.parse.quote(q)
@@ -1001,26 +1071,26 @@ def fetch_social_network_quick(
 # ==========================================
 # المعالجة السريعة بالذكاء الاصطناعي مع الحماية من التجميد
 # ==========================================
-def quick_process_and_save(items_list, is_target_run=False):
+def quick_process_and_save(
+    items_list, is_target_run=False, stop_key="all", progress_cb=None
+):
   conn = sqlite3.connect("morocco_justice_hub.db")
   c = conn.cursor()
 
-  # 1. فلترة المواد الموجودة مسبقاً في جزء من الألف من الثانية
   new_candidates = []
   for it in items_list:
     c.execute("SELECT link FROM items WHERE link = ?", (it["link"],))
     if not c.fetchone():
       new_candidates.append(it)
 
-  # تحديد سقف أقصى للمواد الجديدة لتحليلها بـ Gemini في كل دورة (تفادياً لحظر الـ Rate limit والتجميد)
   new_candidates = new_candidates[:8]
   new_count = 0
 
   if new_candidates and gemini_api_key:
-    progress_bar = st.progress(0.0)
     for i, it in enumerate(new_candidates):
-      if st.session_state.get("stop_requested"):
-        st.warning("تم إيقاف معالجة المواد بطلب من المستخدم.")
+      if st.session_state.stop_flags.get(
+          stop_key
+      ) or st.session_state.stop_flags.get("all"):
         break
 
       summary = ""
@@ -1064,7 +1134,6 @@ def quick_process_and_save(items_list, is_target_run=False):
       conn.commit()
       new_count += 1
 
-      # إرسال التنبيه
       if send_telegram and telegram_token and telegram_chat_id:
         tag = (
             "⭐ [رصد حصري من صفحة متابعة]"
@@ -1084,112 +1153,214 @@ def quick_process_and_save(items_list, is_target_run=False):
         try:
           requests.post(
               f"https://api.telegram.org/bot{telegram_token}/sendMessage",
-              json={"chat_id": telegram_chat_id, "text": msg, "parse_mode": "Markdown"},
+              json={
+                  "chat_id": telegram_chat_id,
+                  "text": msg,
+                  "parse_mode": "Markdown",
+              },
               timeout=5,
           )
         except Exception:
           pass
 
-      progress_bar.progress((i + 1) / len(new_candidates))
-      time.sleep(0.4)  # استراحة قصيرة لتفادي الـ Rate limit
+      if progress_cb:
+        progress_cb(float(i + 1) / float(len(new_candidates)))
+      time.sleep(0.3)
 
   conn.close()
   export_db_and_targets()
   return new_count
 
 
-def run_full_scan():
-  st.session_state.stop_requested = False
-  custom_in = keywords_input.strip()
-  status = st.status("🚀 بدء الرصد السريع...", expanded=True)
-
-  raw_items = []
-  status.write("📰 1/4 - جلب مستجدات الصحف والمواقع المغربية...")
-  raw_items.extend(fetch_moroccan_sites_quick(custom_in, max_count=20))
-
-  status.write("📺 2/4 - جلب فيديوهات YouTube الحديثة...")
-  raw_items.extend(
-      fetch_social_network_quick(
-          custom_in, "YouTube", "site:youtube.com", max_count=8
-      )
-  )
-
-  status.write("🌐 3/4 - جلب منشورات فيسبوك وإكس...")
-  raw_items.extend(
-      fetch_social_network_quick(
-          custom_in, "Facebook", "site:facebook.com", max_count=8
-      )
-  )
-  raw_items.extend(
-      fetch_social_network_quick(
-          custom_in,
-          "X (Twitter)",
-          "(site:x.com OR site:twitter.com)",
-          max_count=8,
-      )
-  )
-
-  # فحص الروابط المستهدفة
-  targets = load_custom_targets()
-  if targets:
-    status.write("🎯 4/4 - فحص القنوات والصفحات المخصصة...")
-    raw_items.extend(execute_multi_target_monitor(targets))
-
-  status.write(
-      f"🧠 تحليل المواد بالذكاء الاصطناعي وإرسال التنبيهات إلى Telegram..."
-  )
-  added_count = quick_process_and_save(raw_items, is_target_run=False)
-
-  status.update(
-      label=f"✅ اكتمل الرصد بنجاح! تم العثور على {added_count} مادة جديدة.",
-      state="complete",
-      expanded=False,
-  )
-  return added_count
-
-
-# تشغيل الرصد التلقائي الدوري إن كان الوقت قد حان
-if auto_refresh_enabled and gemini_api_key:
-  interval_sec = INTERVAL_OPTIONS.get(selected_interval_label, 900)
-  last_run = current_cfg.get("last_auto_run", 0.0)
-  now_ts = time.time()
-
-  if (now_ts - last_run) >= interval_sec:
-    added_auto = run_full_scan()
-    current_cfg["last_auto_run"] = now_ts
-    current_cfg["last_run_time_str"] = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-    save_config(current_cfg)
-    st.toast(f"🔄 اكتمل الرصد الدوري التلقائي: +{added_auto} جديدة.")
-
-
-# أزرار التشغيل اليدوي
-if run_all_custom_btn:
-  if not targets_to_run:
-    st.warning("⚠️ يرجى إضافة رابط واحد على الأقل في القائمة.")
-  elif not gemini_api_key:
-    st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي.")
-  else:
-    st.session_state.stop_requested = False
-    save_custom_targets(st.session_state.dynamic_targets)
-    with st.spinner("جارٍ فحص الروابط المستهدفة وتلخيصها..."):
-      t_items = execute_multi_target_monitor(targets_to_run)
-      added_t = quick_process_and_save(t_items, is_target_run=True)
-      st.success(f"🎯 اكتمل الرصد المخصص! تم رصد وتلخيص {added_t} مادة جديدة.")
-
-if start_general_btn:
+# ==========================================
+# تشغيل الرصد الشامل (الكل) مع شريط التقدم التفاعلي
+# ==========================================
+if btn_run_all:
   if not gemini_api_key:
     st.error("⚠️ يرجى إدخال مفتاح Gemini API في الشريط الجانبي أولاً.")
   else:
-    added = run_full_scan()
-    current_cfg["last_auto_run"] = time.time()
-    current_cfg["last_run_time_str"] = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-    save_config(current_cfg)
-    st.success(f"✅ اكتمل الفحص السريع! تم جلب وتلخيص {added} مادة جديدة.")
+    st.session_state.stop_flags["all"] = False
+    custom_in = keywords_input.strip()
 
+    p_bar = progress_placeholder.progress(0.0)
+    status_box = status_placeholder.info("🚀 بدء الرصد الشامل (الكل)...")
+
+    raw_items = []
+
+    # 1/5 الصحف
+    status_box.markdown("📰 **1/5 - جلب مستجدات الصحف والمواقع المغربية...**")
+    p_bar.progress(0.2)
+    raw_items.extend(
+        fetch_moroccan_sites_quick(custom_in, max_count=20, stop_key="all")
+    )
+
+    if not st.session_state.stop_flags["all"]:
+      # 2/5 يوتيوب
+      status_box.markdown("📺 **2/5 - جلب فيديوهات YouTube الحديثة...**")
+      p_bar.progress(0.4)
+      raw_items.extend(
+          fetch_social_network_quick(
+              custom_in, "YouTube", "site:youtube.com", max_count=8, stop_key="all"
+          )
+      )
+
+    if not st.session_state.stop_flags["all"]:
+      # 3/5 فيسبوك
+      status_box.markdown("🟦 **3/5 - جلب منشورات Facebook...**")
+      p_bar.progress(0.6)
+      raw_items.extend(
+          fetch_social_network_quick(
+              custom_in,
+              "Facebook",
+              "site:facebook.com",
+              max_count=8,
+              stop_key="all",
+          )
+      )
+
+    if not st.session_state.stop_flags["all"]:
+      # 4/5 إكس والمنصات الأخرى
+      status_box.markdown("⬛ **4/5 - جلب تغريدات X وتيك توك ولينكد إن...**")
+      p_bar.progress(0.8)
+      raw_items.extend(
+          fetch_social_network_quick(
+              custom_in,
+              "X (Twitter)",
+              "(site:x.com OR site:twitter.com)",
+              max_count=8,
+              stop_key="all",
+          )
+      )
+      raw_items.extend(
+          fetch_social_network_quick(
+              custom_in,
+              "TikTok",
+              "site:tiktok.com",
+              max_count=6,
+              stop_key="all",
+          )
+      )
+      targets = load_custom_targets()
+      if targets:
+        raw_items.extend(execute_multi_target_monitor(targets, stop_key="all"))
+
+    if not st.session_state.stop_flags["all"]:
+      # 5/5 المعالجة الذكية والتليجرام
+      status_box.markdown(
+          "🧠 **5/5 - التحليل الذكي بـ Gemini وإرسال التنبيهات...**"
+      )
+      p_bar.progress(0.95)
+
+      def update_ai_p(fraction):
+        p_bar.progress(min(0.95 + (fraction * 0.05), 1.0))
+
+      added_count = quick_process_and_save(
+          raw_items,
+          is_target_run=False,
+          stop_key="all",
+          progress_cb=update_ai_p,
+      )
+      p_bar.progress(1.0)
+      status_box.success(
+          f"🎉 **اكتمل الرصد الشامل بنجاح!** تم رصد وتلخيص {added_count} مادة"
+          " قضائية جديدة."
+      )
+    else:
+      status_box.warning("⚠️ تم إيقاف عملية الرصد الشامل بواسطة المستخدم.")
+
+# ==========================================
+# تشغيل الرصد الخاص بكل منصة على حدة
+# ==========================================
+if btn_run_press:
+  st.session_state.stop_flags["press"] = False
+  with st.spinner("جارٍ رصد الصحف والمواقع المغربية فقط..."):
+    items = fetch_moroccan_sites_quick(
+        keywords_input.strip(), max_count=20, stop_key="press"
+    )
+    added = quick_process_and_save(items, is_target_run=False, stop_key="press")
+    st.success(f"📰 اكتمل رصد الصحف والمواقع! (+{added} مادة جديدة)")
+
+if btn_run_fb:
+  st.session_state.stop_flags["fb"] = False
+  with st.spinner("جارٍ رصد منشورات فيسبوك فقط..."):
+    items = fetch_social_network_quick(
+        keywords_input.strip(),
+        "Facebook",
+        "site:facebook.com",
+        max_count=12,
+        stop_key="fb",
+    )
+    added = quick_process_and_save(items, is_target_run=False, stop_key="fb")
+    st.success(f"🟦 اكتمل رصد فيسبوك! (+{added} منشور جديد)")
+
+if btn_run_x:
+  st.session_state.stop_flags["x"] = False
+  with st.spinner("جارٍ رصد تغريدات منصة إكس فقط..."):
+    items = fetch_social_network_quick(
+        keywords_input.strip(),
+        "X (Twitter)",
+        "(site:x.com OR site:twitter.com)",
+        max_count=12,
+        stop_key="x",
+    )
+    added = quick_process_and_save(items, is_target_run=False, stop_key="x")
+    st.success(f"⬛ اكتمل رصد منصة إكس! (+{added} تغريدة جديدة)")
+
+if btn_run_yt:
+  st.session_state.stop_flags["yt"] = False
+  with st.spinner("جارٍ رصد فيديوهات يوتيوب فقط..."):
+    items = fetch_social_network_quick(
+        keywords_input.strip(),
+        "YouTube",
+        "site:youtube.com",
+        max_count=10,
+        stop_key="yt",
+    )
+    added = quick_process_and_save(items, is_target_run=False, stop_key="yt")
+    st.success(f"🟥 اكتمل رصد يوتيوب! (+{added} فيديو جديد)")
+
+if btn_run_other:
+  st.session_state.stop_flags["other"] = False
+  with st.spinner("جارٍ رصد تيك توك ولينكد إن فقط..."):
+    items = []
+    items.extend(
+        fetch_social_network_quick(
+            keywords_input.strip(),
+            "TikTok",
+            "site:tiktok.com",
+            max_count=8,
+            stop_key="other",
+        )
+    )
+    items.extend(
+        fetch_social_network_quick(
+            keywords_input.strip(),
+            "LinkedIn",
+            "site:linkedin.com",
+            max_count=8,
+            stop_key="other",
+        )
+    )
+    added = quick_process_and_save(items, is_target_run=False, stop_key="other")
+    st.success(f"🟪 اكتمل رصد تيك توك ولينكد إن! (+{added} مادة جديدة)")
+
+# تشغيل الرصد المخصص
+if run_all_custom_btn:
+  st.session_state.stop_flags["custom"] = False
+  if not targets_to_run:
+    st.warning("⚠️ يرجى إضافة رابط واحد على الأقل في القائمة.")
+  elif not gemini_api_key:
+    st.error("⚠️ يرجى إدخال مفتاح Gemini API أولاً.")
+  else:
+    save_custom_targets(st.session_state.dynamic_targets)
+    with st.spinner(f"جارٍ فحص {len(targets_to_run)} رابط وصفحة مستهدفة..."):
+      t_items = execute_multi_target_monitor(
+          targets_to_run, stop_key="custom"
+      )
+      added_t = quick_process_and_save(
+          t_items, is_target_run=True, stop_key="custom"
+      )
+      st.success(f"🎯 اكتمل الرصد المخصص! تم رصد وتلخيص {added_t} مادة جديدة.")
 
 # ==========================================
 # استرجاع وعرض البيانات: آخر 24 ساعة مقابل الأرشيف
@@ -1207,7 +1378,6 @@ conn.close()
 now_utc_ts = datetime.now(timezone.utc).timestamp()
 twenty_four_hours_ago = now_utc_ts - 86400
 
-# فرز الـ 24 ساعة مقابل الأرشيف
 live_records = [r for r in all_db_records if r[5] >= twenty_four_hours_ago]
 archive_records = [r for r in all_db_records if r[5] < twenty_four_hours_ago]
 
