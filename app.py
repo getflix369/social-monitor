@@ -19,77 +19,110 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# نظام التنسيق الزجاجي الداكن الفاخر (Dark Glassmorphism) والرادار التفاعلي
 st.markdown(
     """
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
+
+    /* 1. الخلفية العامة الداكنة بالكامل */
     html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"], .main, .block-container, [data-testid="stMain"] {
         direction: rtl !important;
         text-align: right !important;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+        font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif !important;
+        background: #090d16 !important;
+        background: radial-gradient(circle at 15% 15%, rgba(30, 58, 138, 0.22) 0%, rgba(9, 13, 22, 1) 85%) !important;
+        color: #f1f5f9 !important;
     }
+
     p, span, div, h1, h2, h3, h4, h5, h6, label, [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] * {
         direction: rtl !important;
         text-align: right !important;
+        color: #f8fafc !important;
     }
-    [data-testid="stHorizontalBlock"] { direction: rtl !important; flex-direction: row !important; }
-    [data-testid="column"] { direction: rtl !important; text-align: right !important; }
 
+    /* 2. الشريط الجانبي الزجاجي */
+    [data-testid="stSidebar"], [data-testid="stSidebarContent"] {
+        direction: rtl !important;
+        text-align: right !important;
+        background: rgba(13, 17, 28, 0.88) !important;
+        backdrop-filter: blur(20px) !important;
+        border-left: 1px solid rgba(255, 255, 255, 0.08) !important;
+    }
+
+    /* 3. حقول الإدخال الزجاجية */
+    input, textarea, select, .stTextInput input, .stTextArea textarea, [data-baseweb="input"], [data-baseweb="base-input"] {
+        direction: rtl !important;
+        text-align: right !important;
+        background: rgba(19, 27, 46, 0.75) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        color: #f8fafc !important;
+        border-radius: 10px !important;
+    }
+    input:focus, textarea:focus {
+        border-color: #38bdf8 !important;
+        box-shadow: 0 0 12px rgba(56, 189, 248, 0.25) !important;
+    }
+
+    /* 4. التبويبات الزجاجية العصرية المختصرة */
     div[data-baseweb="tab-list"] {
         direction: rtl !important;
         justify-content: flex-start !important;
         flex-direction: row !important;
-        gap: 6px !important;
-        border-bottom: 2px solid #e2e8f0 !important;
+        gap: 8px !important;
+        border-bottom: 2px solid rgba(255, 255, 255, 0.08) !important;
+        padding-bottom: 4px !important;
     }
     button[data-baseweb="tab"] {
         direction: rtl !important;
         text-align: center !important;
-        font-size: 0.98rem !important;
+        font-size: 0.96rem !important;
         font-weight: 700 !important;
-        padding: 8px 16px !important;
+        padding: 8px 18px !important;
         border-radius: 8px 8px 0 0 !important;
-        white-space: nowrap !important;
+        background: rgba(19, 27, 46, 0.4) !important;
+        color: #94a3b8 !important;
+        border: 1px solid transparent !important;
+        transition: all 0.2s ease !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background: rgba(56, 189, 248, 0.12) !important;
+        color: #38bdf8 !important;
+        border-bottom: 3px solid #38bdf8 !important;
+        text-shadow: 0 0 10px rgba(56, 189, 248, 0.5) !important;
     }
 
-    input, textarea, select, .stTextInput input, .stTextArea textarea, [data-baseweb="input"], [data-baseweb="base-input"] {
-        direction: rtl !important;
-        text-align: right !important;
-    }
-    .stSelectbox div, .stMultiSelect div, [data-baseweb="select"] * {
-        direction: rtl !important;
-        text-align: right !important;
-    }
-    [data-testid="stSidebar"], [data-testid="stSidebarContent"], [data-testid="stSidebar"] * {
-        direction: rtl !important;
-        text-align: right !important;
-    }
-
+    /* 5. تصميم البطاقات الزجاجية الفاخرة (Glass Cards) */
     .result-card {
         direction: rtl !important;
         text-align: right !important;
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        padding: 18px;
-        border-radius: 12px;
-        margin-bottom: 16px;
-        box-shadow: 0 3px 8px rgba(0,0,0,0.03);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        background: rgba(17, 24, 39, 0.72) !important;
+        backdrop-filter: blur(16px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 20px;
+        border-radius: 14px;
+        margin-bottom: 18px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
     .result-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 14px rgba(0,0,0,0.06);
+        transform: translateY(-3px);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+        border-color: rgba(255, 255, 255, 0.16);
     }
 
-    .border-facebook { border-right: 6px solid #1877f2 !important; }
-    .border-x { border-right: 6px solid #0f1419 !important; }
-    .border-youtube { border-right: 6px solid #e02424 !important; }
-    .border-instagram { border-right: 6px solid #e1306c !important; }
-    .border-tiktok { border-right: 6px solid #111111 !important; }
-    .border-linkedin { border-right: 6px solid #0a66c2 !important; }
-    .border-news { border-right: 6px solid #1e3a8a !important; }
-    .border-target { border-right: 6px solid #059669 !important; }
+    /* إطارات وهوية المنصات بألوان النيون */
+    .border-facebook { border-right: 6px solid #1877f2 !important; box-shadow: 0 0 15px rgba(24, 119, 242, 0.15) !important; }
+    .border-x { border-right: 6px solid #e2e8f0 !important; box-shadow: 0 0 15px rgba(226, 232, 240, 0.1) !important; }
+    .border-youtube { border-right: 6px solid #ef4444 !important; box-shadow: 0 0 15px rgba(239, 68, 68, 0.18) !important; }
+    .border-instagram { border-right: 6px solid #ec4899 !important; box-shadow: 0 0 15px rgba(236, 72, 153, 0.18) !important; }
+    .border-tiktok { border-right: 6px solid #06b6d4 !important; box-shadow: 0 0 15px rgba(6, 182, 212, 0.18) !important; }
+    .border-linkedin { border-right: 6px solid #0284c7 !important; box-shadow: 0 0 15px rgba(2, 132, 199, 0.18) !important; }
+    .border-news { border-right: 6px solid #3b82f6 !important; box-shadow: 0 0 15px rgba(59, 130, 246, 0.15) !important; }
+    .border-target { border-right: 6px solid #10b981 !important; box-shadow: 0 0 15px rgba(16, 185, 129, 0.2) !important; }
     .border-archive { border-right: 6px solid #64748b !important; }
 
+    /* الشارات النيون */
     .badge {
         display: inline-block;
         padding: 4px 10px;
@@ -98,67 +131,138 @@ st.markdown(
         font-size: 0.82em;
         margin-left: 8px;
     }
-    .badge-facebook { background-color: #e7f3ff; color: #1877f2; border: 1px solid #bedaff; }
-    .badge-x { background-color: #f3f4f6; color: #111827; border: 1px solid #d1d5db; }
-    .badge-youtube { background-color: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
-    .badge-instagram { background-color: #fdf2f8; color: #db2777; border: 1px solid #fbcfe8; }
-    .badge-tiktok { background-color: #f1f5f9; color: #0f172a; border: 1px solid #cbd5e1; }
-    .badge-linkedin { background-color: #eff6ff; color: #0284c7; border: 1px solid #bae6fd; }
-    .badge-news { background-color: #f0f9ff; color: #1e3a8a; border: 1px solid #bae6fd; }
-    .badge-target { background-color: #dcfce7; color: #15803d; border: 1px solid #86efac; }
-    .badge-archive { background-color: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+    .badge-facebook { background: rgba(24, 119, 242, 0.18); color: #3b82f6; border: 1px solid rgba(24, 119, 242, 0.4); }
+    .badge-x { background: rgba(241, 245, 249, 0.12); color: #f8fafc; border: 1px solid rgba(241, 245, 249, 0.3); }
+    .badge-youtube { background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+    .badge-instagram { background: rgba(236, 72, 153, 0.18); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.4); }
+    .badge-tiktok { background: rgba(6, 182, 212, 0.18); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.4); }
+    .badge-linkedin { background: rgba(2, 132, 199, 0.18); color: #38bdf8; border: 1px solid rgba(2, 132, 199, 0.4); }
+    .badge-news { background: rgba(59, 130, 246, 0.18); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); }
+    .badge-target { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .badge-archive { background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
 
-    .meta-line { color: #64748b; font-size: 0.88em; margin: 8px 0; }
+    .meta-line { color: #94a3b8 !important; font-size: 0.88em; margin: 8px 0; }
     .desc-box {
         direction: rtl !important;
         text-align: right !important;
-        background-color: #f8fafc;
-        border: 1px solid #e2e8f0;
+        background: rgba(15, 23, 42, 0.6) !important;
+        border: 1px solid rgba(255, 255, 255, 0.06);
         padding: 12px;
         border-radius: 8px;
         font-size: 0.94em;
-        color: #334155;
+        color: #cbd5e1 !important;
         line-height: 1.6;
         margin-bottom: 12px;
     }
     .ai-box {
         direction: rtl !important;
         text-align: right !important;
-        background-color: #f0fdf4;
-        border: 1px solid #bbf7d0;
-        padding: 10px 14px;
+        background: rgba(6, 78, 59, 0.22) !important;
+        border: 1px solid rgba(16, 185, 129, 0.35);
+        padding: 12px 14px;
         border-radius: 8px;
-        color: #166534;
+        color: #6ee7b7 !important;
         font-size: 0.92em;
         margin-bottom: 12px;
+        line-height: 1.6;
     }
     .action-btn {
         display: inline-block;
         padding: 8px 18px;
-        border-radius: 6px;
+        border-radius: 8px;
         color: white !important;
         text-decoration: none !important;
         font-weight: 700;
         font-size: 0.88em;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        transition: opacity 0.2s ease;
     }
-    .status-pill {
-        padding: 6px 12px;
-        border-radius: 6px;
-        font-weight: bold;
-        font-size: 0.88em;
-        text-align: center;
-        margin-bottom: 15px;
-    }
-    .status-pill-ok { background-color: #dcfce7; color: #15803d; border: 1px solid #86efac; }
-    .status-pill-err { background-color: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+    .action-btn:hover { opacity: 0.88; }
 
-    .monitor-panel {
-        background-color: #f8fafc;
-        border: 1px solid #e2e8f0;
-        padding: 16px;
+    /* 6. ماسح ضوئي راداري يدور 360 درجة (360 Radar Scanner) */
+    @keyframes radar-sweep {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    @keyframes radar-blip {
+        0%, 100% { opacity: 0.2; transform: scale(0.8); }
+        50% { opacity: 1; transform: scale(1.2); }
+    }
+    .radar-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        margin: 18px 0;
+        background: rgba(15, 23, 42, 0.7);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(56, 189, 248, 0.25);
+        border-radius: 16px;
+        box-shadow: 0 0 35px rgba(56, 189, 248, 0.15);
+    }
+    .radar-screen {
+        position: relative;
+        width: 130px;
+        height: 130px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(14, 165, 233, 0.08) 0%, rgba(15, 23, 42, 0.9) 70%);
+        border: 2px solid rgba(56, 189, 248, 0.45);
+        box-shadow: 0 0 20px rgba(56, 189, 248, 0.25), inset 0 0 15px rgba(56, 189, 248, 0.15);
+        overflow: hidden;
+        margin-bottom: 12px;
+    }
+    .radar-screen::before {
+        content: '';
+        position: absolute;
+        top: 50%; left: 50%;
+        width: 65px; height: 65px;
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+        border: 1px dashed rgba(56, 189, 248, 0.3);
+    }
+    .radar-sweep-arm {
+        position: absolute;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        border-radius: 50%;
+        background: conic-gradient(from 0deg, rgba(56, 189, 248, 0) 0deg, rgba(56, 189, 248, 0.5) 60deg, transparent 65deg);
+        animation: radar-sweep 2s linear infinite;
+    }
+    .radar-target-dot {
+        position: absolute;
+        top: 38%; left: 62%;
+        width: 7px; height: 7px;
+        background: #38bdf8;
+        border-radius: 50%;
+        box-shadow: 0 0 10px #38bdf8;
+        animation: radar-blip 1.5s ease-in-out infinite;
+    }
+
+    /* 7. مؤشر اكتمال الرصد (Done Indicator) */
+    .done-badge {
+        display: inline-block;
+        padding: 10px 24px;
+        border-radius: 10px;
+        background: rgba(16, 185, 129, 0.15);
+        border: 1px solid #10b981;
+        color: #34d399 !important;
+        font-weight: 800;
+        font-size: 1.15rem;
+        box-shadow: 0 0 25px rgba(16, 185, 129, 0.3);
+        margin: 15px 0;
+        text-align: center;
+    }
+
+    /* تصميم البطاقات الخاصة بالرصد المخصص */
+    .custom-glass-box {
+        background: rgba(15, 23, 42, 0.65) !important;
+        backdrop-filter: blur(16px) !important;
+        border: 1px solid rgba(16, 185, 129, 0.3) !important;
+        border-right: 6px solid #10b981 !important;
+        padding: 18px;
         border-radius: 12px;
-        margin-bottom: 18px;
+        margin-bottom: 22px;
     }
 
     @media (max-width: 768px) {
@@ -384,7 +488,7 @@ INTERVAL_OPTIONS = {
     "3 ساعات": 10800,
     "6 ساعات": 21600,
     "12 ساعة": 43200,
-    "24 ساعة": 86400,
+    "24 ساعة (يوم كامل)": 86400,
 }
 
 # الشريط الجانبي
@@ -531,8 +635,9 @@ with st.sidebar:
 
 st.title("⚖️ المرصد الوطني للعدالة والقضاء بالمغرب")
 st.write(
-    "رصد شامل للمستجدات القضائية: **رصد شامل (الكل)**، **رصد خاص بكل منصة**، أو"
-    " **رصد مخصص لصفحات محددة** مع إمكانية إيقاف أي عملية وشريط تقدم تفاعلي."
+    "رصد شامل وسريع للمستجدات القضائية: **رصد شامل (الكل)**، **رصد خاص بكل"
+    " منصة**، أو **رصد مخصص لصفحات محددة** مع رادار مسح 360° وإمكانية إيقاف أي"
+    " عملية."
 )
 
 # إدارة حالة إيقاف كل عملية
@@ -567,7 +672,7 @@ with col_k2:
 st.divider()
 
 # ==========================================
-# 1. لوحة الرصد الشامل (الكل) مع شريط التقدم وزر الإيقاف
+# 1. لوحة الرصد الشامل (الكل)
 # ==========================================
 st.markdown("### 🌐 المستوى الأول: الرصد الشامل (الكل)")
 c_all_run, c_all_stop = st.columns([3, 1])
@@ -580,17 +685,18 @@ with c_all_stop:
     st.session_state.stop_flags["all"] = True
     st.warning("تم طلب إيقاف الرصد الشامل.")
 
+radar_placeholder = st.empty()
 progress_placeholder = st.empty()
-status_placeholder = st.empty()
+done_placeholder = st.empty()
 
 st.divider()
 
 # ==========================================
-# 2. لوحة الرصد الخاص بكل منصة على حدة مع زر إيقاف لكل منها
+# 2. لوحة الرصد الخاص بكل منصة على حدة بألوانها المميزة
 # ==========================================
 st.markdown("### 📱 المستوى الثاني: الرصد الخاص بكل منصة على حدة")
 st.caption(
-    "يمكنك رصد أي منصة بمفردها بنقرة واحدة، مع وجود زر إيقاف مخصص لكل منصة:"
+    "يمكنك رصد أي منصة بمفردها بألوانها المخصصة، مع زر إيقاف خاص لكل منصة:"
 )
 
 c_p1, c_p2, c_p3 = st.columns(3)
@@ -598,7 +704,7 @@ with c_p1:
   st.markdown("##### 📰 الصحف والمواقع")
   cp_run, cp_stop = st.columns([2, 1])
   with cp_run:
-    btn_run_press = st.button("بدء رصد الصحف", key="btn_run_press")
+    btn_run_press = st.button("📰 رصد الصحف", key="btn_run_press")
   with cp_stop:
     if st.button("🛑 إيقاف", key="btn_stop_press"):
       st.session_state.stop_flags["press"] = True
@@ -607,7 +713,7 @@ with c_p2:
   st.markdown("##### 🟦 فيسبوك (Facebook)")
   cfb_run, cfb_stop = st.columns([2, 1])
   with cfb_run:
-    btn_run_fb = st.button("بدء رصد فيسبوك", key="btn_run_fb")
+    btn_run_fb = st.button("🟦 رصد فيسبوك", key="btn_run_fb")
   with cfb_stop:
     if st.button("🛑 إيقاف", key="btn_stop_fb"):
       st.session_state.stop_flags["fb"] = True
@@ -616,7 +722,7 @@ with c_p3:
   st.markdown("##### ⬛ منصة إكس (Twitter)")
   cx_run, cx_stop = st.columns([2, 1])
   with cx_run:
-    btn_run_x = st.button("بدء رصد إكس", key="btn_run_x")
+    btn_run_x = st.button("⬛ رصد إكس", key="btn_run_x")
   with cx_stop:
     if st.button("🛑 إيقاف", key="btn_stop_x"):
       st.session_state.stop_flags["x"] = True
@@ -626,7 +732,7 @@ with c_p4:
   st.markdown("##### 🟥 يوتيوب (YouTube)")
   cyt_run, cyt_stop = st.columns([2, 1])
   with cyt_run:
-    btn_run_yt = st.button("بدء رصد يوتيوب", key="btn_run_yt")
+    btn_run_yt = st.button("🟥 رصد يوتيوب", key="btn_run_yt")
   with cyt_stop:
     if st.button("🛑 إيقاف", key="btn_stop_yt"):
       st.session_state.stop_flags["yt"] = True
@@ -635,7 +741,7 @@ with c_p5:
   st.markdown("##### 🟪 تيك توك ولينكد إن")
   cother_run, cother_stop = st.columns([2, 1])
   with cother_run:
-    btn_run_other = st.button("بدء رصد المنصات الأخرى", key="btn_run_other")
+    btn_run_other = st.button("🟪 رصد تيك توك/لينكد إن", key="btn_run_other")
   with cother_stop:
     if st.button("🛑 إيقاف", key="btn_stop_other"):
       st.session_state.stop_flags["other"] = True
@@ -728,7 +834,7 @@ c_run_tgt, c_stop_tgt = st.columns([3, 1])
 with c_run_tgt:
   run_all_custom_btn = st.button(
       f"🎯 تشغيل الرصد المخصص للروابط المضافة ({len(targets_to_run)})",
-      type="primary",
+      key="btn_run_custom_main",
   )
 with c_stop_tgt:
   if st.button("🛑 إيقاف الرصد المخصص", key="btn_stop_custom"):
@@ -859,9 +965,6 @@ def fetch_target_social_direct(url_or_handle, platform_name):
   elif "x.com/" in raw or "twitter.com/" in raw:
     m = re.search(r"(?:x\.com|twitter\.com)/([^/?#]+)", raw)
     slug = m.group(1) if m else raw
-  elif "tiktok.com/@" in raw:
-    m = re.search(r"tiktok\.com/@([^/?#]+)", raw)
-    slug = m.group(1) if m else raw
 
   domain_tags = {
       "Facebook": f'site:facebook.com "{slug}"',
@@ -906,7 +1009,9 @@ def execute_multi_target_monitor(targets_list, stop_key="custom"):
   seen_links = set()
 
   for t in targets_list:
-    if st.session_state.stop_flags.get(stop_key) or st.session_state.stop_flags.get("all"):
+    if st.session_state.stop_flags.get(
+        stop_key
+    ) or st.session_state.stop_flags.get("all"):
       break
     u = t["url"].strip()
     if not u:
@@ -1173,7 +1278,7 @@ def quick_process_and_save(
 
 
 # ==========================================
-# تشغيل الرصد الشامل (الكل) مع شريط التقدم التفاعلي
+# تشغيل الرصد الشامل (الكل) مع الرادار ثلاثي الأبعاد ومؤشر DONE
 # ==========================================
 if btn_run_all:
   if not gemini_api_key:
@@ -1182,13 +1287,26 @@ if btn_run_all:
     st.session_state.stop_flags["all"] = False
     custom_in = keywords_input.strip()
 
-    p_bar = progress_placeholder.progress(0.0)
-    status_box = status_placeholder.info("🚀 بدء الرصد الشامل (الكل)...")
+    # إظهار ماسح الرادار الضوئي 360°
+    radar_placeholder.markdown(
+        """
+        <div class="radar-wrapper">
+            <div class="radar-screen">
+                <div class="radar-sweep-arm"></div>
+                <div class="radar-target-dot"></div>
+            </div>
+            <div style="font-weight:700; color:#38bdf8; font-size:1.05rem;">
+                📡 جارٍ المسح الراداري 360° واستطلاع الشبكات والمواقع...
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+    p_bar = progress_placeholder.progress(0.0)
     raw_items = []
 
     # 1/5 الصحف
-    status_box.markdown("📰 **1/5 - جلب مستجدات الصحف والمواقع المغربية...**")
     p_bar.progress(0.2)
     raw_items.extend(
         fetch_moroccan_sites_quick(custom_in, max_count=20, stop_key="all")
@@ -1196,17 +1314,19 @@ if btn_run_all:
 
     if not st.session_state.stop_flags["all"]:
       # 2/5 يوتيوب
-      status_box.markdown("📺 **2/5 - جلب فيديوهات YouTube الحديثة...**")
       p_bar.progress(0.4)
       raw_items.extend(
           fetch_social_network_quick(
-              custom_in, "YouTube", "site:youtube.com", max_count=8, stop_key="all"
+              custom_in,
+              "YouTube",
+              "site:youtube.com",
+              max_count=8,
+              stop_key="all",
           )
       )
 
     if not st.session_state.stop_flags["all"]:
       # 3/5 فيسبوك
-      status_box.markdown("🟦 **3/5 - جلب منشورات Facebook...**")
       p_bar.progress(0.6)
       raw_items.extend(
           fetch_social_network_quick(
@@ -1220,7 +1340,6 @@ if btn_run_all:
 
     if not st.session_state.stop_flags["all"]:
       # 4/5 إكس والمنصات الأخرى
-      status_box.markdown("⬛ **4/5 - جلب تغريدات X وتيك توك ولينكد إن...**")
       p_bar.progress(0.8)
       raw_items.extend(
           fetch_social_network_quick(
@@ -1245,14 +1364,9 @@ if btn_run_all:
         raw_items.extend(execute_multi_target_monitor(targets, stop_key="all"))
 
     if not st.session_state.stop_flags["all"]:
-      # 5/5 المعالجة الذكية والتليجرام
-      status_box.markdown(
-          "🧠 **5/5 - التحليل الذكي بـ Gemini وإرسال التنبيهات...**"
-      )
-      p_bar.progress(0.95)
-
+      # 5/5 المعالجة والذكاء الاصطناعي
       def update_ai_p(fraction):
-        p_bar.progress(min(0.95 + (fraction * 0.05), 1.0))
+        p_bar.progress(min(0.85 + (fraction * 0.15), 1.0))
 
       added_count = quick_process_and_save(
           raw_items,
@@ -1261,24 +1375,38 @@ if btn_run_all:
           progress_cb=update_ai_p,
       )
       p_bar.progress(1.0)
-      status_box.success(
-          f"🎉 **اكتمل الرصد الشامل بنجاح!** تم رصد وتلخيص {added_count} مادة"
-          " قضائية جديدة."
+      radar_placeholder.empty()
+
+      # ظهور مؤشر تـم / DONE الأخضر المتوهج
+      done_placeholder.markdown(
+          f"""
+            <div style="text-align:center;">
+                <div class="done-badge">
+                    ✨ تـم بنجاح / DONE ✨ (+{added_count} مادة جديدة)
+                </div>
+            </div>
+            """,
+          unsafe_allow_html=True,
       )
     else:
-      status_box.warning("⚠️ تم إيقاف عملية الرصد الشامل بواسطة المستخدم.")
+      radar_placeholder.empty()
+      st.warning("⚠️ تم إيقاف عملية الرصد الشامل بواسطة المستخدم.")
 
 # ==========================================
 # تشغيل الرصد الخاص بكل منصة على حدة
 # ==========================================
 if btn_run_press:
   st.session_state.stop_flags["press"] = False
-  with st.spinner("جارٍ رصد الصحف والمواقع المغربية فقط..."):
+  with st.spinner("جارٍ رصد الصحف والمواقع المغربية..."):
     items = fetch_moroccan_sites_quick(
         keywords_input.strip(), max_count=20, stop_key="press"
     )
     added = quick_process_and_save(items, is_target_run=False, stop_key="press")
-    st.success(f"📰 اكتمل رصد الصحف والمواقع! (+{added} مادة جديدة)")
+    st.markdown(
+        f'<div class="done-badge">✨ تـم رصد الصحف بنجاح / DONE ✨ (+{added}'
+        " مادة)</div>",
+        unsafe_allow_html=True,
+    )
 
 if btn_run_fb:
   st.session_state.stop_flags["fb"] = False
@@ -1291,7 +1419,11 @@ if btn_run_fb:
         stop_key="fb",
     )
     added = quick_process_and_save(items, is_target_run=False, stop_key="fb")
-    st.success(f"🟦 اكتمل رصد فيسبوك! (+{added} منشور جديد)")
+    st.markdown(
+        f'<div class="done-badge">✨ تـم رصد فيسبوك بنجاح / DONE ✨ (+{added}'
+        " منشور)</div>",
+        unsafe_allow_html=True,
+    )
 
 if btn_run_x:
   st.session_state.stop_flags["x"] = False
@@ -1304,7 +1436,11 @@ if btn_run_x:
         stop_key="x",
     )
     added = quick_process_and_save(items, is_target_run=False, stop_key="x")
-    st.success(f"⬛ اكتمل رصد منصة إكس! (+{added} تغريدة جديدة)")
+    st.markdown(
+        f'<div class="done-badge">✨ تـم رصد منصة إكس بنجاح / DONE ✨ (+{added}'
+        " تغريدة)</div>",
+        unsafe_allow_html=True,
+    )
 
 if btn_run_yt:
   st.session_state.stop_flags["yt"] = False
@@ -1317,11 +1453,15 @@ if btn_run_yt:
         stop_key="yt",
     )
     added = quick_process_and_save(items, is_target_run=False, stop_key="yt")
-    st.success(f"🟥 اكتمل رصد يوتيوب! (+{added} فيديو جديد)")
+    st.markdown(
+        f'<div class="done-badge">✨ تـم رصد يوتيوب بنجاح / DONE ✨ (+{added}'
+        " فيديو)</div>",
+        unsafe_allow_html=True,
+    )
 
 if btn_run_other:
   st.session_state.stop_flags["other"] = False
-  with st.spinner("جارٍ رصد تيك توك ولينكد إن فقط..."):
+  with st.spinner("جارٍ رصد تيك توك ولينكد إن..."):
     items = []
     items.extend(
         fetch_social_network_quick(
@@ -1342,7 +1482,11 @@ if btn_run_other:
         )
     )
     added = quick_process_and_save(items, is_target_run=False, stop_key="other")
-    st.success(f"🟪 اكتمل رصد تيك توك ولينكد إن! (+{added} مادة جديدة)")
+    st.markdown(
+        f'<div class="done-badge">✨ تـم رصد المنصات الأخرى بنجاح / DONE ✨'
+        f" (+{added} مادة)</div>",
+        unsafe_allow_html=True,
+    )
 
 # تشغيل الرصد المخصص
 if run_all_custom_btn:
@@ -1360,10 +1504,14 @@ if run_all_custom_btn:
       added_t = quick_process_and_save(
           t_items, is_target_run=True, stop_key="custom"
       )
-      st.success(f"🎯 اكتمل الرصد المخصص! تم رصد وتلخيص {added_t} مادة جديدة.")
+      st.markdown(
+          f'<div class="done-badge">✨ تـم الرصد المخصص بنجاح / DONE ✨'
+          f" (+{added_t} مادة)</div>",
+          unsafe_allow_html=True,
+      )
 
 # ==========================================
-# استرجاع وعرض البيانات: آخر 24 ساعة مقابل الأرشيف
+# استرجاع وعرض البيانات الزجاجية الفاخرة
 # ==========================================
 conn = sqlite3.connect("morocco_justice_hub.db")
 c = conn.cursor()
@@ -1392,21 +1540,21 @@ live_other = [
 
 def get_platform_design(plat, is_t):
   if is_t:
-    return "border-target", "badge-target", "رصد مخصص", "#059669"
+    return "border-target", "badge-target", "رصد مخصص", "#10b981"
   p = plat.lower()
   if "facebook" in p or "فيسبوك" in p:
     return "border-facebook", "badge-facebook", "فيسبوك", "#1877f2"
   elif "x" in p or "twitter" in p or "تويتر" in p or "إكس" in p:
-    return "border-x", "badge-x", "إكس", "#0f1419"
+    return "border-x", "badge-x", "إكس", "#f8fafc"
   elif "youtube" in p or "يوتيوب" in p:
-    return "border-youtube", "badge-youtube", "يوتيوب", "#dc2626"
+    return "border-youtube", "badge-youtube", "يوتيوب", "#ef4444"
   elif "instagram" in p or "إنستغرام" in p:
-    return "border-instagram", "badge-instagram", "إنستغرام", "#db2777"
+    return "border-instagram", "badge-instagram", "إنستغرام", "#ec4899"
   elif "tiktok" in p or "تيك توك" in p:
-    return "border-tiktok", "badge-tiktok", "تيك توك", "#0f172a"
+    return "border-tiktok", "badge-tiktok", "تيك توك", "#06b6d4"
   elif "linkedin" in p or "لينكد" in p:
     return "border-linkedin", "badge-linkedin", "لينكدإن", "#0284c7"
-  return "border-news", "badge-news", "صحافة", "#1e3a8a"
+  return "border-news", "badge-news", "صحافة", "#3b82f6"
 
 
 def render_cards(items_list, is_archive_view=False):
