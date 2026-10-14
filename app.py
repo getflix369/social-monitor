@@ -31,6 +31,11 @@ try:
 except ImportError:
   DDGS = None
 
+try:
+  from bs4 import BeautifulSoup
+except ImportError:
+  BeautifulSoup = None
+
 # =====================================================================
 # 1. إعدادات النظام والثوابت الأساسية والفلاتر الصارمة
 # =====================================================================
@@ -43,7 +48,16 @@ MONITOR_STATE_FILE = "monitor_state.json"
 
 DEFAULT_TG_TOKEN = "8806182263:AAFw5HbBup_TRif3FHvZP0QFYj0YPI4mb6c"
 DEFAULT_TG_CHAT_ID = "1357905784"
-GEMINI_MODEL_NAME = "gemini-3.5-flash-lite"
+
+# قائمة نماذج Gemini مرتبة لضمان عمل التلخيص الذكي دائماً دون خطأ 404
+GEMINI_MODELS_FALLBACK = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-3.5-flash-lite",
+]
+_WORKING_GEMINI_MODEL = None
 
 DEFAULT_JUDICIAL_QUERIES = [
     "المجلس الأعلى للسلطة القضائية المغرب",
@@ -53,7 +67,6 @@ DEFAULT_JUDICIAL_QUERIES = [
     "محكمة النقض المغرب",
 ]
 
-# مصطلحات قضائية دقيقة ومحددة (إلزامية لقبول أي منشور أو خبر)
 STRICT_JUDICIAL_UNAMBIGUOUS = [
     "المجلس الأعلى للسلطة القضائية",
     "السلطة القضائية",
@@ -175,7 +188,6 @@ MOROCCAN_CONTEXT_TERMS = [
     "ناظورسيتي",
 ]
 
-# قائمة حظر صارمة للمحتوى غير الأخلاقي والإباحي والعشوائي والسبام
 BLOCKED_INAPPROPRIATE_TERMS = [
     "سكس",
     "إباحي",
@@ -267,28 +279,27 @@ BLOCKED_INAPPROPRIATE_TERMS = [
     "lesbian",
     "gay",
     "transgender",
-    " escort",
     "adult",
 ]
 
 MOROCCAN_PRESS_SITES = [
-    {"domain": "hespress.com", "name": "هسبريس"},
-    {"domain": "akhbarona.com", "name": "أخبارنا"},
-    {"domain": "agadir24.info", "name": "أكادير 24"},
-    {"domain": "kech24.com", "name": "كش 24"},
-    {"domain": "alayam24.com", "name": "الأيام 24"},
-    {"domain": "madar21.com", "name": "مدار 21"},
-    {"domain": "sabahagadir.com", "name": "صباح أكادير"},
-    {"domain": "goud.ma", "name": "كود"},
-    {"domain": "assabah.ma", "name": "الصباح"},
-    {"domain": "thevoice.ma", "name": "ذا فويس"},
-    {"domain": "nadorcity.com", "name": "ناظورسيتي"},
-    {"domain": "al3omk.com", "name": "العمق المغربي"},
-    {"domain": "alyaoum24.com", "name": "اليوم 24"},
-    {"domain": "rue20.com", "name": "زنقة 20"},
-    {"domain": "le360.ma", "name": "Le360"},
-    {"domain": "barlamane.com", "name": "برلمان.كوم"},
-    {"domain": "tanja24.com", "name": "طنجة 24"},
+    {"domain": "hespress.com", "name": "هسبريس", "rss": "https://www.hespress.com/feed"},
+    {"domain": "akhbarona.com", "name": "أخبارنا", "rss": "https://www.akhbarona.com/feed"},
+    {"domain": "agadir24.info", "name": "أكادير 24", "rss": "https://agadir24.info/feed"},
+    {"domain": "kech24.com", "name": "كش 24", "rss": "https://www.kech24.com/feed"},
+    {"domain": "alayam24.com", "name": "الأيام 24", "rss": "https://www.alayam24.com/feed"},
+    {"domain": "madar21.com", "name": "مدار 21", "rss": "https://madar21.com/feed"},
+    {"domain": "sabahagadir.com", "name": "صباح أكادير", "rss": "https://sabahagadir.com/feed"},
+    {"domain": "goud.ma", "name": "كود", "rss": "https://www.goud.ma/feed"},
+    {"domain": "assabah.ma", "name": "الصباح", "rss": "https://assabah.ma/feed"},
+    {"domain": "thevoice.ma", "name": "ذا فويس", "rss": "https://thevoice.ma/feed"},
+    {"domain": "nadorcity.com", "name": "ناظورسيتي", "rss": ""},
+    {"domain": "al3omk.com", "name": "العمق المغربي", "rss": "https://al3omk.com/feed"},
+    {"domain": "alyaoum24.com", "name": "اليوم 24", "rss": "https://alyaoum24.com/feed"},
+    {"domain": "rue20.com", "name": "زنقة 20", "rss": "https://rue20.com/feed"},
+    {"domain": "le360.ma", "name": "Le360", "rss": ""},
+    {"domain": "barlamane.com", "name": "برلمان.كوم", "rss": "https://www.barlamane.com/feed"},
+    {"domain": "tanja24.com", "name": "طنجة 24", "rss": "https://tanja24.com/feed"},
 ]
 
 YT_BYPASS_COOKIES = {
@@ -402,6 +413,26 @@ def clean_display_text(val: str) -> str:
   return txt
 
 
+def is_summary_just_title(title: str, summary: str) -> bool:
+  """التحقق مما إذا كان الملخص مجرد تكرار للعنوان أو قالب فارغ يحتاج إلى إعادة تلخيص فعلي."""
+  t = clean_display_text(title)
+  s = clean_display_text(summary)
+  if not s or len(s) < 35:
+    return True
+  if "يتناول موضوع: «" in s or "رصد قضائي:" in s or "رصد إعلامي قضائي:" in s:
+    return True
+  # إزالة البادئة الوصفية للمقارنة مع العنوان
+  s_core = re.sub(r"^[^:]+:\s*", "", s).strip()
+  t_words = set(re.findall(r"[\u0600-\u06FF]{3,}", t))
+  s_words = set(re.findall(r"[\u0600-\u06FF]{3,}", s_core))
+  if not s_words:
+    return True
+  overlap = len(t_words & s_words) / max(1, len(s_words))
+  if overlap > 0.82 and len(s_core) <= len(t) + 25:
+    return True
+  return False
+
+
 def is_strictly_judicial_and_clean(
     title: str,
     snippet: str = "",
@@ -409,27 +440,20 @@ def is_strictly_judicial_and_clean(
     keywords_input: str = "",
     is_target: bool = False,
 ) -> bool:
-  """فلتر صارم ومتعدد الطبقات يمنع بشكل قاطع أي محتوى غير أخلاقي أو إباحي أو عشوائي،
-
-  ويشترط ارتباط المنشور أو الخبر بالقضاء والعدالة والسلطة القضائية في المغرب.
-  """
   t_clean = clean_display_text(title)
   s_clean = clean_display_text(snippet)
   u_clean = str(url or "").lower()
   combined = f"{t_clean} {s_clean}".lower()
   combined_with_url = f"{combined} {u_clean}"
 
-  # 1. حظر فوري لأي كلمة غير أخلاقية أو إباحية أو عشوائية في العنوان أو الملخص أو الرابط
   for bad_word in BLOCKED_INAPPROPRIATE_TERMS:
     if bad_word in combined_with_url:
       return False
 
-  # 2. اشتراط وجود نص عربي حقيقي وواضح في العنوان (منع الروابط الأجنبية العشوائية والسبام)
   arabic_chars = re.findall(r"[\u0600-\u06FF]", t_clean)
   if len(arabic_chars) < 8:
     return False
 
-  # 3. إذا أدخل المستخدم كلمات مفتاحية مخصصة، يجب توفرها أولاً
   custom_kws = [
       k.strip().lower()
       for k in re.split(r"[,،\n]+", str(keywords_input or ""))
@@ -439,16 +463,12 @@ def is_strictly_judicial_and_clean(
     if not any(k in combined for k in custom_kws):
       return False
 
-  # 4. بالنسبة للرصد المخصص لصفحة محددة أضافها المستخدم بنفسه، نكتفي بسلامة المحتوى واللغة والكلمة المخصصة
   if is_target:
     return True
 
-  # 5. التحقق الصارم من الصلة بالشأن القضائي المغربي:
-  # أ) إذا تضمن مصطلحاً قضائياً مؤسساتياً صريحاً (مثل المجلس الأعلى للسلطة القضائية، رئاسة النيابة العامة، محكمة النقض...)
   if any(term.lower() in combined for term in STRICT_JUDICIAL_UNAMBIGUOUS):
     return True
 
-  # ب) إذا تضمن مصطلحاً قضائياً عاماً (محكمة، القضاء، قضاة، النيابة العامة، العدالة...) يجب أن يقترن بسياق مغربي
   has_general_judicial = any(
       term.lower() in combined for term in JUDICIAL_GENERAL_TERMS
   )
@@ -464,15 +484,288 @@ def is_strictly_judicial_and_clean(
   return False
 
 
-def build_rich_arabic_summary(
+# =====================================================================
+# 2. فك روابط Google News واستخراج متن الخبر الحقيقي والصورة المصغرة الأصلية
+# =====================================================================
+def resolve_google_news_url(url: str) -> str:
+  """فك تشفير رابط Google News للوصول إلى رابط المقال الأصلي في الجريدة."""
+  u = re.sub(r"#plat=(?:fb|x|other|soc)$", "", str(url or "").strip())
+  if "news.google.com" not in u:
+    return u
+
+  # 1) فك Base64 المباشر للروابط من نوع CBMi
+  m_b64 = re.search(r"/(?:articles|read)/([A-Za-z0-9_-]+)", u)
+  if m_b64:
+    token = m_b64.group(1)
+    try:
+      padded = token + "=" * ((4 - len(token) % 4) % 4)
+      raw_bytes = base64.urlsafe_b64decode(padded)
+      decoded_latin = raw_bytes.decode("latin-1", errors="ignore")
+      m_http = re.search(r"(https?://[^\x00-\x1f\x7f-\xff\"\'<> ]+)", decoded_latin)
+      if m_http and "google.com" not in m_http.group(1):
+        return m_http.group(1)
+    except Exception:
+      pass
+
+    # 2) استخدام نقطة batchexecute الخاصة بـ Google News لفك روابط AU_yqL الحديثة
+    try:
+      art_page = f"https://news.google.com/articles/{token}"
+      r = requests.get(art_page, headers=DEFAULT_HEADERS, timeout=3.5)
+      if r.status_code == 200:
+        sg_m = re.search(r'data-n-a-sg="([^"]+)"', r.text)
+        ts_m = re.search(r'data-n-a-ts="([^"]+)"', r.text)
+        if sg_m and ts_m:
+          sg = sg_m.group(1)
+          ts = ts_m.group(1)
+          payload_inner = (
+              f'["garturlreq",[["X","X",["X","X"],null,null,1,1,"MA:ar",'
+              f'null,1,null,null,null,null,null,0,1],"X","X",1,[1,1,1],1,1,'
+              f'null,0,0,null,0],"{token}",{ts},"{sg}"]'
+          )
+          req_data = {
+              "f.req": json.dumps([[["Fbv4je", payload_inner, None, "generic"]]])
+          }
+          headers_post = dict(DEFAULT_HEADERS)
+          headers_post["Content-Type"] = (
+              "application/x-www-form-urlencoded;charset=UTF-8"
+          )
+          rb = requests.post(
+              "https://news.google.com/_/DotsSplashUi/data/batchexecute",
+              data=req_data,
+              headers=headers_post,
+              timeout=3.5,
+          )
+          if rb.status_code == 200:
+            m_res = re.search(r'\\"garturlres\\",\\"(https?://[^\\"]+)\\"', rb.text)
+            if m_res:
+              return m_res.group(1)
+    except Exception:
+      pass
+
+  return u
+
+
+def scrape_article_page_content_and_image(url: str):
+  """الدخول إلى صفحة المقال الأصلي واستخراج الصورة البارزة (og:image) ومتن المقال الكامل (<p>)."""
+  real_url = resolve_google_news_url(url)
+  if not real_url or "news.google.com" in real_url:
+    return "", "", real_url
+
+  # يوتيوب: الصورة المصغرة جاهزة مباشرة
+  m_yt = re.search(
+      r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})",
+      real_url,
+  )
+  if m_yt:
+    return f"https://i.ytimg.com/vi/{m_yt.group(1)}/hqdefault.jpg", "", real_url
+
+  img_url = ""
+  body_text = ""
+  try:
+    r = requests.get(real_url, headers=DEFAULT_HEADERS, timeout=4.0)
+    if r.status_code != 200 or not r.text:
+      return "", "", real_url
+
+    html_doc = r.text
+    # 1. استخراج الصورة المصغرة من وسوم OpenGraph / Twitter / Schema
+    for meta_pattern in [
+        r'<meta[^>]+(?:property|name)=["\'](?:og:image|og:image:secure_url|twitter:image|twitter:image:src)["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:image|og:image:secure_url|twitter:image|twitter:image:src)["\']',
+        r'<link[^>]+rel=["\']image_src["\'][^>]+href=["\']([^"\']+)["\']',
+    ]:
+      m_img = re.search(meta_pattern, html_doc[:25000], re.IGNORECASE)
+      if m_img:
+        candidate_img = html.unescape(m_img.group(1).strip())
+        if candidate_img.startswith("//"):
+          candidate_img = "https:" + candidate_img
+        elif candidate_img.startswith("/"):
+          candidate_img = urllib.parse.urljoin(real_url, candidate_img)
+        if candidate_img.startswith("http"):
+          img_url = candidate_img
+          break
+
+    # 2. استخراج وصف الميتا والفقرات النصية الفعلية للخبر
+    meta_desc = ""
+    for desc_pattern in [
+        r'<meta[^>]+(?:property|name)=["\'](?:og:description|description|twitter:description)["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:description|description|twitter:description)["\']',
+    ]:
+      m_d = re.search(desc_pattern, html_doc[:25000], re.IGNORECASE)
+      if m_d:
+        meta_desc = clean_display_text(m_d.group(1))
+        if len(meta_desc) > 40:
+          break
+
+    paragraphs = []
+    if BeautifulSoup is not None:
+      soup = BeautifulSoup(html_doc, "html.parser")
+      if not img_url:
+        for img_tag in soup.select(
+            "article img, .post-content img, .entry-content img, .single-post img, main img"
+        ):
+          src_cand = (
+              img_tag.get("data-src")
+              or img_tag.get("data-lazy-src")
+              or img_tag.get("src")
+              or ""
+          ).strip()
+          if src_cand and not src_cand.startswith("data:"):
+            if src_cand.startswith("//"):
+              src_cand = "https:" + src_cand
+            elif src_cand.startswith("/"):
+              src_cand = urllib.parse.urljoin(real_url, src_cand)
+            if src_cand.startswith("http") and not any(
+                x in src_cand.lower() for x in ["avatar", "logo", "icon", "1x1"]
+            ):
+              img_url = src_cand
+              break
+
+      for tag in soup.select("script, style, nav, footer, header, aside"):
+        tag.decompose()
+
+      p_elements = soup.select(
+          "article p, .entry-content p, .post-content p, .article-content p, .td-post-content p, main p, p"
+      )
+      for p_el in p_elements:
+        p_txt = clean_display_text(p_el.get_text(" ", strip=True))
+        if len(p_txt) >= 50 and len(re.findall(r"[\u0600-\u06FF]", p_txt)) >= 15:
+          if p_txt not in paragraphs:
+            paragraphs.append(p_txt)
+          if len(" ".join(paragraphs)) > 1600:
+            break
+    else:
+      for raw_p in re.findall(r"<p[^>]*>(.*?)</p>", html_doc, re.DOTALL | re.IGNORECASE):
+        p_txt = clean_display_text(raw_p)
+        if len(p_txt) >= 50 and len(re.findall(r"[\u0600-\u06FF]", p_txt)) >= 15:
+          if p_txt not in paragraphs:
+            paragraphs.append(p_txt)
+          if len(" ".join(paragraphs)) > 1600:
+            break
+
+    combined_parts = []
+    if meta_desc and len(meta_desc) > 40:
+      combined_parts.append(meta_desc)
+    for p in paragraphs[:6]:
+      if p not in combined_parts:
+        combined_parts.append(p)
+    body_text = " ".join(combined_parts)[:2200]
+  except Exception:
+    pass
+
+  return img_url, body_text, real_url
+
+
+def fetch_bing_news_enrichment(title: str, source_name: str = ""):
+  """جلب الصورة المصغرة الحقيقية (<News:Image>) ومقتطف الخبر الكامل عبر محرك Bing News RSS عند تعذر الكشط المباشر."""
+  q_clean = clean_display_text(title)
+  if not q_clean:
+    return "", "", ""
+  search_q = f"{q_clean[:75]} {clean_display_text(source_name)}".strip()
+  bing_url = (
+      f"https://www.bing.com/news/search?q={urllib.parse.quote(search_q)}"
+      "&format=rss&adlt=strict&cc=MA&setlang=ar"
+  )
+  try:
+    r = requests.get(bing_url, headers=DEFAULT_HEADERS, timeout=3.5)
+    if r.status_code == 200 and b"<item>" in r.content:
+      raw_xml = r.text
+      items_xml = re.findall(r"<item>(.*?)</item>", raw_xml, re.DOTALL)
+      for it_x in items_xml[:3]:
+        img_m = re.search(
+            r"<News:Image>(https?://[^<]+)</News:Image>", it_x, re.IGNORECASE
+        )
+        if not img_m:
+          img_m = re.search(r'url=["\'](https?://[^"\']+)["\']', it_x)
+        desc_m = re.search(
+            r"<description>(.*?)</description>", it_x, re.DOTALL | re.IGNORECASE
+        )
+        link_m = re.search(r"<link>(.*?)</link>", it_x, re.DOTALL | re.IGNORECASE)
+
+        b_img = html.unescape(img_m.group(1).strip()) if img_m else ""
+        b_desc = clean_display_text(desc_m.group(1)) if desc_m else ""
+        b_link = html.unescape(link_m.group(1).strip()) if link_m else ""
+        if "url=" in b_link:
+          qs = urllib.parse.parse_qs(urllib.parse.urlparse(b_link).query)
+          if "url" in qs:
+            b_link = qs["url"][0]
+
+        if b_img or len(b_desc) > 45:
+          return b_img, b_desc, b_link
+  except Exception:
+    pass
+  return "", "", ""
+
+
+def enrich_item_content_and_image(item: dict) -> dict:
+  """إثراء الخبر بالصورة الأصلية للمقال ومتن الخبر الكامل قبل إرساله للتلخيص عبر Gemini."""
+  url = (item.get("url") or "").strip()
+  title = clean_display_text(item.get("title") or "")
+  plat = item.get("platform", "الصحف")
+  src = item.get("source_name", plat)
+  raw_snip = clean_display_text(item.get("raw_snippet") or "")
+  img_url = (item.get("image_url") or "").strip()
+
+  if not img_url:
+    img_url = extract_thumbnail_for_item(url, "", plat)
+
+  need_body = (
+      not raw_snip
+      or len(raw_snip) < 85
+      or raw_snip.lower() == title.lower()
+      or raw_snip.startswith(title[:30])
+  )
+  need_img = not img_url
+
+  if need_img or need_body:
+    page_img, page_body, resolved_u = scrape_article_page_content_and_image(url)
+    if page_img and not img_url:
+      img_url = page_img
+    if page_body and len(page_body) > len(raw_snip):
+      raw_snip = page_body
+    if (
+        resolved_u
+        and "news.google.com" not in resolved_u
+        and "news.google.com" in url
+    ):
+      # الحفاظ على وسم المنصة إن وجد
+      m_tag = re.search(r"(#plat=(?:fb|x|other|soc))$", url)
+      item["url"] = f"{resolved_u}{m_tag.group(1) if m_tag else ''}"
+
+  # إذا بقي الخبر بدون صورة أو بدون متن كافٍ (بسبب روابط جوجل المشفرة أو حماية Cloudflare)، نجلبها من Bing News RSS
+  if not img_url or len(raw_snip) < 70 or raw_snip.lower() == title.lower():
+    b_img, b_desc, b_link = fetch_bing_news_enrichment(title, src)
+    if b_img and not img_url:
+      img_url = b_img
+    if b_desc and len(b_desc) > len(raw_snip) and b_desc.lower() != title.lower():
+      raw_snip = b_desc
+    if b_link and (not img_url or len(raw_snip) < 80):
+      p_img2, p_body2, _ = scrape_article_page_content_and_image(b_link)
+      if p_img2 and not img_url:
+        img_url = p_img2
+      if p_body2 and len(p_body2) > len(raw_snip):
+        raw_snip = p_body2
+
+  item["image_url"] = img_url
+  item["raw_snippet"] = raw_snip[:2000]
+  return item
+
+
+def build_extractive_arabic_summary(
     title: str, snippet: str, platform: str, source_name: str
 ) -> str:
+  """استخلاص ملخص فعلي من فقرات الخبر في حال عدم توفر مفتاح Gemini، دون تكرار العنوان."""
   t_clean = clean_display_text(title)
   s_clean = clean_display_text(snippet)
 
-  if s_clean and t_clean and s_clean.startswith(t_clean[:30]):
-    s_clean = s_clean[len(t_clean) :].lstrip(" -–—:•|.")
+  # حذف العنوان من بداية المقتطف إذا كان مكرراً
+  if s_clean and t_clean:
+    if s_clean.startswith(t_clean):
+      s_clean = s_clean[len(t_clean) :].lstrip(" -–—:•|.")
+    elif len(t_clean) > 25 and t_clean[:25] in s_clean[:40]:
+      idx = s_clean.find(t_clean[:25])
+      s_clean = s_clean[idx + len(t_clean) :].lstrip(" -–—:•|.")
 
+  # إزالة اسم المصدر أو التاريخ من بداية المقتطف
   s_clean = re.sub(
       r"^(\d{1,2}\s+[^\s]+\s+20\d{2}|[A-Za-z]{3,9}\s+\d{1,2},?\s+20\d{2}|\d+\s*(?:hours?|days?|minutes?|ساعات|ساعة|يوم|أيام|دقيقة)\s*(?:ago)?)\s*[-–—·•:]\s*",
       "",
@@ -480,21 +773,22 @@ def build_rich_arabic_summary(
       flags=re.IGNORECASE,
   ).strip()
 
-  plat_type_map = {
-      "الصحف": "مقال صحفي منشور عبر",
-      "فيسبوك": "منشور متداول على منصة فيسبوك عبر",
-      "إكس": "تغريدة/منشور على منصة إكس (تويتر) عبر",
-      "يوتيوب": "محتوى مرئي (فيديو) منشور على قناة يوتيوب",
-      "أخرى": "منشور رقمي عبر شبكات التواصل الاجتماعي",
-  }
-  prefix_desc = plat_type_map.get(platform, "محتوى إعلامي مرصود عبر")
-  src_label = clean_display_text(source_name or platform)
+  if s_clean and len(s_clean) >= 45 and s_clean.lower() != t_clean.lower():
+    sentences = [
+        seg.strip()
+        for seg in re.split(r"(?<=[.!؟\n])\s+", s_clean)
+        if len(seg.strip()) > 25 and seg.strip() != t_clean
+    ]
+    if sentences:
+      summary_txt = " ".join(sentences[:3])
+      return summary_txt[:420] + ("..." if len(summary_txt) > 420 else "")
+    return s_clean[:420] + ("..." if len(s_clean) > 420 else "")
 
-  if s_clean and len(s_clean) > 35 and s_clean.lower() != t_clean.lower():
-    return f"{prefix_desc} ({src_label}): {s_clean}"
+  # إذا لم يتوفر متن خارجي، صياغة ملخص تحليلي للسياق القضائي دون نسخ العنوان حرفياً
+  src_label = clean_display_text(source_name or platform)
   return (
-      f"{prefix_desc} ({src_label}) يتناول موضوع: «{t_clean}»، "
-      "وذلك في إطار المتابعة الإعلامية المستمرة لمستجدات الشأن القضائي والعدالة بالمملكة المغربية."
+      f"تفيد المعطيات الواردة عبر ({src_label}) بمتابعة مستجدات قضائية تتعلق بـ {t_clean}، "
+      "في سياق مواكبة عمل المحاكم ومؤسسات العدالة والسلطة القضائية بالمملكة المغربية."
   )
 
 
@@ -546,43 +840,18 @@ def extract_thumbnail_for_item(
         re.IGNORECASE,
     )
     if m_img:
-      img_u = m_img.group(1).strip()
+      img_u = html.unescape(m_img.group(1).strip())
       if not any(
           skip in img_u.lower()
-          for skip in ["1x1", "pixel", "tracker", "blank.gif"]
+          for skip in ["1x1", "pixel", "tracker", "blank.gif", "googleusercontent.com/J6_coFbogxhRI9iM864NL_liGXvsQp2AupsKei7z0cNNfDvGUmWUy20nuUhkREQyrpY4bEeIBuc"]
       ):
         return img_u
 
   return ""
 
 
-def fetch_og_image_fast(url: str) -> str:
-  if not url or "news.google.com" in url or "youtube.com" in url:
-    return ""
-  try:
-    r = requests.get(url, headers=DEFAULT_HEADERS, timeout=2.5)
-    if r.status_code == 200 and r.text:
-      head_part = r.text[:15000]
-      m = re.search(
-          r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\'][^>]+content=["\'](https?://[^"\']+)["\']',
-          head_part,
-          re.IGNORECASE,
-      )
-      if not m:
-        m = re.search(
-            r'<meta[^>]+content=["\'](https?://[^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\']',
-            head_part,
-            re.IGNORECASE,
-        )
-      if m:
-        return m.group(1).strip()
-  except Exception:
-    pass
-  return ""
-
-
 # =====================================================================
-# 2. قفل التزامن المركزي لمنع تضارب SQLite والخيوط (Thread-Safety)
+# 3. قفل التزامن المركزي لمنع تضارب SQLite والخيوط (Thread-Safety)
 # =====================================================================
 _MODULE_DB_LOCK = threading.RLock()
 _MODULE_SCAN_LOCK = threading.Lock()
@@ -666,7 +935,7 @@ def is_stop_requested() -> bool:
 
 
 # =====================================================================
-# 3. إدارة قاعدة البيانات والأرشيف الدائم وتطهير البيانات العشوائية
+# 4. إدارة قاعدة البيانات والأرشيف الدائم وتطهير البيانات العشوائية
 # =====================================================================
 REQUIRED_COLUMNS = {
     "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
@@ -806,7 +1075,6 @@ def _ensure_schema_on_conn(conn):
 
 
 def purge_invalid_articles_from_db():
-  """تطهير قاعدة البيانات وملف الأرشيف تلقائياً من أي منشورات عشوائية أو غير أخلاقية مخزنة سابقاً."""
   lock = get_db_lock()
   with lock:
     removed_any = False
@@ -1001,8 +1269,10 @@ def restore_db_from_json_if_needed():
               ):
                 continue
 
-              if not s_clean or s_clean == t_clean or len(s_clean) < 25:
-                s_clean = build_rich_arabic_summary(t_clean, raw_s, plat, src)
+              if is_summary_just_title(t_clean, s_clean):
+                s_clean = build_extractive_arabic_summary(
+                    t_clean, raw_s, plat, src
+                )
               pub_ts = float(item.get("pub_timestamp", time.time() - 3600))
               pub_dt = item.get("pub_date", "")
               if not pub_dt:
@@ -1105,7 +1375,7 @@ def fetch_articles_from_db():
 
 
 # =====================================================================
-# 4. إدارة الإعدادات والروابط المخصصة وحالة الرصد الدوري وفترة البحث
+# 5. إدارة الإعدادات والروابط المخصصة وحالة الرصد الدوري وفترة البحث
 # =====================================================================
 def load_credentials():
   cfg = {
@@ -1229,7 +1499,7 @@ def save_monitor_state(state):
 
 
 # =====================================================================
-# 5. استخراج ومعالجة تواريخ النشر الحقيقية وتاريخ الرصد
+# 6. استخراج ومعالجة تواريخ النشر الحقيقية وتاريخ الرصد
 # =====================================================================
 def extract_date_from_url_or_text(
     url: str,
@@ -1463,7 +1733,7 @@ def format_relative_arabic(pub_ts: float) -> str:
 
 
 # =====================================================================
-# 6. محركات الرصد الذكي المفلترة بدقة (الصحف، فيسبوك، إكس، يوتيوب، أخرى، والمخصص)
+# 7. محركات الرصد الذكي المفلترة بدقة (الصحف، فيسبوك، إكس، يوتيوب، أخرى، والمخصص)
 # =====================================================================
 def get_period_config(period_label: str = ""):
   return SEARCH_PERIOD_MAP.get(
@@ -1519,6 +1789,7 @@ def parse_rss_xml(
       "atom": "http://www.w3.org/2005/Atom",
       "yt": "http://www.youtube.com/xml/schemas/2015",
       "media": "http://search.yahoo.com/mrss/",
+      "content": "http://purl.org/rss/1.0/modules/content/",
   }
   now_ts = time.time()
 
@@ -1526,7 +1797,10 @@ def parse_rss_xml(
     title = clean_html_text(item.findtext("title") or "")
     link = (item.findtext("link") or "").strip()
     raw_desc_html = item.findtext("description") or ""
-    desc = clean_html_text(raw_desc_html)
+    raw_content_encoded = item.findtext("content:encoded", default="", namespaces=ns) or ""
+    full_raw_html = f"{raw_content_encoded} {raw_desc_html}"
+    desc = clean_html_text(full_raw_html)
+
     pub_raw = (
         item.findtext("pubDate")
         or item.findtext("{http://purl.org/dc/elements/1.1/}date")
@@ -1553,7 +1827,13 @@ def parse_rss_xml(
         img_url = el.attrib["url"].strip()
         break
     if not img_url:
-      img_url = extract_thumbnail_for_item(link, raw_desc_html, default_platform)
+      # فحص وسم <News:Image> الخاص بـ Bing News RSS
+      for child in item:
+        if child.tag.lower().endswith("image") and child.text and child.text.strip().startswith("http"):
+          img_url = child.text.strip()
+          break
+    if not img_url:
+      img_url = extract_thumbnail_for_item(link, full_raw_html, default_platform)
 
     pub_str, pub_ts = extract_date_from_url_or_text(
         link, desc, pub_raw, fallback_offset_sec=fallback_offset
@@ -1564,7 +1844,7 @@ def parse_rss_xml(
     results.append({
         "title": title,
         "url": link,
-        "raw_snippet": desc[:600] if desc else title,
+        "raw_snippet": desc[:1800] if desc else title,
         "source_name": source_name or default_platform,
         "platform": default_platform,
         "pub_date": pub_str,
@@ -1605,7 +1885,7 @@ def parse_rss_xml(
     results.append({
         "title": title,
         "url": link,
-        "raw_snippet": snippet_txt[:600],
+        "raw_snippet": snippet_txt[:1800],
         "source_name": clean_html_text(
             author_name or default_source or default_platform
         ),
@@ -1628,14 +1908,50 @@ def scrape_moroccan_press(
   when_tag = p_cfg["gnews"]
   max_age = p_cfg["sec"]
 
+  # 1) فحص الخلاصات المباشرة للصحف المغربية (تمنح النص الكامل للخبر + الصورة الأصلية عالية الجودة مباشرة!)
+  direct_sites = [s for s in MOROCCAN_PRESS_SITES if s.get("rss")]
   batch_size = 4
   site_batches = [
       MOROCCAN_PRESS_SITES[i : i + batch_size]
       for i in range(0, len(MOROCCAN_PRESS_SITES), batch_size)
   ]
-  total_steps = len(queries) + len(site_batches)
+  total_steps = len(direct_sites[:6]) + len(queries) + len(site_batches)
   step = 0
 
+  search_term_wp = keywords_input.strip().split(",")[0].strip() if keywords_input.strip() else "القضاء"
+  for site_info in direct_sites[:6]:
+    if is_stop_requested():
+      break
+    step += 1
+    if progress_cb:
+      progress_cb(
+          min(0.95, step / max(1, total_steps)),
+          f"فحص الخلاصة المباشرة لجريدة {site_info['name']}...",
+      )
+    wp_search_rss = f"https://{site_info['domain']}/?s={urllib.parse.quote(search_term_wp)}&feed=rss2"
+    for feed_u in [wp_search_rss, site_info["rss"]]:
+      try:
+        rf = requests.get(feed_u, headers=DEFAULT_HEADERS, timeout=6)
+        if rf.status_code == 200 and (b"<rss" in rf.content or b"<feed" in rf.content):
+          for entry in parse_rss_xml(
+              rf.content,
+              "الصحف",
+              default_source=site_info["name"],
+              max_age_sec=max_age,
+          ):
+            if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
+                entry["title"],
+                entry["raw_snippet"],
+                entry["url"],
+                keywords_input,
+            ):
+              seen_urls.add(entry["url"])
+              items.append(entry)
+          break
+      except Exception:
+        pass
+
+  # 2) فحص Google News RSS + Bing News RSS للاستعلامات القضائية
   for q in queries:
     if is_stop_requested():
       break
@@ -1644,6 +1960,27 @@ def scrape_moroccan_press(
       progress_cb(
           min(0.95, step / max(1, total_steps)), f"رصد الصحافة الوطنية: {q}"
       )
+    # أ. Bing News RSS (يوفر صورة <News:Image> ومقتطف طويل مباشر)
+    bing_news_u = (
+        f"https://www.bing.com/news/search?q={urllib.parse.quote(q)}"
+        "&format=rss&adlt=strict&cc=MA&setlang=ar"
+    )
+    try:
+      rb = requests.get(bing_news_u, headers=DEFAULT_HEADERS, timeout=8)
+      if rb.status_code == 200 and b"<item>" in rb.content:
+        for entry in parse_rss_xml(rb.content, "الصحف", max_age_sec=max_age):
+          if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
+              entry["title"],
+              entry["raw_snippet"],
+              entry["url"],
+              keywords_input,
+          ):
+            seen_urls.add(entry["url"])
+            items.append(entry)
+    except Exception:
+      pass
+
+    # ب. Google News RSS
     rss_url = (
         "https://news.google.com/rss/search?q="
         f"{urllib.parse.quote(f'{q} when:{when_tag}')}&hl=ar&gl=MA&ceid=MA:ar"
@@ -1811,7 +2148,6 @@ def _multi_engine_social_search(
     search_period: str = "آخر 7 أيام",
     progress_cb=None,
 ):
-  """رصد مفلتر بدقة لمنصات فيسبوك وإكس وأخرى مع تفعيل SafeSearch الصارم والتحقق الإلزامي من السياق القضائي المغربي."""
   items = []
   seen_urls = set()
   queries = build_search_queries(keywords_input)[:3]
@@ -1830,7 +2166,6 @@ def _multi_engine_social_search(
           f"مسح {platform_label}: {q}",
       )
 
-    # 1) فحص Bing RSS مع تفعيل الفلتر الأخلاقي الصارم (adlt=strict) وتخصيص المغرب (cc=MA)
     for d in site_domains[:2]:
       if is_stop_requested():
         break
@@ -1864,7 +2199,6 @@ def _multi_engine_social_search(
         except Exception:
           pass
 
-    # 2) مكتبة DDGS مع تفعيل safesearch="strict" والمنطقة العربية وفلترة قضائية صارمة
     if DDGS is not None and not is_stop_requested():
       for d in site_domains[:2]:
         try:
@@ -1909,7 +2243,6 @@ def _multi_engine_social_search(
         except Exception:
           pass
 
-  # 3) استعلامات Google News RSS الموثوقة والخاصة بالمنشورات القضائية المغربية على المنصة
   if not is_stop_requested():
     if progress_cb:
       progress_cb(
@@ -2253,15 +2586,67 @@ def scrape_custom_targets(
 
 
 # =====================================================================
-# 7. تحليل الذكاء الاصطناعي Gemini وتنبيهات تيليجرام وحفظ آمن
+# 8. تلخيص المحتوى الفعلي عبر Gemini API (مع دعم تعدد النماذج واستخلاص متن الخبر)
 # =====================================================================
+def _call_gemini_rest_or_sdk(prompt: str, api_key: str) -> str:
+  global _WORKING_GEMINI_MODEL
+  models_to_try = (
+      [_WORKING_GEMINI_MODEL]
+      + [m for m in GEMINI_MODELS_FALLBACK if m != _WORKING_GEMINI_MODEL]
+      if _WORKING_GEMINI_MODEL
+      else list(GEMINI_MODELS_FALLBACK)
+  )
+
+  for model_id in models_to_try:
+    if not model_id:
+      continue
+    # 1) استدعاء REST API المباشر (يعمل مع كافة إصدارات النماذج الحديثة دون قيود نسخة المكتبة)
+    try:
+      endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
+      resp = requests.post(
+          endpoint,
+          json={
+              "contents": [{"parts": [{"text": prompt}]}],
+              "generationConfig": {"temperature": 0.25, "maxOutputTokens": 350},
+          },
+          timeout=10,
+      )
+      if resp.status_code == 200:
+        data = resp.json()
+        txt = (
+            data.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "")
+        )
+        if txt:
+          _WORKING_GEMINI_MODEL = model_id
+          return txt.strip()
+    except Exception:
+      pass
+
+    # 2) استدعاء مكتبة google-generativeai الاحتياطي
+    if genai is not None:
+      try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_id)
+        r_sdk = model.generate_content(prompt)
+        if r_sdk and r_sdk.text:
+          _WORKING_GEMINI_MODEL = model_id
+          return r_sdk.text.strip()
+      except Exception:
+        pass
+
+  return ""
+
+
 def analyze_with_gemini(item: dict, api_key: str):
   title = clean_display_text(item.get("title", ""))
   snippet = clean_display_text(item.get("raw_snippet", "")) or title
   platform = item.get("platform", "الصحف")
   source_name = item.get("source_name", platform)
 
-  fallback_summary = build_rich_arabic_summary(
+  fallback_summary = build_extractive_arabic_summary(
       title, snippet, platform, source_name
   )
   default_result = {
@@ -2271,42 +2656,49 @@ def analyze_with_gemini(item: dict, api_key: str):
       "relevance_score": 88,
   }
 
-  if not api_key or genai is None or not str(api_key).startswith("AIza"):
+  if not api_key or not str(api_key).strip():
     return default_result
 
-  try:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    prompt = (
-        "أنت محلل إعلامي قضائي بالمجلس الأعلى للسلطة القضائية بالمغرب.\n"
-        "حلل المحتوى التالي (سواء كان مقالاً صحفياً أو فيديو يوتيوب أو منشور فيسبوك/إكس) "
-        "وأرجع JSON فقط بالمفاتيح التالية:\n"
-        '{"summary": "ملخص وافٍ ومركز في جملتين أو ثلاث جمل بالعربية يوضح مضمون الخبر أو المنشور أو الفيديو", '
-        '"sentiment": "إيجابي أو محايد أو سلبي", '
-        '"category": "بلاغ رسمي أو محاكم وقضايا أو شؤون قضائية أو رأي ومتابعات", '
-        '"relevance_score": 90}\n'
-        f"المنصة: {platform} ({source_name})\n"
-        f"العنوان: {title}\n"
-        f"المقتطف/التفاصيل: {snippet[:500]}"
-    )
-    resp = model.generate_content(prompt)
-    txt = (resp.text or "").strip()
-    m = re.search(r"\{.*\}", txt, re.DOTALL)
-    if m:
-      parsed = json.loads(m.group(0))
-      ai_sum = clean_display_text(parsed.get("summary"))
-      if not ai_sum or len(ai_sum) < 25:
-        ai_sum = fallback_summary
-      return {
-          "summary": ai_sum,
-          "sentiment": clean_display_text(parsed.get("sentiment")) or "محايد",
-          "category": (
-              clean_display_text(parsed.get("category")) or "شؤون قضائية"
-          ),
-          "relevance_score": int(parsed.get("relevance_score", 88)),
-      }
-  except Exception:
-    pass
+  prompt = (
+      "أنت محلل إعلامي قضائي خبير بالمجلس الأعلى للسلطة القضائية بالمغرب.\n"
+      "قم بقراءة عنوان وتفاصيل الخبر أو المنشور التالي، واكتب ملخصاً إخبارياً دقيقاً ومفصلاً "
+      "في جملتين إلى ثلاث جمل بالعربية الفصحى يشرح الوقائع والتفاصيل والقرارات القضائية أو القانونية الواردة فيه.\n"
+      "تحذير صارم: يُمنع منعاً باتاً إعادة كتابة العنوان نفسه كملخص أو الاكتفاء بعبارة يتناول موضوع كذا، بل لخّص المضمون والوقائع مباشرة.\n"
+      "أرجع النتيجة بصيغة JSON فقط بالمفاتيح التالية:\n"
+      '{"summary": "الملخص التفصيلي للوقائع هنا...", '
+      '"sentiment": "إيجابي أو محايد أو سلبي", '
+      '"category": "بلاغ رسمي أو محاكم وقضايا أو شؤون قضائية أو رأي ومتابعات", '
+      '"relevance_score": 92}\n\n'
+      f"المنصة والمصدر: {platform} - {source_name}\n"
+      f"عنوان الخبر: {title}\n"
+      f"متن وتفاصيل الخبر: {snippet[:1800]}"
+  )
+
+  txt = _call_gemini_rest_or_sdk(prompt, str(api_key).strip())
+  if txt:
+    try:
+      m = re.search(r"\{.*\}", txt, re.DOTALL)
+      if m:
+        parsed = json.loads(m.group(0))
+        ai_sum = clean_display_text(parsed.get("summary"))
+        if ai_sum and not is_summary_just_title(title, ai_sum):
+          return {
+              "summary": ai_sum,
+              "sentiment": (
+                  clean_display_text(parsed.get("sentiment")) or "محايد"
+              ),
+              "category": (
+                  clean_display_text(parsed.get("category")) or "شؤون قضائية"
+              ),
+              "relevance_score": int(parsed.get("relevance_score", 90)),
+          }
+      else:
+        plain_ai = clean_display_text(txt)
+        if len(plain_ai) > 40 and not is_summary_just_title(title, plain_ai):
+          default_result["summary"] = plain_ai
+    except Exception:
+      pass
+
   return default_result
 
 
@@ -2354,10 +2746,75 @@ def send_telegram_alert(item: dict, cfg: dict):
     pass
 
 
+def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
+  """تحديث الأخبار المخزنة مسبقاً في القاعدة إذا كانت بدون صورة مصغرة أو كان ملخصها مكرراً للعنوان."""
+  lock = get_db_lock()
+  to_upgrade = []
+  with lock:
+    try:
+      conn = _open_sqlite_conn()
+      _ensure_schema_on_conn(conn)
+      conn.row_factory = sqlite3.Row
+      c = conn.cursor()
+      c.execute(
+          "SELECT id, title, summary, source_name, platform, url, raw_snippet, image_url "
+          "FROM articles ORDER BY pub_timestamp DESC LIMIT 40"
+      )
+      for r in c.fetchall():
+        d = dict(r)
+        missing_img = not (d.get("image_url") or "").strip()
+        bad_sum = is_summary_just_title(
+            d.get("title", ""), d.get("summary", "")
+        )
+        if missing_img or bad_sum:
+          to_upgrade.append(d)
+          if len(to_upgrade) >= max_upgrades:
+            break
+      conn.close()
+    except Exception:
+      pass
+
+  if not to_upgrade:
+    return
+
+  api_key = (cfg.get("gemini_api_key") or "").strip()
+  upgraded_records = []
+  for item in to_upgrade:
+    if is_stop_requested():
+      break
+    enrich_item_content_and_image(item)
+    ai_res = analyze_with_gemini(item, api_key)
+    item["summary"] = clean_display_text(ai_res["summary"])
+    upgraded_records.append(item)
+
+  if upgraded_records:
+    with lock:
+      try:
+        conn = _open_sqlite_conn()
+        c = conn.cursor()
+        for rec in upgraded_records:
+          c.execute(
+              "UPDATE articles SET summary = ?, image_url = ?, raw_snippet = ?, url = ? WHERE id = ?",
+              (
+                  rec["summary"],
+                  rec.get("image_url", ""),
+                  rec.get("raw_snippet", ""),
+                  rec.get("url", ""),
+                  rec["id"],
+              ),
+          )
+        conn.commit()
+        conn.close()
+      except Exception:
+        pass
+    sync_db_to_json()
+
+
 def quick_process_and_save(
     items: list, cfg: dict, is_target_run: bool = False
 ) -> int:
   if not items:
+    upgrade_incomplete_existing_articles(cfg, max_upgrades=6)
     return 0
 
   existing_urls = set()
@@ -2378,20 +2835,6 @@ def quick_process_and_save(
     except Exception:
       pass
 
-    if not existing_urls and os.path.exists(ARCHIVE_JSON_FILE):
-      try:
-        with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
-          for row in json.load(f):
-            if isinstance(row, dict):
-              if row.get("url"):
-                existing_urls.add(row["url"].strip())
-              if row.get("title"):
-                existing_plat_titles.add(
-                    f"{row.get('platform', '')}::{row['title'].strip()}"
-                )
-      except Exception:
-        pass
-
   kw_filter = cfg.get("keywords_input", "")
   candidates = []
   seen_batch_urls = set()
@@ -2406,7 +2849,6 @@ def quick_process_and_save(
     is_tgt = bool(is_target_run or it.get("is_custom_target"))
     if not u or not t:
       continue
-    # بوابة التحقق الصارمة قبل الحفظ في القاعدة
     if not is_strictly_judicial_and_clean(
         t, s_raw, u, kw_filter if not is_tgt else "", is_target=is_tgt
     ):
@@ -2422,26 +2864,34 @@ def quick_process_and_save(
     candidates.append(it)
 
   if not candidates:
+    upgrade_incomplete_existing_articles(cfg, max_upgrades=6)
     return 0
 
   api_key = (cfg.get("gemini_api_key") or "").strip()
   prepared_rows = []
   ai_calls = 0
-  og_fetches = 0
+  enrichment_calls = 0
 
   for it in candidates:
     if is_stop_requested():
       break
     plat = it.get("platform", "الصحف")
     src = clean_display_text(it.get("source_name") or plat)
-    raw_snip = clean_display_text(it.get("raw_snippet") or "")
 
-    if ai_calls < 10 and api_key.startswith("AIza"):
+    # جلب متن الخبر الأصلي والصورة البارزة للمقال قبل التلخيص
+    if enrichment_calls < 14:
+      enrichment_calls += 1
+      enrich_item_content_and_image(it)
+
+    raw_snip = clean_display_text(it.get("raw_snippet") or "")
+    img_url = (it.get("image_url") or "").strip()
+
+    if ai_calls < 12 and api_key:
       ai_res = analyze_with_gemini(it, api_key)
       ai_calls += 1
     else:
       ai_res = {
-          "summary": build_rich_arabic_summary(
+          "summary": build_extractive_arabic_summary(
               it["title"], raw_snip, plat, src
           ),
           "sentiment": "محايد",
@@ -2456,22 +2906,12 @@ def quick_process_and_save(
           it.get("url", ""), raw_snip, pub_str, fallback_offset_sec=3600
       )
 
-    clean_u_for_img = re.sub(
-        r"#plat=(?:fb|x|other|soc)$", "", it.get("url", "")
-    )
-    img_url = (it.get("image_url") or "").strip()
-    if not img_url:
-      img_url = extract_thumbnail_for_item(clean_u_for_img, "", plat)
-    if not img_url and og_fetches < 6:
-      og_fetches += 1
-      img_url = fetch_og_image_fast(clean_u_for_img)
-
     record = {
         "title": it["title"],
         "summary": clean_display_text(ai_res["summary"]),
         "source_name": src,
         "platform": plat,
-        "url": it.get("url", "").strip(),
+        "url": (it.get("url") or "").strip(),
         "pub_date": pub_str,
         "pub_timestamp": pub_ts,
         "sentiment": clean_display_text(ai_res["sentiment"]),
@@ -2480,7 +2920,7 @@ def quick_process_and_save(
         "is_custom_target": (
             1 if (is_target_run or it.get("is_custom_target")) else 0
         ),
-        "raw_snippet": raw_snip[:600],
+        "raw_snippet": raw_snip[:1200],
         "image_url": img_url,
         "created_at": time.time(),
     }
@@ -2542,6 +2982,9 @@ def quick_process_and_save(
         if attempt == 2:
           added_items = list(prepared_rows)
 
+  # ترقية أي أخبار سابقة كانت تفتقر للصورة أو الملخص
+  upgrade_incomplete_existing_articles(cfg, max_upgrades=4)
+
   if added_items:
     sync_db_to_json(extra_items=added_items)
     for rec in added_items[:10]:
@@ -2551,7 +2994,7 @@ def quick_process_and_save(
 
 
 # =====================================================================
-# 8. محرك الرصد الدوري الأوتوماتيكي (خلفية السيرفر + GitHub Actions)
+# 9. محرك الرصد الدوري الأوتوماتيكي (خلفية السيرفر + GitHub Actions)
 # =====================================================================
 def run_headless_background_cycle() -> int:
   scan_lock = get_scan_lock()
@@ -2644,7 +3087,7 @@ if os.environ.get("CRON_MODE") == "1" or st is None:
   sys.exit(0)
 
 # =====================================================================
-# 9. تهيئة واجهة Streamlit والتصميم الزجاجي المتجاوب مع فرض صارم لاتجاه RTL
+# 10. تهيئة واجهة Streamlit والتصميم الزجاجي المتجاوب مع فرض صارم لاتجاه RTL
 # =====================================================================
 st.set_page_config(
     page_title="المرصد الوطني للعدالة والقضاء",
@@ -2664,7 +3107,6 @@ render_html("""
     box-sizing: border-box;
 }
 
-/* فرض صارم لاتجاه اللغة العربية RTL على التطبيق وجميع الحاويات والتبويبات */
 html, body, .stApp, .main,
 [data-testid="stAppViewContainer"],
 [data-testid="stMarkdownContainer"],
@@ -2692,7 +3134,6 @@ html, body, .stApp, .main,
     text-align: right !important;
 }
 
-/* تجاوب الأعمدة والأزرار تلقائياً على جميع مقاسات الشاشات */
 div[data-testid="stHorizontalBlock"] {
     display: flex !important;
     flex-wrap: wrap !important;
@@ -2707,7 +3148,6 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
     min-width: 140px !important;
 }
 
-/* الهيدر الزجاجي المتجاوب */
 .hero-glass {
     background: linear-gradient(135deg, rgba(15, 23, 42, 0.88) 0%, rgba(30, 41, 59, 0.72) 100%);
     backdrop-filter: blur(20px);
@@ -2766,7 +3206,6 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
     50% { transform: scale(1.35); opacity: 0.55; }
 }
 
-/* إلغاء الخلفية البيضاء لجميع الأزرار وتطبيق تدرجات داكنة احترافية */
 div.stButton > button,
 div.stDownloadButton > button,
 div[data-testid="stFormSubmitButton"] > button {
@@ -2799,7 +3238,6 @@ div[data-testid="stFormSubmitButton"] > button:hover {
     box-shadow: 0 8px 22px rgba(56, 189, 248, 0.28) !important;
 }
 
-/* ألوان مخصصة لكل منصة ولكل زر */
 div[data-testid="stVerticalBlock"]:has(.btn-marker-all) div.stButton > button {
     background: linear-gradient(135deg, #0284c7 0%, #1d4ed8 100%) !important;
     border: 1px solid rgba(125, 211, 252, 0.55) !important;
@@ -2836,7 +3274,6 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     font-size: 0.76rem !important;
 }
 
-/* رادار المسح الضوئي 360 درجة */
 .radar-panel {
     background: rgba(15, 23, 42, 0.88);
     backdrop-filter: blur(16px);
@@ -2893,7 +3330,6 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     100% { transform: rotate(360deg); }
 }
 
-/* شارة اكتمال الرصد DONE */
 .done-banner {
     background: linear-gradient(135deg, rgba(6, 95, 70, 0.88) 0%, rgba(4, 120, 87, 0.78) 100%);
     backdrop-filter: blur(14px);
@@ -2914,7 +3350,6 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     text-align: right !important;
 }
 
-/* شبكة الإحصائيات المتجاوبة (CSS Grid) */
 .metrics-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
@@ -2949,7 +3384,6 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     text-align: center !important;
 }
 
-/* بطاقات الأخبار والمنشورات الزجاجية المتجاوبة باتجاه RTL صارم مع صورة مصغرة */
 .news-card {
     background: linear-gradient(145deg, rgba(15, 23, 42, 0.92) 0%, rgba(30, 41, 59, 0.74) 100%);
     backdrop-filter: blur(16px);
@@ -2990,9 +3424,9 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
 }
 
 .news-thumb-box {
-    width: 185px;
-    min-width: 185px;
-    height: 125px;
+    width: 195px;
+    min-width: 195px;
+    height: 132px;
     border-radius: 12px;
     overflow: hidden;
     border: 1px solid rgba(148, 163, 184, 0.28);
@@ -3104,7 +3538,6 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     background: rgba(56, 189, 248, 0.3);
 }
 
-/* التبويبات القابلة للتمرير الأفقي السلس على الهواتف */
 div[data-baseweb="tab-list"] {
     gap: 6px !important;
     background: rgba(15, 23, 42, 0.78) !important;
@@ -3150,7 +3583,6 @@ input {
     text-align: right !important;
 }
 
-/* تحسينات خاصة لشاشات الهواتف والأجهزة اللوحية */
 @media (max-width: 768px) {
     div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
     div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
@@ -3185,7 +3617,7 @@ input {
 """)
 
 # =====================================================================
-# 10. تحميل الإعدادات والبيانات
+# 11. تحميل الإعدادات والبيانات
 # =====================================================================
 cfg = load_credentials()
 custom_targets = load_custom_targets()
@@ -3251,7 +3683,7 @@ with st.sidebar:
       st.error("ملف غير صالح")
 
 # =====================================================================
-# 11. الهيدر الرئيسي وشريط البحث المخصص وتحديد فترة البحث والروابط المخصصة
+# 12. الهيدر الرئيسي وشريط البحث المخصص وتحديد فترة البحث والروابط المخصصة
 # =====================================================================
 last_auto_ts = float(monitor_state.get("last_auto_run", 0))
 last_auto_label = (
@@ -3340,7 +3772,7 @@ with st.expander(
         st.rerun()
 
 # =====================================================================
-# 12. لوحة أزرار الرصد المتجاوبة (تلتف تلقائياً حسب عرض الشاشة)
+# 13. لوحة أزرار الرصد المتجاوبة (تلتف تلقائياً حسب عرض الشاشة)
 # =====================================================================
 SCAN_MODES = [
     ("all", "🚀 رصد الشامل", "btn-marker-all"),
@@ -3366,7 +3798,7 @@ for col_idx, (mode_key, mode_label, marker_cls) in enumerate(SCAN_MODES):
       request_stop_scan()
 
 # =====================================================================
-# 13. منطقة الرادار الدوار 360° وشريط التقدم ومؤشر DONE
+# 14. منطقة الرادار الدوار 360° وشريط التقدم ومؤشر DONE
 # =====================================================================
 radar_placeholder = st.empty()
 progress_placeholder = st.empty()
@@ -3441,7 +3873,9 @@ def execute_interactive_scan(mode_key: str):
     )
 
   if not is_stop_requested():
-    update_ui_progress(0.96, "فلترة وتحليل النتائج القضائية وحفظها...")
+    update_ui_progress(
+        0.94, "استخراج صور المقالات ومتونها وتلخيصها عبر Gemini AI..."
+    )
     added_count = quick_process_and_save(
         collected, cfg, is_target_run=is_target_mode
     )
@@ -3487,7 +3921,7 @@ if time.time() - float(rt_state.get("last_done_ts", 0)) < 25:
     )
 
 # =====================================================================
-# 14. فرز الأخبار زمنياً (الأحدث أولاً) وفصل الأخبار النشطة (24 ساعة من الرصد) عن الأرشيف
+# 15. فرز الأخبار زمنياً (الأحدث أولاً) وفصل الأخبار النشطة (24 ساعة من الرصد) عن الأرشيف
 # =====================================================================
 all_articles = fetch_articles_from_db()
 now_ts = time.time()
@@ -3575,12 +4009,8 @@ def render_article_cards(
     raw_snip = clean_display_text(item.get("raw_snippet") or "")
     raw_src = clean_display_text(item.get("source_name") or plat)
 
-    if (
-        not raw_summary
-        or raw_summary.lower() == raw_title.lower()
-        or len(raw_summary) < 25
-    ):
-      raw_summary = build_rich_arabic_summary(
+    if is_summary_just_title(raw_title, raw_summary):
+      raw_summary = build_extractive_arabic_summary(
           raw_title, raw_snip, plat, raw_src
       )
 
@@ -3628,7 +4058,7 @@ def render_article_cards(
         f'<div class="news-card {css_cls}" dir="rtl" style="direction:rtl !important;text-align:right !important;">'
         '<div class="news-card-layout" dir="rtl" style="display:flex;flex-direction:row;direction:rtl !important;text-align:right !important;">'
         '<div class="news-thumb-box">'
-        f'<img class="news-thumb-img" src="{final_img_src}" alt="thumbnail" loading="lazy" onerror="this.onerror=null;this.src=\'{fallback_svg_safe}\';" />'
+        f'<img class="news-thumb-img" src="{final_img_src}" alt="thumbnail" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=\'{fallback_svg_safe}\';" />'
         "</div>"
         '<div class="news-body-col" dir="rtl" style="direction:rtl !important;text-align:right !important;">'
         '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;direction:rtl !important;text-align:right !important;">'
@@ -3658,7 +4088,7 @@ def render_article_cards(
 
 
 # =====================================================================
-# 15. التبويبات الرئيسية (بأسماء مختصرة من كلمة واحدة)
+# 16. التبويبات الرئيسية (بأسماء مختصرة من كلمة واحدة)
 # =====================================================================
 tabs = st.tabs([
     f"الكل ({len(live_articles)})",
@@ -3719,7 +4149,7 @@ with tabs[7]:
   )
 
 # =====================================================================
-# 16. فحص الرصد الدوري غير المتزامن (بدون تجميد الواجهة أو قفل SQLite)
+# 17. فحص الرصد الدوري غير المتزامن (بدون تجميد الواجهة أو قفل SQLite)
 # =====================================================================
 if cfg.get("auto_monitor", True):
   interval_sec = INTERVAL_MAP.get(
