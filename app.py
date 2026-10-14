@@ -412,6 +412,7 @@ def clean_display_text(val: str) -> str:
       if m:
         txt = m.group(1)
   txt = html.unescape(txt)
+  txt = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]", "", txt)
   txt = re.sub(r"<[^>]+>", " ", txt)
   txt = re.sub(r"[\r\n\t]+", " ", txt)
   txt = re.sub(r"\s+", " ", txt).strip()
@@ -428,6 +429,23 @@ def clean_social_post_url(url: str) -> str:
   if not u:
     return ""
   u = html.unescape(u).strip()
+
+  # فك تغليف روابط Yahoo Search Redirect (/RU=https%3A%2F%2F.../RK=...)
+  m_yahoo = re.search(r"/RU=(https?%3A%2F%2F[^/]+)/RK=", u, re.IGNORECASE)
+  if m_yahoo:
+    try:
+      u = urllib.parse.unquote(m_yahoo.group(1)).strip()
+    except Exception:
+      pass
+
+  # فك تغليف روابط DuckDuckGo Redirect (//duckduckgo.com/l/?uddg=...)
+  if "uddg=" in u:
+    try:
+      qs_d = urllib.parse.parse_qs(urllib.parse.urlparse(u).query)
+      if "uddg" in qs_d and qs_d["uddg"]:
+        u = qs_d["uddg"][0].strip()
+    except Exception:
+      pass
 
   # فك تغليف روابط Bing RSS أو Bing Click
   if "bing.com/" in u.lower() and ("url=" in u or "u=" in u):
@@ -489,7 +507,6 @@ def clean_social_post_url(url: str) -> str:
           "set",
           "multi_permalinks",
           "post_id",
-          "q",
       }
       filtered_qs = [
           (k, val)
@@ -507,16 +524,16 @@ def clean_social_post_url(url: str) -> str:
 
 
 def is_direct_social_post_url(
-    url: str, platform: str = "", allow_post_search: bool = True
+    url: str, platform: str = "", allow_post_search: bool = False
 ) -> bool:
-  """التحقق الصارم من أن الرابط يوجه إلى المنشور/الفيديو/التغريدة بعينها وليس إلى الصفحة العامة أو الحساب."""
+  """التحقق الصارم من أن الرابط يوجه إلى المنشور/الفيديو/التغريدة بعينها وليس إلى الصفحة العامة أو صفحة خطأ."""
   u = clean_social_post_url(url)
   if not u or not u.startswith("http"):
     return False
 
   parsed = urllib.parse.urlparse(u)
   dom = parsed.netloc.lower()
-  path = parsed.path.strip("/")
+  path = urllib.parse.unquote(parsed.path).strip("/")
   path_low = path.lower()
   qs = urllib.parse.parse_qs(parsed.query)
 
@@ -532,6 +549,7 @@ def is_direct_social_post_url(
   if is_fb:
     if "fb.watch" in dom and len(path) >= 4:
       return True
+    # رفض مسارات البحث الداخلي في فيسبوك (search/posts, search/top) لأنها تظهر خطأ Not Found للمستخدم
     if any(
         bad in path_low
         for bad in [
@@ -541,6 +559,9 @@ def is_direct_social_post_url(
             "hashtag/",
             "public/",
             "pages/category",
+            "search/posts",
+            "search/top",
+            "search/",
         ]
     ):
       return False
@@ -555,18 +576,13 @@ def is_direct_social_post_url(
       fbid = (qs.get("fbid") or [""])[0].strip()
       return bool(fbid and len(fbid) >= 6)
 
-    # 3) watch/ مع v
-    if path_low == "watch":
+    # 3) watch/ أو video.php مع v
+    if path_low in ("watch", "video.php"):
       v_id = (qs.get("v") or [""])[0].strip()
       return bool(v_id and len(v_id) >= 5)
 
-    # 4) بحث المنشور المحدد بعبارته الدقيقة داخل فيسبوك عند حجب المعرف
-    if allow_post_search and path_low in ("search/posts", "search/top"):
-      q_val = (qs.get("q") or [""])[0].strip()
-      return bool(q_val and len(q_val) >= 10)
-
-    # 5) مسارات تحتوي على /posts/ أو /videos/ أو /reel/ أو /photos/ أو /share/p/
-    parts = [p for p in path.split("/") if p]
+    # 4) مسارات تحتوي على /posts/ أو /videos/ أو /reel/ أو /photos/ أو /share/p/
+    parts = [p.strip() for p in path.split("/") if p.strip()]
     parts_low = [p.lower() for p in parts]
 
     if len(parts_low) >= 3 and parts_low[0] == "share" and parts_low[1] in ("p", "v", "r"):
@@ -574,28 +590,26 @@ def is_direct_social_post_url(
 
     if "posts" in parts_low:
       idx = parts_low.index("posts")
-      if idx + 1 < len(parts):
-        post_id = parts[idx + 1].strip()
-        # استبعاد الطوابع الزمنية الوهمية المكونة من 10 أرقام (مثل 1760455312) التي يحولها فيسبوك إلى الصفحة الرئيسية
-        if re.match(r"^1[678]\d{8}$", post_id):
+      tail_segs = parts[idx + 1 :]
+      if not tail_segs:
+        return False
+      for seg in tail_segs:
+        if re.match(r"^1[678]\d{8}$", seg):
           return False
-        if post_id.startswith("pfbid") or len(post_id) >= 11 or ":" in post_id:
+        if seg.startswith("pfbid") or (seg.isdigit() and len(seg) >= 8) or len(seg) >= 11 or ":" in seg:
           return True
       return False
 
     if "permalink" in parts_low:
       idx = parts_low.index("permalink")
-      if idx + 1 < len(parts) and len(parts[idx + 1]) >= 8:
-        return True
-      return False
+      tail_segs = parts[idx + 1 :]
+      return any(len(s) >= 8 for s in tail_segs)
 
     if "videos" in parts_low:
       idx = parts_low.index("videos")
-      if idx + 1 < len(parts):
-        vid_id = parts[-1].strip()
-        if vid_id.lower() != "videos" and (
-            (vid_id.isdigit() and len(vid_id) >= 7) or len(vid_id) >= 10
-        ):
+      tail_segs = parts[idx + 1 :]
+      for seg in tail_segs:
+        if seg.lower() != "videos" and ((seg.isdigit() and len(seg) >= 7) or len(seg) >= 10):
           return True
       return False
 
@@ -608,11 +622,9 @@ def is_direct_social_post_url(
 
     if "photos" in parts_low:
       idx = parts_low.index("photos")
-      if idx + 1 < len(parts):
-        last_seg = parts[-1].strip()
-        if last_seg.startswith("pfbid") or (
-            last_seg.isdigit() and len(last_seg) >= 8
-        ):
+      tail_segs = parts[idx + 1 :]
+      for seg in tail_segs:
+        if seg.startswith("pfbid") or (seg.isdigit() and len(seg) >= 8):
           return True
       return False
 
@@ -2083,7 +2095,7 @@ def extract_date_from_url_or_text(
 
   if text_snippet:
     return parse_any_date(
-        text_snippet[:80], fallback_offset_sec=fallback_offset_sec
+        text_snippet[:240], fallback_offset_sec=fallback_offset_sec
     )
 
   return parse_any_date("", fallback_offset_sec=fallback_offset_sec)
@@ -2098,7 +2110,7 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
 
   raw = str(date_str).strip()
 
-  # إذا كان طابعاً زمنياً رقمياً مباشراً (مثل data-utime في فيسبوك)
+  # 1) طابع زمني رقمي مباشر (مثل data-utime في فيسبوك)
   if raw.isdigit() and len(raw) >= 9:
     try:
       ts = min(float(raw), now_ts)
@@ -2111,6 +2123,7 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
     except Exception:
       pass
 
+  # 2) صيغ RFC 2822 القياسية لـ RSS
   try:
     dt = parsedate_to_datetime(raw)
     if dt.tzinfo is None:
@@ -2123,6 +2136,7 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
   except Exception:
     pass
 
+  # 3) صيغ ISO 8601 (مثل YouTube Atom XML: 2026-10-13T18:30:00+00:00)
   try:
     iso_clean = raw.replace("Z", "+00:00")
     dt = datetime.fromisoformat(iso_clean)
@@ -2138,106 +2152,15 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
 
   rel_lower = raw.lower()
 
-  m_short_rel = re.search(
-      r"\b(\d+)\s*(s|sec|secs|m|min|mins|h|hr|hrs|d|day|days|w|wk|wks)\b(?:\s*ago)?",
-      rel_lower,
-  )
-  if m_short_rel and ("ago" in rel_lower or len(raw) < 25):
-    n = int(m_short_rel.group(1))
-    u = m_short_rel.group(2)
-    if u.startswith("s"):
-      ts = now_ts - n
-    elif u.startswith("m"):
-      ts = now_ts - n * 60
-    elif u.startswith("h"):
-      ts = now_ts - n * 3600
-    elif u.startswith("d"):
-      ts = now_ts - n * 86400
-    else:
-      ts = now_ts - n * 7 * 86400
-    return (
-        datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
-        ts,
-    )
-
-  num_match = re.search(r"(\d+)", rel_lower)
-  num = int(num_match.group(1)) if num_match else 1
-
-  if any(
-      w in rel_lower
-      for w in ["ثانية", "ثواني", "second", "just now", "الآن", "قبل لحظات"]
-  ):
-    ts = now_ts - 60
-  elif any(w in rel_lower for w in ["دقيقة", "دقائق", "دقيقتين", "minute"]):
-    if "دقيقتين" in rel_lower:
-      num = 2
-    ts = now_ts - (num * 60)
-  elif any(w in rel_lower for w in ["ساعة", "ساعات", "ساعتين", "hour"]):
-    if "ساعتين" in rel_lower:
-      num = 2
-    ts = now_ts - (num * 3600)
-  elif any(
-      w in rel_lower for w in ["يوم", "أيام", "يومين", "أمس", "yesterday"]
-  ):
-    if "يومين" in rel_lower:
-      num = 2
-    elif "أمس" in rel_lower or "yesterday" in rel_lower:
-      num = 1
-    ts = now_ts - (num * 86400)
-  elif any(w in rel_lower for w in ["أسبوع", "أسابيع", "اسبوع", "week"]):
-    ts = now_ts - (num * 7 * 86400)
-  elif any(w in rel_lower for w in ["شهر", "أشهر", "شهور", "month"]):
-    ts = now_ts - (num * 30 * 86400)
-  elif any(w in rel_lower for w in ["سنة", "سنوات", "عام", "year"]):
-    ts = now_ts - (num * 365 * 86400)
-  else:
-    for ar_m, m_idx in ARABIC_MONTHS.items():
-      m_ar = re.search(rf"(\d{{1,2}})\s+{ar_m}\s+(20\d{{2}})", raw)
-      if m_ar:
-        try:
-          dt = datetime(
-              int(m_ar.group(2)),
-              m_idx,
-              int(m_ar.group(1)),
-              12,
-              0,
-              tzinfo=timezone.utc,
-          )
-          ts = min(dt.timestamp(), now_ts)
-          return dt.strftime("%Y-%m-%d %H:%M"), ts
-        except Exception:
-          pass
-
-    for en_m, m_idx in ENGLISH_MONTHS.items():
-      m_en1 = re.search(
-          rf"\b{en_m}[a-z]*\s+(\d{{1,2}}),?\s+(20\d{{2}})", rel_lower
-      )
-      m_en2 = re.search(
-          rf"(\d{{1,2}})\s+{en_m}[a-z]*,?\s+(20\d{{2}})", rel_lower
-      )
-      m_en = m_en1 or m_en2
-      if m_en:
-        try:
-          dt = datetime(
-              int(m_en.group(2)),
-              m_idx,
-              int(m_en.group(1)),
-              12,
-              0,
-              tzinfo=timezone.utc,
-          )
-          ts = min(dt.timestamp(), now_ts)
-          return dt.strftime("%Y-%m-%d %H:%M"), ts
-        except Exception:
-          pass
-
-    m_ymd = re.search(r"(20\d{2})[-/](\d{1,2})[-/](\d{1,2})", raw)
-    if m_ymd:
+  # 4) التواريخ الصريحة بالشهور العربية (مثل: 17 يوليوز 2026)
+  for ar_m, m_idx in ARABIC_MONTHS.items():
+    m_ar = re.search(rf"(\d{{1,2}})\s+{ar_m}\s*,?\s*(20\d{{2}})", raw)
+    if m_ar:
       try:
         dt = datetime(
-            int(m_ymd.group(1)),
-            int(m_ymd.group(2)),
-            int(m_ymd.group(3)),
+            int(m_ar.group(2)),
+            m_idx,
+            int(m_ar.group(1)),
             12,
             0,
             tzinfo=timezone.utc,
@@ -2246,8 +2169,142 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
         return dt.strftime("%Y-%m-%d %H:%M"), ts
       except Exception:
         pass
-    ts = now_ts - fallback_offset_sec
 
+  # 5) التواريخ الصريحة بالشهور الإنجليزية/الفرنسية (مثل: Oct 2, 2026 أو July 03 2026)
+  for en_m, m_idx in ENGLISH_MONTHS.items():
+    m_en1 = re.search(
+        rf"\b{en_m}[a-z]*\s+(\d{{1,2}}),?\s+(20\d{{2}})", rel_lower
+    )
+    m_en2 = re.search(
+        rf"\b(\d{{1,2}})\s+{en_m}[a-z]*,?\s+(20\d{{2}})", rel_lower
+    )
+    m_en = m_en1 or m_en2
+    if m_en:
+      try:
+        dt = datetime(
+            int(m_en.group(2)),
+            m_idx,
+            int(m_en.group(1)),
+            12,
+            0,
+            tzinfo=timezone.utc,
+        )
+        ts = min(dt.timestamp(), now_ts)
+        return dt.strftime("%Y-%m-%d %H:%M"), ts
+      except Exception:
+        pass
+
+  # 6) التواريخ الرقمية الصريحة YYYY-MM-DD أو DD-MM-YYYY
+  m_ymd = re.search(r"\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", raw)
+  if m_ymd:
+    try:
+      dt = datetime(
+          int(m_ymd.group(1)),
+          int(m_ymd.group(2)),
+          int(m_ymd.group(3)),
+          12,
+          0,
+          tzinfo=timezone.utc,
+      )
+      ts = min(dt.timestamp(), now_ts)
+      return dt.strftime("%Y-%m-%d %H:%M"), ts
+    except Exception:
+      pass
+
+  m_dmy = re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](20\d{2})\b", raw)
+  if m_dmy:
+    try:
+      dt = datetime(
+          int(m_dmy.group(3)),
+          int(m_dmy.group(2)),
+          int(m_dmy.group(1)),
+          12,
+          0,
+          tzinfo=timezone.utc,
+      )
+      ts = min(dt.timestamp(), now_ts)
+      return dt.strftime("%Y-%m-%d %H:%M"), ts
+    except Exception:
+      pass
+
+  # 7) صيغ الوقت النسبي الإنجليزية الصريحة (مثل: 5d · أو 3 days ago أو 18h ago)
+  m_short_rel = re.search(
+      r"(?:^|\b)(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks|mo|month|months|y|yr|yrs|year|years)\b(?:\s*ago|\s*·)?",
+      rel_lower,
+  )
+  if m_short_rel and (
+      "ago" in rel_lower
+      or "·" in rel_lower[:25]
+      or len(raw) <= 28
+  ):
+    n = int(m_short_rel.group(1))
+    u = m_short_rel.group(2)
+    if u.startswith("s"):
+      ts = now_ts - n
+    elif u.startswith("mo"):
+      ts = now_ts - n * 30 * 86400
+    elif u.startswith("m"):
+      ts = now_ts - n * 60
+    elif u.startswith("h"):
+      ts = now_ts - n * 3600
+    elif u.startswith("d"):
+      ts = now_ts - n * 86400
+    elif u.startswith("w"):
+      ts = now_ts - n * 7 * 86400
+    else:
+      ts = now_ts - n * 365 * 86400
+    return (
+        datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        ts,
+    )
+
+  # 8) صيغ الوقت النسبي العربية الصريحة فقط (مسبوقة بـ "منذ" أو "قبل" أو نص قصير مثل "قبل 3 ساعات" حتى لا تلتبس مع كلمات مثل "النيابة العامة" أو "اليوم")
+  m_ar_rel = re.search(
+      r"(?:منذ|قبل)\s*(?:حوالي\s*|أكثر من\s*|أقل من\s*)?(?:(\d+)\s*)?(ثانية|ثواني|دقيقة|دقائق|دقيقتين|ساعة|ساعات|ساعتين|يوم|أيام|يومين|أسبوع|أسابيع|اسبوع|أسبوعين|شهر|أشهر|شهور|شهرين|سنة|سنوات|عام|أعوام|سنتين|عامين|لحظات)\b",
+      rel_lower,
+  )
+  if not m_ar_rel and len(raw) <= 26:
+    m_ar_rel = re.search(
+        r"^(?:(\d+)\s*)?(ثانية|ثواني|دقيقة|دقائق|دقيقتين|ساعة|ساعات|ساعتين|يوم|أيام|يومين|أسبوع|أسابيع|اسبوع|أسبوعين|شهر|أشهر|شهور|شهرين|سنة|سنوات|عام|أعوام|سنتين|عامين|أمس|الآن)\b",
+        rel_lower,
+    )
+  if m_ar_rel:
+    num = int(m_ar_rel.group(1)) if m_ar_rel.group(1) else 1
+    unit_ar = m_ar_rel.group(2)
+    if unit_ar in ("ثانية", "ثواني", "لحظات", "الآن"):
+      ts = now_ts - 60
+    elif unit_ar in ("دقيقة", "دقائق", "دقيقتين"):
+      if unit_ar == "دقيقتين":
+        num = 2
+      ts = now_ts - (num * 60)
+    elif unit_ar in ("ساعة", "ساعات", "ساعتين"):
+      if unit_ar == "ساعتين":
+        num = 2
+      ts = now_ts - (num * 3600)
+    elif unit_ar in ("يوم", "أيام", "يومين", "أمس"):
+      if unit_ar == "يومين":
+        num = 2
+      elif unit_ar == "أمس":
+        num = 1
+      ts = now_ts - (num * 86400)
+    elif unit_ar in ("أسبوع", "أسابيع", "اسبوع", "أسبوعين"):
+      if unit_ar == "أسبوعين":
+        num = 2
+      ts = now_ts - (num * 7 * 86400)
+    elif unit_ar in ("شهر", "أشهر", "شهور", "شهرين"):
+      if unit_ar == "شهرين":
+        num = 2
+      ts = now_ts - (num * 30 * 86400)
+    else:
+      if unit_ar in ("سنتين", "عامين"):
+        num = 2
+      ts = now_ts - (num * 365 * 86400)
+    return (
+        datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        ts,
+    )
+
+  ts = now_ts - fallback_offset_sec
   dt_fmt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
   return dt_fmt, ts
 
@@ -2583,45 +2640,72 @@ def _extract_yt_renderers_from_html(
     html_text: str, default_channel_name: str = "YouTube"
 ):
   results = []
-  chunks = html_text.split('"videoRenderer":')[1:]
-  for chunk in chunks[:25]:
-    vid_m = re.search(r'"videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"', chunk)
-    title_m = re.search(
-        r'"title"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
-        chunk,
-    )
-    if not vid_m or not title_m:
+  seen_vids = set()
+  chunks = re.split(
+      r'"(?:videoRenderer|gridVideoRenderer|compactVideoRenderer|reelItemRenderer)"\s*:',
+      html_text,
+  )[1:]
+  for chunk in chunks[:35]:
+    vid_m = re.search(r'"videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"', chunk[:2500])
+    if not vid_m:
       continue
     vid = vid_m.group(1)
-    title = decode_js_escaped_text(title_m.group(1))
-    pub_m = re.search(
+    if vid in seen_vids:
+      continue
+
+    title = ""
+    for t_pat in [
+        r'"title"\s*:\s*\{[^{}]*"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        r'"title"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        r'"title"\s*:\s*\{[^{}]*"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        r'"headline"\s*:\s*\{[^{}]*"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        r'"accessibilityData"\s*:\s*\{"label"\s*:\s*"((?:[^"\\]|\\.)*)"',
+    ]:
+      m_t = re.search(t_pat, chunk[:3500])
+      if m_t:
+        cand_t = decode_js_escaped_text(m_t.group(1))
+        if len(cand_t) >= 4:
+          title = cand_t
+          break
+
+    if not title:
+      continue
+
+    pub_rel = ""
+    for p_pat in [
         r'"publishedTimeText"\s*:\s*\{"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"',
-        chunk,
-    )
-    pub_rel = decode_js_escaped_text(pub_m.group(1)) if pub_m else ""
+        r'"publishedTimeText"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+    ]:
+      pub_m = re.search(p_pat, chunk[:4000])
+      if pub_m:
+        pub_rel = decode_js_escaped_text(pub_m.group(1))
+        break
+
     owner_m = re.search(
-        r'"ownerText"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
-        chunk,
+        r'"(?:ownerText|shortBylineText|longBylineText)"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        chunk[:4000],
     )
     channel_name = (
         decode_js_escaped_text(owner_m.group(1))
         if owner_m
         else default_channel_name
     )
+
     desc_runs = re.findall(
         r'"detailedMetadataSnippets".*?"snippetText"\s*:\s*\{"runs"\s*:\s*\[(.*?)\]\s*\}',
-        chunk,
+        chunk[:5000],
     )
     if not desc_runs:
       desc_runs = re.findall(
           r'"descriptionSnippet"\s*:\s*\{"runs"\s*:\s*\[(.*?)\]\s*\}',
-          chunk,
+          chunk[:5000],
       )
     desc_text = ""
     if desc_runs:
       parts = re.findall(r'"text"\s*:\s*"((?:[^"\\]|\\.)*)"', desc_runs[0])
       desc_text = decode_js_escaped_text(" ".join(parts))
 
+    seen_vids.add(vid)
     results.append({
         "vid": vid,
         "title": title,
@@ -2936,58 +3020,256 @@ def _tag_custom_target_item(item: dict, t_info: dict, source_badge: str) -> dict
   return item
 
 
+def _multi_engine_web_search(
+    query: str,
+    platform: str = "فيسبوك",
+    default_source: str = "",
+    max_results: int = 15,
+) -> list:
+  """بحث متوازي عبر Yahoo Search HTML وDuckDuckGo HTML وBing RSS وDDGS لجلب الروابط المباشرة للمنشورات والفيديوهات."""
+  collected = []
+  seen_u = set()
+
+  def _add_candidate(raw_href: str, raw_title: str, raw_body: str, raw_date: str = ""):
+    u = clean_social_post_url(raw_href)
+    if not u or u in seen_u or not u.startswith("http"):
+      return
+    t_txt = clean_display_text(raw_title)
+    b_txt = clean_display_text(raw_body)
+    if not t_txt and not b_txt:
+      return
+    pub_str, pub_ts = extract_date_from_url_or_text(
+        u, f"{t_txt} {b_txt}", raw_date, fallback_offset_sec=3600
+    )
+    seen_u.add(u)
+    collected.append({
+        "title": t_txt or b_txt[:105],
+        "url": u,
+        "raw_snippet": b_txt or t_txt,
+        "source_name": default_source or platform,
+        "platform": platform,
+        "pub_date": pub_str,
+        "pub_timestamp": pub_ts,
+        "image_url": extract_thumbnail_for_item(u, "", platform),
+    })
+
+  # 1) محرك Yahoo Search HTML (يعمل بكفاءة عالية على خوادم السحابة ويستخرج فهرس Bing الكامل بدون حظر)
+  yahoo_url = f"https://search.yahoo.com/search?p={urllib.parse.quote(query)}&n={max_results}"
+  try:
+    ry = requests.get(yahoo_url, headers=DEFAULT_HEADERS, timeout=8)
+    if ry.status_code == 200 and ry.text and BeautifulSoup is not None:
+      soup_y = BeautifulSoup(ry.text, "html.parser")
+      for algo in soup_y.select("div.algo, div.dd.algo, li div.algo-sr"):
+        a_el = algo.select_one("h3 a[href], a.ac-algo[href], a[href]")
+        if not a_el:
+          continue
+        href = a_el.get("href", "").strip()
+        title_txt = clean_display_text(a_el.get_text(" ", strip=True))
+        snip_el = algo.select_one("div.compText, p, span.fc-falcon")
+        snip_txt = (
+            clean_display_text(snip_el.get_text(" ", strip=True))
+            if snip_el
+            else ""
+        )
+        _add_candidate(href, title_txt, snip_txt)
+  except Exception:
+    pass
+
+  # 2) محرك DuckDuckGo HTML المباشر (بدون قيود التوكن)
+  ddg_html_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+  try:
+    rd = requests.get(ddg_html_url, headers=DEFAULT_HEADERS, timeout=8)
+    if rd.status_code == 200 and rd.text and BeautifulSoup is not None:
+      soup_d = BeautifulSoup(rd.text, "html.parser")
+      for res_box in soup_d.select("div.result, div.web-result"):
+        a_el = res_box.select_one("a.result__a[href]")
+        if not a_el:
+          continue
+        href = a_el.get("href", "").strip()
+        title_txt = clean_display_text(a_el.get_text(" ", strip=True))
+        snip_el = res_box.select_one(".result__snippet")
+        snip_txt = (
+            clean_display_text(snip_el.get_text(" ", strip=True))
+            if snip_el
+            else ""
+        )
+        _add_candidate(href, title_txt, snip_txt)
+  except Exception:
+    pass
+
+  # 3) محرك Bing Search RSS & Bing News RSS
+  for bing_base in [
+      "https://www.bing.com/search?q=",
+      "https://www.bing.com/news/search?q=",
+  ]:
+    bing_u = (
+        f"{bing_base}{urllib.parse.quote(query)}"
+        "&format=rss&adlt=strict&cc=MA&setlang=ar"
+    )
+    try:
+      rb = requests.get(bing_u, headers=DEFAULT_HEADERS, timeout=8)
+      if rb.status_code == 200 and b"<item>" in rb.content:
+        for entry in parse_rss_xml(
+            rb.content,
+            platform,
+            default_source=default_source or platform,
+            fallback_offset=3600,
+            max_age_sec=0,
+        ):
+          u_e = clean_social_post_url(entry.get("url", ""))
+          if u_e and u_e not in seen_u:
+            seen_u.add(u_e)
+            entry["url"] = u_e
+            collected.append(entry)
+    except Exception:
+      pass
+
+  # 4) مكتبة DDGS (بدون قيد timelimit الضيق الذي يحجب منشورات فيسبوك ويوتيوب المخصصة)
+  if DDGS is not None and len(collected) < max_results:
+    try:
+      with DDGS() as ddgs:
+        for res in ddgs.text(
+            query,
+            region="wt-wt",
+            safesearch="strict",
+            timelimit=None,
+            max_results=max_results,
+        ):
+          _add_candidate(
+              res.get("href") or res.get("url") or "",
+              res.get("title") or "",
+              res.get("body") or "",
+          )
+    except Exception:
+      pass
+
+  return collected
+
+
 def _scrape_youtube_custom_channel(
     t_info: dict, t_kw: str, max_age_sec: int, seen_urls: set
 ) -> list:
   results = []
   all_channel_videos = []
-  raw_u = t_info["raw_url"].rstrip("/")
+  raw_u = t_info["raw_url"]
   cid = t_info.get("channel_id", "")
+  handle = t_info.get("handle", "")
   channel_title = t_info.get("display_label", "YouTube")
 
-  videos_tab_url = raw_u
-  if (
-      not any(
-          raw_u.endswith(x)
-          for x in ["/videos", "/streams", "/shorts", "/featured"]
-      )
-      and "watch?v=" not in raw_u
-  ):
-    videos_tab_url = f"{raw_u}/videos"
+  # إذا كان الرابط المضاف رابط فيديو يوتيوب مباشر، نرصده فوراً
+  m_direct_v = re.search(
+      r"(?:watch\?v=|youtu\.be/|/shorts/|/live/)([A-Za-z0-9_-]{11})", raw_u
+  )
+  if m_direct_v:
+    vid_id = m_direct_v.group(1)
+    v_url = f"https://www.youtube.com/watch?v={vid_id}"
+    _, p_body, _ = scrape_article_page_content_and_image(v_url)
+    v_title = p_body[:105] if p_body else f"فيديو يوتيوب ({vid_id})"
+    pub_str, pub_ts = extract_date_from_url_or_text(
+        v_url, p_body, "", fallback_offset_sec=1800
+    )
+    entry = {
+        "title": v_title,
+        "url": v_url,
+        "raw_snippet": p_body or v_title,
+        "source_name": f"🎯 {channel_title}",
+        "platform": "يوتيوب",
+        "pub_date": pub_str,
+        "pub_timestamp": pub_ts,
+        "image_url": f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg",
+    }
+    _tag_custom_target_item(entry, t_info, f"🎯 {channel_title}")
+    return [entry]
+
+  # بناء رابط نظيف لتبويب الفيديوهات بدون معاملات التتبع (?si=...) التي تسبب خطأ 404
+  parsed_u = urllib.parse.urlparse(raw_u)
+  clean_base_u = urllib.parse.urlunparse(
+      ("https", "www.youtube.com", parsed_u.path.rstrip("/"), "", "", "")
+  )
+  if cid and not handle:
+    videos_tab_url = f"https://www.youtube.com/channel/{cid}/videos"
+  elif handle:
+    h_prefix = f"@{handle}" if not handle.startswith("@") and "/c/" not in clean_base_u and "/user/" not in clean_base_u else handle
+    if "/c/" in clean_base_u or "/user/" in clean_base_u:
+      videos_tab_url = f"{clean_base_u}/videos"
+    else:
+      videos_tab_url = f"https://www.youtube.com/{h_prefix}/videos"
+  else:
+    videos_tab_url = (
+        clean_base_u
+        if any(clean_base_u.endswith(x) for x in ["/videos", "/streams", "/shorts"])
+        else f"{clean_base_u}/videos"
+    )
 
   page_html = ""
-  try:
-    r = requests.get(
-        videos_tab_url,
-        headers=DEFAULT_HEADERS,
-        cookies=YT_BYPASS_COOKIES,
-        timeout=11,
-    )
-    if r.status_code == 200:
-      page_html = r.text
-      og_t = re.search(
-          r'<meta\s+property="og:title"\s+content="([^"]+)"', page_html
+  for candidate_yt_url in [videos_tab_url, clean_base_u]:
+    try:
+      r = requests.get(
+          candidate_yt_url,
+          headers=DEFAULT_HEADERS,
+          cookies=YT_BYPASS_COOKIES,
+          timeout=11,
       )
-      if og_t and og_t.group(1).strip():
-        channel_title = clean_display_text(og_t.group(1).strip())
+      if r.status_code == 200 and r.text:
+        page_html = r.text
+        og_t = re.search(
+            r'<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']+)["\']',
+            page_html,
+            re.IGNORECASE,
+        )
+        if og_t and og_t.group(1).strip():
+          cand_name = clean_display_text(og_t.group(1).strip())
+          cand_name = re.sub(r"\s*-\s*YouTube.*$", "", cand_name, flags=re.IGNORECASE).strip()
+          if cand_name and cand_name.lower() != "youtube":
+            channel_title = cand_name
 
-      if not cid:
-        for pat in [
-            r'"rssUrl"\s*:\s*"https://www\.youtube\.com/feeds/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{20,})"',
-            r'<link\s+rel="canonical"\s+href="https://www\.youtube\.com/channel/(UC[a-zA-Z0-9_-]{20,})"',
-            r'<meta\s+itemprop="channelId"\s+content="(UC[a-zA-Z0-9_-]{20,})"',
-            r'"externalId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"',
-        ]:
-          m_c = re.search(pat, page_html)
-          if m_c:
-            cid = m_c.group(1)
-            break
-  except Exception:
-    pass
+        if not cid:
+          for pat in [
+              r'"(?:channelId|externalId|externalChannelId|browseId)"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"',
+              r'channel_id=(UC[a-zA-Z0-9_-]{20,})',
+              r'/channel/(UC[a-zA-Z0-9_-]{20,})',
+          ]:
+            m_c = re.search(pat, page_html)
+            if m_c:
+              cid = m_c.group(1)
+              break
+        if cid or '"videoRenderer"' in page_html or '"gridVideoRenderer"' in page_html:
+          break
+    except Exception:
+      pass
+
+  # إذا لم يتم العثور على معرف القناة UC عبر الصفحة المباشرة، نستخرجه من بحث يوتيوب عن معرف القناة
+  if not cid and (handle or channel_title):
+    q_ch = f"@{handle}" if handle else channel_title
+    yt_search_u = f"https://www.youtube.com/results?search_query={urllib.parse.quote(q_ch)}"
+    try:
+      rs_yt = requests.get(
+          yt_search_u,
+          headers=DEFAULT_HEADERS,
+          cookies=YT_BYPASS_COOKIES,
+          timeout=10,
+      )
+      if rs_yt.status_code == 200 and rs_yt.text:
+        m_ch_id = re.search(
+            r'"channelRenderer"\s*:\s*\{[^{}]*"channelId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"',
+            rs_yt.text,
+        )
+        if not m_ch_id:
+          m_ch_id = re.search(
+              r'"channelId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"', rs_yt.text
+          )
+        if m_ch_id:
+          cid = m_ch_id.group(1)
+        if not page_html:
+          page_html = rs_yt.text
+    except Exception:
+      pass
 
   source_badge = f"🎯 {channel_title}"
   now_ts = time.time()
+  seen_channel_vids = set()
 
+  # 1) الجلب من خلاصة XML الرسمية للقناة (تضمن أحدث 15 فيديو بتواريخ نشرها الدقيقة بالثانية)
   if cid:
     xml_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}"
     try:
@@ -3007,14 +3289,20 @@ def _scrape_youtube_custom_channel(
               is_target=True,
           ):
             continue
-          _tag_custom_target_item(entry, t_info, source_badge)
-          all_channel_videos.append(entry)
+          u_clean_v = clean_social_post_url(entry["url"])
+          if u_clean_v not in seen_channel_vids:
+            seen_channel_vids.add(u_clean_v)
+            _tag_custom_target_item(entry, t_info, source_badge)
+            all_channel_videos.append(entry)
     except Exception:
       pass
 
+  # 2) الجلب من كود صفحة فيديوهات القناة المباشر
   if page_html:
     for v in _extract_yt_renderers_from_html(page_html, channel_title):
       v_url = f"https://www.youtube.com/watch?v={v['vid']}"
+      if v_url in seen_channel_vids:
+        continue
       if not is_strictly_judicial_and_clean(
           v["title"], v["desc"], v_url, t_kw, is_target=True
       ):
@@ -3032,14 +3320,39 @@ def _scrape_youtube_custom_channel(
           "pub_timestamp": pub_ts,
           "image_url": f"https://i.ytimg.com/vi/{v['vid']}/hqdefault.jpg",
       }
+      seen_channel_vids.add(v_url)
       _tag_custom_target_item(entry, t_info, source_badge)
       all_channel_videos.append(entry)
 
-  # فلترة حسب فترة البحث المختارة، وإذا لم تنشر القناة خلال 24 ساعة نعرض أحدث فيديوهاتها حتى لا تكون النتيجة 0
+  # 3) احتياطي إضافي عبر محركات البحث إذا حجب يوتيوب عنوان IP السحابي
+  if len(all_channel_videos) < 3:
+    yt_ident = handle or channel_title or cid
+    if yt_ident:
+      q_web_yt = f'site:youtube.com "{yt_ident}" {t_kw}'.strip()
+      for item_w in _multi_engine_web_search(
+          q_web_yt, platform="يوتيوب", default_source=source_badge, max_results=12
+      ):
+        u_w = clean_social_post_url(item_w.get("url", ""))
+        if u_w in seen_channel_vids or not is_direct_social_post_url(u_w, "يوتيوب"):
+          continue
+        if not is_strictly_judicial_and_clean(
+            item_w["title"], item_w["raw_snippet"], u_w, t_kw, is_target=True
+        ):
+          continue
+        seen_channel_vids.add(u_w)
+        _tag_custom_target_item(item_w, t_info, source_badge)
+        all_channel_videos.append(item_w)
+
+  # ترتيب فيديوهات القناة من الأحدث إلى الأقدم
+  all_channel_videos.sort(
+      key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
+  )
+
   in_window = [
       e
       for e in all_channel_videos
-      if max_age_sec <= 0 or (now_ts - float(e.get("pub_timestamp", 0))) <= max_age_sec
+      if max_age_sec <= 0
+      or (now_ts - float(e.get("pub_timestamp", 0))) <= max_age_sec
   ]
   chosen_list = in_window if in_window else all_channel_videos[:10]
   for entry in chosen_list:
@@ -3148,10 +3461,14 @@ def _scrape_website_custom_target(
     except Exception:
       pass
 
+  all_site_items.sort(
+      key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
+  )
   in_window = [
       e
       for e in all_site_items
-      if max_age_sec <= 0 or (now_ts - float(e.get("pub_timestamp", 0))) <= max_age_sec
+      if max_age_sec <= 0
+      or (now_ts - float(e.get("pub_timestamp", 0))) <= max_age_sec
   ]
   chosen_list = in_window if in_window else all_site_items[:10]
   for entry in chosen_list:
@@ -3166,17 +3483,15 @@ def _extract_post_permalink_from_fb_box(
     box, canonical_fb_url: str, handle: str = "", page_id: str = ""
 ) -> str:
   """استخراج الرابط المباشر للمنشور بعينه من حاوية المنشور في فيسبوك دون توجيه المستخدم إلى الصفحة العامة."""
-  # 1) فحص رابط طابع الوقت المباشر (a._5pcq أو الرابط المحيط بـ abbr[data-utime])
   for sel in ["a._5pcq[href]", "span.fsm a[href]", "a[href]"]:
     for a_el in box.select(sel):
       raw_h = (a_el.get("href") or "").strip()
       if not raw_h or raw_h.startswith("#") or raw_h.startswith("javascript:"):
         continue
       cand_u = clean_social_post_url(raw_h)
-      if is_direct_social_post_url(cand_u, "فيسبوك", allow_post_search=False):
+      if is_direct_social_post_url(cand_u, "فيسبوك"):
         return cand_u
 
-  # 2) فحص خاصية data-ft JSON التي يضعها فيسبوك على كل منشور (تحتوي على top_level_post_id و page_id)
   ft_nodes = [box] + list(box.select("[data-ft]"))
   for node in ft_nodes:
     raw_ft = node.get("data-ft") if hasattr(node, "get") else None
@@ -3199,7 +3514,7 @@ def _extract_post_permalink_from_fb_box(
       if post_id and len(post_id) >= 8:
         if handle and not handle.startswith("fb_") and not handle.isdigit():
           cand_u = f"https://www.facebook.com/{handle}/posts/{post_id}"
-          if is_direct_social_post_url(cand_u, "فيسبوك", allow_post_search=False):
+          if is_direct_social_post_url(cand_u, "فيسبوك"):
             return cand_u
         if owner_id:
           return f"https://www.facebook.com/permalink.php?story_fbid={post_id}&id={owner_id}"
@@ -3249,7 +3564,6 @@ def _scrape_facebook_plugin_timeline(
 
       if BeautifulSoup is not None:
         soup = BeautifulSoup(r.text, "html.parser")
-        # اختيار حاويات المنشورات الفعلية فقط وتجنب حاوية ترويسة الصفحة العامة
         post_containers = soup.select("div._5pcr, div.userContentWrapper")
         if not post_containers:
           post_containers = soup.select(
@@ -3260,9 +3574,7 @@ def _scrape_facebook_plugin_timeline(
           post_link = _extract_post_permalink_from_fb_box(
               box, canonical_fb_url, handle=handle, page_id=page_id
           )
-          if not post_link or not is_direct_social_post_url(
-              post_link, "فيسبوك", allow_post_search=False
-          ):
+          if not post_link or not is_direct_social_post_url(post_link, "فيسبوك"):
             continue
           if post_link in seen_post_urls:
             continue
@@ -3278,7 +3590,11 @@ def _scrape_facebook_plugin_timeline(
                 for p in box.select("p")
                 if len(clean_display_text(p.get_text(" ", strip=True))) >= 10
             ]
-            post_text = " ".join(p_tags) if p_tags else clean_display_text(box.get_text(" ", strip=True))
+            post_text = (
+                " ".join(p_tags)
+                if p_tags
+                else clean_display_text(box.get_text(" ", strip=True))
+            )
 
           post_text = re.sub(
               r"\b(?:عرض المزيد|See More|See more|عرض الترجمة)\b",
@@ -3332,7 +3648,6 @@ def _scrape_facebook_plugin_timeline(
           seen_post_urls.add(post_link)
           posts.append(entry)
 
-      # استخراج أي روابط منشورات مباشرة مضمنة في JSON/HTML الخاص بـ plugins/page.php
       if not posts:
         extra_posts = _extract_facebook_posts_from_raw_html(
             r.text,
@@ -3353,6 +3668,85 @@ def _scrape_facebook_plugin_timeline(
   return posts
 
 
+def _verify_and_enrich_fb_post_url(
+    post_u: str, page_avatar: str = ""
+) -> tuple:
+  """فحص رابط المنشور عبر ترويسة facebookexternalhit للتأكد من أنه يعمل (ليس Not Found) واستخراج النص الكامل والصورة."""
+  try:
+    rp = requests.get(post_u, headers=FB_CRAWLER_HEADERS, timeout=6)
+    if rp.status_code != 200 or not rp.text:
+      return True, "", "", post_u
+    p_html = rp.text[:40000]
+
+    post_title_og = ""
+    for t_pat in [
+        r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:title["\']',
+        r"<title>(.*?)</title>",
+    ]:
+      m_t = re.search(t_pat, p_html, re.IGNORECASE | re.DOTALL)
+      if m_t:
+        post_title_og = clean_display_text(m_t.group(1))
+        break
+
+    # إذا كان الرابط معطوباً أو محذوفاً (Not Found / المحتوى غير متوفر)
+    bad_titles = [
+        "page not found",
+        "content isn't available",
+        "this content isn't available",
+        "المحتوى غير متوفر",
+        "الصفحة غير موجودة",
+        "غير متوفر حاليا",
+    ]
+    if post_title_og and any(bt in post_title_og.lower() for bt in bad_titles):
+      return False, "", "", post_u
+
+    post_desc = ""
+    for d_pat in [
+        r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']',
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+    ]:
+      m_d = re.search(d_pat, p_html, re.IGNORECASE)
+      if m_d:
+        d_txt = clean_display_text(m_d.group(1))
+        if len(d_txt) >= 12:
+          post_desc = d_txt
+          break
+
+    post_img = page_avatar
+    for i_pat in [
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+    ]:
+      m_i = re.search(i_pat, p_html, re.IGNORECASE)
+      if m_i:
+        post_img = html.unescape(m_i.group(1).strip())
+        break
+
+    m_og_u = re.search(
+        r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
+        p_html,
+        re.IGNORECASE,
+    )
+    resolved_u = post_u
+    if m_og_u:
+      cand_og_u = clean_social_post_url(m_og_u.group(1))
+      if is_direct_social_post_url(cand_og_u, "فيسبوك"):
+        resolved_u = cand_og_u
+
+    final_body = post_desc or post_title_og
+    if final_body and any(
+        lw in final_body.lower()
+        for lw in ["قم بتسجيل الدخول", "log in to facebook", "تسجيل الدخول إلى فيسبوك"]
+    ):
+      final_body = ""
+
+    return True, final_body, post_img, resolved_u
+  except Exception:
+    return True, "", page_avatar, post_u
+
+
 def _extract_facebook_posts_from_raw_html(
     raw_html: str,
     canonical_fb_url: str,
@@ -3363,7 +3757,7 @@ def _extract_facebook_posts_from_raw_html(
     page_avatar: str,
     t_kw: str,
 ) -> list:
-  """استخراج روابط المنشورات المباشرة (pfbid, story_fbid, posts, videos, reel) المضمنة في كود صفحة فيسبوك وجلب محتوى كل منشور."""
+  """استخراج روابط المنشورات المباشرة (pfbid, story_fbid, posts, videos, reel) المضمنة في كود صفحة فيسبوك."""
   if not raw_html:
     return []
 
@@ -3371,7 +3765,6 @@ def _extract_facebook_posts_from_raw_html(
   seen_cand = set()
   unescaped_html = raw_html.replace("\\/", "/")
 
-  # 1) استخراج الروابط المباشرة من JSON أو href
   patterns = [
       r'https?://(?:www\.|m\.|web\.)?facebook\.com/[^"\'\s<>\\]+/(?:posts|videos|photos)/[^"\'\s<>\\]+',
       r'https?://(?:www\.|m\.|web\.)?facebook\.com/(?:permalink\.php|story\.php|photo\.php|photo/|watch/|reel/|share/[pvr]/)[^"\'\s<>\\]+',
@@ -3384,12 +3777,11 @@ def _extract_facebook_posts_from_raw_html(
       if (
           clean_u
           and clean_u not in seen_cand
-          and is_direct_social_post_url(clean_u, "فيسبوك", allow_post_search=False)
+          and is_direct_social_post_url(clean_u, "فيسبوك")
       ):
         seen_cand.add(clean_u)
         discovered_links.append(clean_u)
 
-  # 2) استخراج معرفات المنشورات (story_fbid / post_id / pfbid) من بيانات Relay JSON
   for m_fbid in re.finditer(
       r'"(?:story_fbid|top_level_post_id|post_id)"\s*:\s*"(pfbid[A-Za-z0-9]+|\d{11,})"',
       unescaped_html,
@@ -3402,10 +3794,7 @@ def _extract_facebook_posts_from_raw_html(
     else:
       continue
     clean_u = clean_social_post_url(cand_u)
-    if (
-        clean_u not in seen_cand
-        and is_direct_social_post_url(clean_u, "فيسبوك", allow_post_search=False)
-    ):
+    if clean_u not in seen_cand and is_direct_social_post_url(clean_u, "فيسبوك"):
       seen_cand.add(clean_u)
       discovered_links.append(clean_u)
 
@@ -3413,75 +3802,31 @@ def _extract_facebook_posts_from_raw_html(
   for idx, post_u in enumerate(discovered_links[:8]):
     if is_stop_requested():
       break
-    try:
-      rp = requests.get(post_u, headers=FB_CRAWLER_HEADERS, timeout=6)
-      if rp.status_code != 200 or not rp.text:
-        continue
-      p_html = rp.text[:35000]
-      post_desc = ""
-      for d_pat in [
-          r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
-          r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']',
-          r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
-      ]:
-        m_d = re.search(d_pat, p_html, re.IGNORECASE)
-        if m_d:
-          d_txt = clean_display_text(m_d.group(1))
-          if len(d_txt) >= 15:
-            post_desc = d_txt
-            break
+    is_valid, final_text, post_img, resolved_u = _verify_and_enrich_fb_post_url(
+        post_u, page_avatar
+    )
+    if not is_valid or not final_text or len(final_text) < 15:
+      continue
+    if not is_strictly_judicial_and_clean(
+        final_text, final_text, resolved_u, t_kw, is_target=True
+    ):
+      continue
 
-      post_title_og = ""
-      for t_pat in [
-          r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
-          r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:title["\']',
-      ]:
-        m_t = re.search(t_pat, p_html, re.IGNORECASE)
-        if m_t:
-          post_title_og = clean_display_text(m_t.group(1))
-          break
-
-      final_text = post_desc or post_title_og
-      if not final_text or len(final_text) < 15:
-        continue
-      if any(
-          login_w in final_text.lower()
-          for login_w in ["قم بتسجيل الدخول", "log in to facebook", "تسجيل الدخول إلى فيسبوك"]
-      ):
-        continue
-
-      post_img = page_avatar
-      for i_pat in [
-          r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-          r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
-      ]:
-        m_i = re.search(i_pat, p_html, re.IGNORECASE)
-        if m_i:
-          post_img = html.unescape(m_i.group(1).strip())
-          break
-
-      if not is_strictly_judicial_and_clean(
-          final_text, final_text, post_u, t_kw, is_target=True
-      ):
-        continue
-
-      pub_str, pub_ts = extract_date_from_url_or_text(
-          post_u, final_text, "", fallback_offset_sec=1800 + (idx * 600)
-      )
-      entry = {
-          "title": final_text[:110] + ("..." if len(final_text) > 110 else ""),
-          "url": post_u,
-          "raw_snippet": final_text,
-          "source_name": source_badge,
-          "platform": "فيسبوك",
-          "pub_date": pub_str,
-          "pub_timestamp": pub_ts,
-          "image_url": post_img,
-      }
-      _tag_custom_target_item(entry, t_info, source_badge)
-      extracted_posts.append(entry)
-    except Exception:
-      pass
+    pub_str, pub_ts = extract_date_from_url_or_text(
+        resolved_u, final_text, "", fallback_offset_sec=1800 + (idx * 600)
+    )
+    entry = {
+        "title": final_text[:110] + ("..." if len(final_text) > 110 else ""),
+        "url": resolved_u,
+        "raw_snippet": final_text,
+        "source_name": source_badge,
+        "platform": "فيسبوك",
+        "pub_date": pub_str,
+        "pub_timestamp": pub_ts,
+        "image_url": post_img,
+    }
+    _tag_custom_target_item(entry, t_info, source_badge)
+    extracted_posts.append(entry)
 
   return extracted_posts
 
@@ -3493,12 +3838,11 @@ def resolve_direct_facebook_post_url(
     page_official_name: str = "",
     page_id: str = "",
 ) -> str:
-  """تحويل نتيجة البحث التي تشير إلى الصفحة العامة لفيسبوك إلى رابط المنشور المباشر بعينه."""
+  """البحث عن الرابط المباشر الحقيقي للمنشور (/posts/ أو /videos/ أو permalink.php) وإرجاع نص فارغ إذا لم يوجد (تجنباً لروابط Not Found)."""
   clean_snip = clean_display_text(snippet_text or title_text)
   if page_official_name:
     clean_snip = clean_snip.replace(page_official_name, "").strip(" -–—:|•.")
 
-  # استبعاد الأوصاف التعريفية العامة للصفحة التي ليست منشورات (مثل: يتابعها X شخص / تسجيل إعجاب)
   if re.search(
       r"(?:يتابعها|تسجيل إعجاب|يتحدث عن هذا|likes\s*·|talking about this)",
       clean_snip,
@@ -3514,53 +3858,48 @@ def resolve_direct_facebook_post_url(
   if len(words) < 4:
     return ""
 
-  quote_phrase = " ".join(words[:8])
-  owner_tok = page_official_name or (handle if not handle.startswith("fb_") else "")
+  quote_phrase = " ".join(words[:7])
+  owner_tok = (
+      handle
+      if (handle and not handle.startswith("fb_"))
+      else page_official_name
+  )
+  sq = f'site:facebook.com "{owner_tok}" "{quote_phrase}"'.strip()
 
-  search_queries = [
-      f'site:facebook.com "{quote_phrase}"',
-  ]
-  if handle and not handle.startswith("fb_"):
-    search_queries.insert(0, f'site:facebook.com/{handle}/posts "{ " ".join(words[:6]) }"')
-  if owner_tok:
-    search_queries.append(f'site:facebook.com "{owner_tok}" "{ " ".join(words[:6]) }"')
+  for item_res in _multi_engine_web_search(sq, platform="فيسبوك", max_results=6):
+    cand_u = clean_social_post_url(item_res.get("url", ""))
+    if is_direct_social_post_url(cand_u, "فيسبوك"):
+      return cand_u
 
-  for sq in search_queries[:2]:
-    if DDGS is not None:
-      try:
-        with DDGS() as ddgs:
-          for res in ddgs.text(
-              sq, region="xa-ar", safesearch="strict", max_results=6
-          ):
-            cand_href = clean_social_post_url(
-                res.get("href") or res.get("url") or ""
-            )
-            if is_direct_social_post_url(
-                cand_href, "فيسبوك", allow_post_search=False
-            ):
-              return cand_href
-      except Exception:
-        pass
+  return ""
 
-    bing_u = (
-        f"https://www.bing.com/search?q={urllib.parse.quote(sq)}"
-        "&format=rss&adlt=strict&cc=MA&setlang=ar"
-    )
-    try:
-      rb = requests.get(bing_u, headers=DEFAULT_HEADERS, timeout=6)
-      if rb.status_code == 200 and b"<item>" in rb.content:
-        for entry in parse_rss_xml(rb.content, "فيسبوك", max_age_sec=0):
-          cand_u = clean_social_post_url(entry.get("url", ""))
-          if is_direct_social_post_url(
-              cand_u, "فيسبوك", allow_post_search=False
-          ):
-            return cand_u
-    except Exception:
-      pass
 
-  # إذا لم تفهرس محركات البحث معرف pfbid بعد، نوجه الرابط مباشرة إلى البحث الدقيق عن نص المنشور بعينه داخل فيسبوك بدلاً من الصفحة العامة
-  exact_q = f"{owner_tok} {' '.join(words[:9])}".strip()
-  return f"https://www.facebook.com/search/posts/?q={urllib.parse.quote(exact_q)}"
+def _clean_social_page_title(raw_title: str) -> str:
+  """تنظيف اسم الصفحة الرسمي المستخرج من og:title من اللواحق مثل | Facebook أو | Rabat أو - الصفحة الرئيسية."""
+  t = clean_display_text(raw_title)
+  if not t:
+    return ""
+  t = re.sub(
+      r"\s*[-|•–—]\s*(?:Facebook|فيسبوك|فايسبوك|X|Twitter|TikTok|Instagram|LinkedIn|YouTube).*$",
+      "",
+      t,
+      flags=re.IGNORECASE,
+  ).strip()
+  t = re.sub(
+      r"\s+on\s+(?:Facebook|Reels|X|Twitter).*$", "", t, flags=re.IGNORECASE
+  ).strip()
+  # إزالة اسم المدينة أو اللاحقة العامة بعد الفاصل العمودي | (مثل: رئاسة النيابة العامة | Rabat)
+  if "|" in t:
+    parts_pipe = [p.strip() for p in t.split("|") if p.strip()]
+    if parts_pipe:
+      t = parts_pipe[0]
+  t = re.sub(
+      r"\s*[-–—]\s*(?:الصفحة الرسمية|الصفحة الرئيسية|Home|Official Page|Officiel)\s*$",
+      "",
+      t,
+      flags=re.IGNORECASE,
+  ).strip()
+  return t
 
 
 def _scrape_social_custom_target(
@@ -3573,6 +3912,7 @@ def _scrape_social_custom_target(
 ) -> list:
   results = []
   all_target_posts = []
+  seen_target_urls = set()
   raw_u = t_info["raw_url"]
   domain = t_info["domain"]
   platform = t_info["platform"]
@@ -3582,7 +3922,7 @@ def _scrape_social_custom_target(
   now_ts = time.time()
 
   # إذا كان الرابط المضاف أصلاً رابط منشور مباشر بعينه، نرصده مباشرة
-  if is_direct_social_post_url(raw_u, platform, allow_post_search=False):
+  if is_direct_social_post_url(raw_u, platform):
     clean_direct_u = clean_social_post_url(raw_u)
     p_img, p_body, _ = scrape_article_page_content_and_image(clean_direct_u)
     if p_body:
@@ -3614,25 +3954,32 @@ def _scrape_social_custom_target(
     rp = requests.get(raw_u, headers=req_hdrs, timeout=8, allow_redirects=True)
     if rp.status_code == 200 and rp.text:
       page_raw_html = rp.text
-      if rp.url and "login" not in rp.url.lower():
-        canonical_url = rp.url
+      if rp.url:
+        unwrapped_rp_u = clean_social_post_url(rp.url)
+        if unwrapped_rp_u and "login" not in unwrapped_rp_u.lower():
+          canonical_url = unwrapped_rp_u
+
       m_og_u = re.search(
           r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
-          rp.text[:30000],
+          rp.text[:35000],
           re.IGNORECASE,
       )
-      if m_og_u and "login" not in m_og_u.group(1).lower():
-        canonical_url = html.unescape(m_og_u.group(1).strip())
-        re_parsed = parse_custom_target_identity(canonical_url)
-        if re_parsed.get("handle") and re_parsed["handle"] != handle:
-          handle = re_parsed["handle"]
-        if re_parsed.get("channel_id") and not cid:
-          cid = re_parsed["channel_id"]
+      if m_og_u:
+        cand_og = clean_social_post_url(m_og_u.group(1))
+        if cand_og and "login" not in cand_og.lower():
+          canonical_url = cand_og
 
-      # استخراج معرف الصفحة الرقمي page_id من ميتا الصفحة (al:android:url أوal:ios:url أو delegate_page_id)
+      re_parsed = parse_custom_target_identity(canonical_url)
+      if re_parsed.get("handle") and (
+          not handle or handle.startswith("fb_") or handle != re_parsed["handle"]
+      ):
+        handle = re_parsed["handle"]
+      if re_parsed.get("channel_id") and not cid:
+        cid = re_parsed["channel_id"]
+
       if not cid and platform == "فيسبوك":
         for id_pat in [
-            r'fb://(?:page|profile)/(\d{6,})',
+            r"fb://(?:page|profile)/(\d{6,})",
             r'"(?:page_id|delegate_page_id|entity_id|userID)"\s*:\s*"(\d{6,})"',
         ]:
           m_pid = re.search(id_pat, rp.text[:60000])
@@ -3645,26 +3992,21 @@ def _scrape_social_custom_target(
           r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:title["\']',
           r"<title>(.*?)</title>",
       ]:
-        m_og_t = re.search(t_pat, rp.text[:30000], re.IGNORECASE | re.DOTALL)
+        m_og_t = re.search(t_pat, rp.text[:35000], re.IGNORECASE | re.DOTALL)
         if m_og_t:
-          raw_og_t = clean_display_text(m_og_t.group(1))
-          raw_og_t = re.sub(
-              r"\s*[-|•]\s*(?:Facebook|فيسبوك|X|Twitter|TikTok|Instagram|LinkedIn).*$",
-              "",
-              raw_og_t,
-              flags=re.IGNORECASE,
-          ).strip()
-          if len(raw_og_t) >= 2 and not any(
-              w in raw_og_t.lower()
+          cleaned_t = _clean_social_page_title(m_og_t.group(1))
+          if len(cleaned_t) >= 2 and not any(
+              w in cleaned_t.lower()
               for w in [
                   "log in",
                   "login",
                   "تسجيل الدخول",
                   "قم بتسجيل الدخول",
-                  "facebook",
+                  "not found",
+                  "غير متوفر",
               ]
-          ):
-            page_official_name = raw_og_t
+          ) and cleaned_t.lower() not in {"facebook", "فيسبوك", "فايسبوك"}:
+            page_official_name = cleaned_t
             break
 
       for d_pat in [
@@ -3672,7 +4014,7 @@ def _scrape_social_custom_target(
           r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']',
           r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
       ]:
-        m_og_d = re.search(d_pat, rp.text[:30000], re.IGNORECASE)
+        m_og_d = re.search(d_pat, rp.text[:35000], re.IGNORECASE)
         if m_og_d:
           d_cand = clean_display_text(m_og_d.group(1))
           if len(d_cand) > 15:
@@ -3683,7 +4025,7 @@ def _scrape_social_custom_target(
           r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
           r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
       ]:
-        m_og_img = re.search(i_pat, rp.text[:30000], re.IGNORECASE)
+        m_og_img = re.search(i_pat, rp.text[:35000], re.IGNORECASE)
         if m_og_img:
           page_avatar = html.unescape(m_og_img.group(1).strip())
           break
@@ -3692,7 +4034,7 @@ def _scrape_social_custom_target(
 
   source_badge = f"🎯 {page_official_name or disp}"
 
-  # 2) إذا كانت صفحة فيسبوك: استخراج المنشورات بروابطها المباشرة من أداة الخط الزمني (plugins/page.php) ومن كود الصفحة
+  # 2) إذا كانت صفحة فيسبوك: فحص أداة الخط الزمني وكود الصفحة المباشر
   if platform == "فيسبوك":
     fb_plugin_posts = _scrape_facebook_plugin_timeline(
         canonical_url,
@@ -3703,7 +4045,11 @@ def _scrape_social_custom_target(
         handle=handle,
         page_id=cid,
     )
-    all_target_posts.extend(fb_plugin_posts)
+    for p in fb_plugin_posts:
+      u_p = clean_social_post_url(p["url"])
+      if u_p not in seen_target_urls:
+        seen_target_urls.add(u_p)
+        all_target_posts.append(p)
 
     if len(all_target_posts) < 3 and page_raw_html:
       html_direct_posts = _extract_facebook_posts_from_raw_html(
@@ -3716,7 +4062,11 @@ def _scrape_social_custom_target(
           page_avatar,
           t_kw,
       )
-      all_target_posts.extend(html_direct_posts)
+      for p in html_direct_posts:
+        u_p = clean_social_post_url(p["url"])
+        if u_p not in seen_target_urls:
+          seen_target_urls.add(u_p)
+          all_target_posts.append(p)
 
   # 3) إذا كان الحساب على منصة إكس (X/Twitter): فحص نقطة Syndication الرسمية الخاصة بالحساب نفسه
   if platform == "إكس" and handle:
@@ -3771,232 +4121,129 @@ def _scrape_social_custom_target(
                 "image_url": t_img,
             }
             _tag_custom_target_item(entry, t_info, source_badge)
+            seen_target_urls.add(t_link)
             all_target_posts.append(entry)
     except Exception:
       pass
 
-  # 4) استعلامات بحث موجهة بدقة لروابط المنشورات المباشرة (/posts/, /videos/, /reel/, permalink.php) الخاصة بالصفحة
+  # 4) مسح شامل لمنشورات وفيديوهات الصفحة عبر المحركات المتعددة (Yahoo + DDG HTML + Bing RSS + DDGS)
   target_queries = []
   if platform == "فيسبوك":
     if handle and not handle.startswith("fb_"):
-      target_queries.append(f"site:facebook.com/{handle}/posts {t_kw}".strip())
-      target_queries.append(f"site:facebook.com/{handle}/videos {t_kw}".strip())
-      target_queries.append(
-          f'site:facebook.com "{handle}" ("posts" OR "videos" OR "reel" OR "permalink.php" OR "story_fbid") {t_kw}'.strip()
-      )
+      target_queries.append(f'site:facebook.com "{handle}" {t_kw}'.strip())
+      target_queries.append(f'site:facebook.com "{handle}" posts {t_kw}'.strip())
+      target_queries.append(f'site:facebook.com "{handle}" videos {t_kw}'.strip())
     if page_official_name:
-      target_queries.append(
-          f'site:facebook.com "{page_official_name}" ("posts" OR "videos" OR "reel" OR "permalink.php" OR "photo") {t_kw}'.strip()
-      )
       target_queries.append(
           f'site:facebook.com "{page_official_name}" {t_kw}'.strip()
       )
-    if handle and not handle.startswith("fb_"):
-      target_queries.append(f'site:facebook.com "{handle}" {t_kw}'.strip())
-    if cid:
       target_queries.append(
-          f'site:facebook.com/permalink.php "{cid}" {t_kw}'.strip()
+          f'site:facebook.com "{page_official_name}" posts {t_kw}'.strip()
       )
+    if cid:
       target_queries.append(f'site:facebook.com "{cid}" {t_kw}'.strip())
   else:
     if handle and not handle.startswith("fb_"):
-      if platform == "إكس":
-        target_queries.append(f"site:x.com/{handle}/status {t_kw}".strip())
-        target_queries.append(f"site:twitter.com/{handle}/status {t_kw}".strip())
       target_queries.append(f'site:{domain} "{handle}" {t_kw}'.strip())
+      if platform == "إكس":
+        target_queries.append(f'site:twitter.com "{handle}" {t_kw}'.strip())
     if page_official_name:
       target_queries.append(
           f'site:{domain} "{page_official_name}" {t_kw}'.strip()
       )
 
-  match_tokens = [
-      x.lower()
-      for x in [page_official_name, handle, cid]
-      if x and len(x) >= 3 and not x.startswith("fb_")
-  ]
+  # بناء قائمة الكلمات المميزة لملكية الصفحة (مع تقسيم الاسم المركب مثل: Sawt Al Adala - صوت العدالة)
+  match_tokens = []
+  for raw_tok in [handle, cid, page_official_name]:
+    if not raw_tok or str(raw_tok).startswith("fb_"):
+      continue
+    clean_tok = str(raw_tok).strip().lower()
+    if len(clean_tok) >= 3 and clean_tok not in match_tokens:
+      match_tokens.append(clean_tok)
+    for sub_part in re.split(r"[-|•–—:/()]+", clean_tok):
+      sp = sub_part.strip()
+      if len(sp) >= 4 and sp not in match_tokens:
+        match_tokens.append(sp)
 
-  fallback_search_posts = []
-
-  for tq in target_queries:
+  for tq in target_queries[:5]:
     if is_stop_requested():
       break
-    for bing_base in [
-        "https://www.bing.com/search?q=",
-        "https://www.bing.com/news/search?q=",
-    ]:
-      bing_u = (
-          f"{bing_base}{urllib.parse.quote(tq)}"
-          "&format=rss&adlt=strict&cc=MA&setlang=ar"
-      )
-      try:
-        rb = requests.get(bing_u, headers=DEFAULT_HEADERS, timeout=9)
-        if rb.status_code == 200 and b"<item>" in rb.content:
-          for entry in parse_rss_xml(
-              rb.content,
-              platform,
-              default_source=source_badge,
-              fallback_offset=1800,
-              max_age_sec=0,
-          ):
-            raw_entry_u = clean_social_post_url(entry.get("url", ""))
-            comb_entry = f"{entry['title']} {entry['raw_snippet']} {raw_entry_u}".lower()
-            if match_tokens and not any(tok in comb_entry for tok in match_tokens):
-              continue
+    for entry in _multi_engine_web_search(
+        tq, platform=platform, default_source=source_badge, max_results=15
+    ):
+      raw_entry_u = clean_social_post_url(entry.get("url", ""))
+      if not raw_entry_u or raw_entry_u in seen_target_urls:
+        continue
 
-            # التحقق مما إذا كان الرابط رابط منشور مباشر؛ وإذا كان رابط الصفحة العامة نحوله إلى رابط المنشور بعينه
-            if is_direct_social_post_url(
-                raw_entry_u, platform, allow_post_search=False
-            ):
-              entry["url"] = raw_entry_u
-              if not is_strictly_judicial_and_clean(
-                  entry["title"],
-                  entry["raw_snippet"],
-                  entry["url"],
-                  t_kw,
-                  is_target=True,
-              ):
-                continue
-              if not entry.get("image_url") and page_avatar:
-                entry["image_url"] = page_avatar
-              _tag_custom_target_item(entry, t_info, source_badge)
-              all_target_posts.append(entry)
-            elif platform == "فيسبوك":
-              resolved_post_u = resolve_direct_facebook_post_url(
-                  entry.get("raw_snippet", ""),
-                  entry.get("title", ""),
-                  handle=handle,
-                  page_official_name=page_official_name,
-                  page_id=cid,
-              )
-              if resolved_post_u:
-                entry["url"] = resolved_post_u
-                if not is_strictly_judicial_and_clean(
-                    entry["title"],
-                    entry["raw_snippet"],
-                    entry["url"],
-                    t_kw,
-                    is_target=True,
-                ):
-                  continue
-                if not entry.get("image_url") and page_avatar:
-                  entry["image_url"] = page_avatar
-                _tag_custom_target_item(entry, t_info, source_badge)
-                if is_direct_social_post_url(
-                    resolved_post_u, "فيسبوك", allow_post_search=False
-                ):
-                  all_target_posts.append(entry)
-                else:
-                  fallback_search_posts.append(entry)
-      except Exception:
-        pass
+      unquoted_u = urllib.parse.unquote(raw_entry_u).lower()
+      comb_entry = f"{entry['title']} {entry['raw_snippet']} {unquoted_u}".lower()
+      if match_tokens and not any(tok in comb_entry for tok in match_tokens):
+        continue
 
-    if DDGS is not None and not is_stop_requested():
-      try:
-        with DDGS() as ddgs:
-          for res in ddgs.text(
-              tq,
-              region="xa-ar",
-              safesearch="strict",
-              timelimit=ddg_tl,
-              max_results=10,
-          ):
-            href = clean_social_post_url(
-                (res.get("href") or res.get("url") or "").strip()
-            )
-            title = clean_html_text(res.get("title") or "")
-            body = clean_html_text(res.get("body") or "")
-            if not href:
-              continue
-            comb_ddg = f"{title} {body} {href}".lower()
-            if match_tokens and not any(tok in comb_ddg for tok in match_tokens):
-              continue
+      if not is_direct_social_post_url(raw_entry_u, platform):
+        if platform == "فيسبوك":
+          resolved_u = resolve_direct_facebook_post_url(
+              entry.get("raw_snippet", ""),
+              entry.get("title", ""),
+              handle=handle,
+              page_official_name=page_official_name,
+              page_id=cid,
+          )
+          if resolved_u and is_direct_social_post_url(resolved_u, "فيسبوك"):
+            raw_entry_u = resolved_u
+          else:
+            continue
+        else:
+          continue
 
-            is_exact_post = is_direct_social_post_url(
-                href, platform, allow_post_search=False
-            )
-            if not is_exact_post and platform == "فيسبوك":
-              href = resolve_direct_facebook_post_url(
-                  body,
-                  title,
-                  handle=handle,
-                  page_official_name=page_official_name,
-                  page_id=cid,
-              )
-              if not href:
-                continue
-              is_exact_post = is_direct_social_post_url(
-                  href, "فيسبوك", allow_post_search=False
-              )
-            elif not is_exact_post:
-              continue
+      if raw_entry_u in seen_target_urls:
+        continue
 
-            if not is_strictly_judicial_and_clean(
-                title, body, href, t_kw, is_target=True
-            ):
-              continue
-            pub_str, pub_ts = extract_date_from_url_or_text(
-                href, body, "", fallback_offset_sec=1800
-            )
-            cand_item = {
-                "title": title or body[:95],
-                "url": href,
-                "raw_snippet": body or title,
-                "source_name": source_badge,
-                "platform": platform,
-                "pub_date": pub_str,
-                "pub_timestamp": pub_ts,
-                "image_url": (
-                    extract_thumbnail_for_item(href, "", platform)
-                    or page_avatar
-                ),
-            }
-            _tag_custom_target_item(cand_item, t_info, source_badge)
-            if is_exact_post:
-              all_target_posts.append(cand_item)
-            else:
-              fallback_search_posts.append(cand_item)
-      except Exception:
-        pass
+      # التحقق من أن رابط المنشور يعمل وجلب نصه الكامل وصورته عبر ترويسة facebookexternalhit
+      if platform == "فيسبوك" and len(all_target_posts) < 12:
+        is_ok, og_body, og_img, final_u = _verify_and_enrich_fb_post_url(
+            raw_entry_u, page_avatar
+        )
+        if not is_ok:
+          continue
+        if og_body and len(og_body) > len(entry.get("raw_snippet", "")):
+          entry["raw_snippet"] = og_body
+          if len(entry.get("title", "")) < 25 or "facebook" in entry.get("title", "").lower():
+            entry["title"] = og_body[:110] + ("..." if len(og_body) > 110 else "")
+        if og_img and not entry.get("image_url"):
+          entry["image_url"] = og_img
+        raw_entry_u = final_u
 
-  # إذا لم تتوفر روابط منشورات مباشرة بصيغة /posts/ أو permalink.php، نستخدم روابط البحث المباشر عن المنشور بعينه داخل فيسبوك (وليس رابط الصفحة العامة أبداً)
-  if not all_target_posts and fallback_search_posts:
-    all_target_posts.extend(fallback_search_posts)
-
-  # إذا كانت الصفحة جديدة تماماً ولم يُفهرس لها أي منشور بعد، نوجه الرابط إلى بحث منشورات الصفحة داخل فيسبوك وليس إلى الصفحة العامة
-  if not all_target_posts and (page_official_name or page_description):
-    resolved_desc_u = resolve_direct_facebook_post_url(
-        page_description,
-        page_official_name,
-        handle=handle,
-        page_official_name=page_official_name,
-        page_id=cid,
-    )
-    if not resolved_desc_u and (page_official_name or handle):
-      q_fb_posts = f"{page_official_name or handle} {t_kw}".strip()
-      resolved_desc_u = f"https://www.facebook.com/search/posts/?q={urllib.parse.quote(q_fb_posts)}"
-    if resolved_desc_u:
-      live_title = (
-          f"{page_official_name or disp}: {page_description[:95]}"
-          if page_description
-          else f"منشورات {page_official_name or disp}"
-      )
-      live_snip = page_description or f"رصد منشورات {page_official_name or disp}."
-      if is_strictly_judicial_and_clean(
-          live_title, live_snip, resolved_desc_u, t_kw, is_target=True
+      entry["url"] = raw_entry_u
+      if not is_strictly_judicial_and_clean(
+          entry["title"],
+          entry["raw_snippet"],
+          entry["url"],
+          t_kw,
+          is_target=True,
       ):
-        pub_str, pub_ts = parse_any_date("", fallback_offset_sec=900)
-        fallback_entry = {
-            "title": live_title,
-            "url": resolved_desc_u,
-            "raw_snippet": live_snip,
-            "source_name": source_badge,
-            "platform": platform,
-            "pub_date": pub_str,
-            "pub_timestamp": pub_ts,
-            "image_url": page_avatar,
-        }
-        _tag_custom_target_item(fallback_entry, t_info, source_badge)
-        all_target_posts.append(fallback_entry)
+        continue
+      if not entry.get("image_url") and page_avatar:
+        entry["image_url"] = page_avatar
+
+      # إعادة استخراج التاريخ بعد إثراء النص لضمان دقة تاريخ النشر
+      pub_str, pub_ts = extract_date_from_url_or_text(
+          entry["url"],
+          entry["raw_snippet"],
+          entry.get("pub_date", ""),
+          fallback_offset_sec=1800,
+      )
+      entry["pub_date"] = pub_str
+      entry["pub_timestamp"] = pub_ts
+
+      seen_target_urls.add(raw_entry_u)
+      _tag_custom_target_item(entry, t_info, source_badge)
+      all_target_posts.append(entry)
+
+  # ترتيب جميع المنشورات المكتشفة من الأحدث إلى الأقدم
+  all_target_posts.sort(
+      key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
+  )
 
   in_window = [
       e
@@ -4004,7 +4251,7 @@ def _scrape_social_custom_target(
       if max_age_sec <= 0
       or (now_ts - float(e.get("pub_timestamp", 0))) <= max_age_sec
   ]
-  chosen_list = in_window if in_window else all_target_posts[:10]
+  chosen_list = in_window if in_window else all_target_posts[:12]
   for entry in chosen_list:
     if entry["url"] not in seen_urls:
       seen_urls.add(entry["url"])
@@ -5421,8 +5668,11 @@ for a in all_articles:
   mon_t = float(a.get("created_at") or pub_t)
   is_monitored_within_24h = (now_ts - mon_t) < 86400
   is_within_search_period = (now_ts - pub_t) <= max(selected_period_sec, 86400)
-  if (is_monitored_within_24h and is_within_search_period) or (
-      (now_ts - pub_t) < 86400
+  is_tgt_item = int(a.get("is_custom_target", 0)) == 1
+  if (
+      (is_monitored_within_24h and is_within_search_period)
+      or ((now_ts - pub_t) < 86400)
+      or (is_tgt_item and is_monitored_within_24h)
   ):
     live_articles.append(a)
   else:
