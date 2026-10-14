@@ -30,6 +30,11 @@ try:
 except ImportError:
   DDGS = None
 
+try:
+  from bs4 import BeautifulSoup
+except ImportError:
+  BeautifulSoup = None
+
 # =====================================================================
 # 1. إعدادات النظام والثوابت الأساسية
 # =====================================================================
@@ -56,10 +61,13 @@ JUDICIAL_CORE_TERMS = [
     "المجلس الأعلى للسلطة القضائية",
     "السلطة القضائية",
     "القضاء",
+    "قضائي",
+    "قضائية",
     "العدالة",
     "النيابة العامة",
     "محكمة النقض",
     "المحاكم",
+    "محكمة",
     "قاضي",
     "قضاة",
     "وكيل الملك",
@@ -68,11 +76,14 @@ JUDICIAL_CORE_TERMS = [
     "رئاسة النيابة العامة",
     "هشام البلاوي",
     "وزارة العدل",
+    "وزير العدل",
     "محكمة الاستئناف",
     "المحكمة الابتدائية",
     "المحكمة الإدارية",
     "المحكمة التجارية",
     "المعهد العالي للقضاء",
+    "هيئة الحكم",
+    "المفتشية العامة للشؤون القضائية",
 ]
 
 MOROCCAN_PRESS_SITES = [
@@ -118,6 +129,44 @@ INTERVAL_MAP = {
     "كل 24 ساعة": 86400,
 }
 
+ARABIC_MONTHS = {
+    "يناير": 1,
+    "فبراير": 2,
+    "مارس": 3,
+    "أبريل": 4,
+    "ابريل": 4,
+    "ماي": 5,
+    "مايو": 5,
+    "يونيو": 6,
+    "يوليوز": 7,
+    "يوليو": 7,
+    "غشت": 8,
+    "أغسطس": 8,
+    "شتنبر": 9,
+    "سبتمبر": 9,
+    "أكتوبر": 10,
+    "اكتوبر": 10,
+    "نونبر": 11,
+    "نوفمبر": 11,
+    "دجنبر": 12,
+    "ديسمبر": 12,
+}
+
+ENGLISH_MONTHS = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
+
 
 def compact_html(raw_html: str) -> str:
   """إزالة المسافات البادئة والأسطر الفارغة لمنع Markdown من تحويل HTML إلى كود نصي."""
@@ -139,7 +188,11 @@ def clean_display_text(val: str) -> str:
   if not val:
     return ""
   txt = str(val).strip()
-  txt = re.sub(r"```(?:json|html)?", "", txt, flags=re.IGNORECASE).replace("```", "").strip()
+  txt = (
+      re.sub(r"```(?:json|html)?", "", txt, flags=re.IGNORECASE)
+      .replace("```", "")
+      .strip()
+  )
   if txt.startswith("{") and "summary" in txt:
     try:
       parsed = json.loads(txt)
@@ -154,6 +207,43 @@ def clean_display_text(val: str) -> str:
   txt = re.sub(r"[\r\n\t]+", " ", txt)
   txt = re.sub(r"\s+", " ", txt).strip()
   return txt
+
+
+def build_rich_arabic_summary(
+    title: str, snippet: str, platform: str, source_name: str
+) -> str:
+  """توليد ملخص عربي واضح ومفصل للمقال أو الفيديو أو المنشور في حال غياب ملخص ذكاء اصطناعي."""
+  t_clean = clean_display_text(title)
+  s_clean = clean_display_text(snippet)
+
+  # إزالة تكرار العنوان من بداية المقتطف إن وجد
+  if s_clean and t_clean and s_clean.startswith(t_clean[:30]):
+    s_clean = s_clean[len(t_clean) :].lstrip(" -–—:•|.")
+
+  # إزالة البادئات الزمنية مثل "14 أكتوبر 2026 —" من بداية الملخص
+  s_clean = re.sub(
+      r"^(\d{1,2}\s+[^\s]+\s+20\d{2}|[A-Za-z]{3,9}\s+\d{1,2},?\s+20\d{2}|\d+\s*(?:hours?|days?|minutes?|ساعات|ساعة|يوم|أيام|دقيقة)\s*(?:ago)?)\s*[-–—·•:]\s*",
+      "",
+      s_clean,
+      flags=re.IGNORECASE,
+  ).strip()
+
+  plat_type_map = {
+      "الصحف": "مقال صحفي منشور عبر",
+      "فيسبوك": "منشور متداول على منصة فيسبوك عبر",
+      "إكس": "تغريدة/منشور على منصة إكس (تويتر) عبر",
+      "يوتيوب": "محتوى مرئي (فيديو) منشور على قناة يوتيوب",
+      "أخرى": "منشور رقمي عبر شبكات التواصل الاجتماعي",
+  }
+  prefix_desc = plat_type_map.get(platform, "محتوى إعلامي مرصود عبر")
+  src_label = clean_display_text(source_name or platform)
+
+  if s_clean and len(s_clean) > 35 and s_clean.lower() != t_clean.lower():
+    return f"{prefix_desc} ({src_label}): {s_clean}"
+  return (
+      f"{prefix_desc} ({src_label}) يتناول موضوع: «{t_clean}»، "
+      "وذلك في إطار المتابعة الإعلامية المستمرة لمستجدات الشأن القضائي والعدالة بالمملكة المغربية."
+  )
 
 
 # =====================================================================
@@ -485,6 +575,20 @@ def restore_db_from_json_if_needed():
         if isinstance(items, list) and items:
           for item in items:
             try:
+              t_clean = clean_display_text(item.get("title", ""))
+              s_clean = clean_display_text(item.get("summary", ""))
+              plat = item.get("platform", "الصحف")
+              src = clean_display_text(item.get("source_name", "") or plat)
+              raw_s = clean_display_text(item.get("raw_snippet", ""))
+              if not s_clean or s_clean == t_clean or len(s_clean) < 25:
+                s_clean = build_rich_arabic_summary(t_clean, raw_s, plat, src)
+              pub_ts = float(item.get("pub_timestamp", time.time() - 3600))
+              pub_dt = item.get("pub_date", "")
+              if not pub_dt:
+                pub_dt = datetime.fromtimestamp(
+                    pub_ts, tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M")
+
               c.execute(
                   """
                                 INSERT OR IGNORE INTO articles (
@@ -494,18 +598,18 @@ def restore_db_from_json_if_needed():
                                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
                   (
-                      clean_display_text(item.get("title", "")),
-                      clean_display_text(item.get("summary", "")),
-                      clean_display_text(item.get("source_name", "")),
-                      item.get("platform", "الصحف"),
+                      t_clean,
+                      s_clean,
+                      src,
+                      plat,
                       item.get("url", ""),
-                      item.get("pub_date", ""),
-                      float(item.get("pub_timestamp", time.time() - 3600)),
+                      pub_dt,
+                      pub_ts,
                       item.get("sentiment", "محايد"),
                       item.get("category", "شؤون قضائية"),
                       int(item.get("relevance_score", 85)),
                       int(item.get("is_custom_target", 0)),
-                      clean_display_text(item.get("raw_snippet", "")),
+                      raw_s,
                       float(item.get("created_at", time.time())),
                   ),
               )
@@ -675,8 +779,78 @@ def save_monitor_state(state):
 
 
 # =====================================================================
-# 5. معالجة التواريخ وترتيب الزمن الحقيقي
+# 5. استخراج ومعالجة تواريخ النشر الحقيقية (للصحف، يوتيوب، فيسبوك، إكس، وتيك توك)
 # =====================================================================
+def extract_date_from_url_or_text(
+    url: str, text_snippet: str = "", raw_date: str = "", fallback_offset_sec: int = 3600
+):
+  now_ts = time.time()
+
+  # 1. إذا كان هناك تاريخ مباشر، نحلله أولا
+  if raw_date and str(raw_date).strip():
+    d_str, d_ts = parse_any_date(str(raw_date).strip(), fallback_offset_sec=0)
+    if d_ts > 0 and abs(now_ts - d_ts) > 5:
+      return d_str, d_ts
+
+  # 2. استخراج التوقيت الدقيق من معرف تغريدة إكس/تويتر (Snowflake ID)
+  if url:
+    m_x = re.search(r"(?:x\.com|twitter\.com)/[^/]+/status/(\d{15,20})", url)
+    if m_x:
+      try:
+        snowflake_id = int(m_x.group(1))
+        tweet_ts = ((snowflake_id >> 22) + 1288834974657) / 1000.0
+        if 1288834974 < tweet_ts <= now_ts + 3600:
+          tweet_ts = min(tweet_ts, now_ts)
+          return (
+              datetime.fromtimestamp(tweet_ts, tz=timezone.utc).strftime(
+                  "%Y-%m-%d %H:%M"
+              ),
+              tweet_ts,
+          )
+      except Exception:
+        pass
+
+    # 3. استخراج التوقيت الدقيق من معرف فيديو تيك توك (64-bit ID)
+    m_tt = re.search(r"tiktok\.com/.*/video/(\d{15,22})", url)
+    if m_tt:
+      try:
+        tt_id = int(m_tt.group(1))
+        tt_ts = float(tt_id >> 32)
+        if 1450000000 < tt_ts <= now_ts + 3600:
+          tt_ts = min(tt_ts, now_ts)
+          return (
+              datetime.fromtimestamp(tt_ts, tz=timezone.utc).strftime(
+                  "%Y-%m-%d %H:%M"
+              ),
+              tt_ts,
+          )
+      except Exception:
+        pass
+
+    # 4. استخراج التاريخ من مسار الرابط الإخباري (مثل /2026/10/14/)
+    m_url_date = re.search(r"/(20\d{2})/(\d{1,2})/(\d{1,2})/", url)
+    if m_url_date:
+      try:
+        dt = datetime(
+            int(m_url_date.group(1)),
+            int(m_url_date.group(2)),
+            int(m_url_date.group(3)),
+            12,
+            0,
+            tzinfo=timezone.utc,
+        )
+        ts = min(dt.timestamp(), now_ts)
+        return dt.strftime("%Y-%m-%d %H:%M"), ts
+      except Exception:
+        pass
+
+  # 5. استخراج التاريخ من بداية أو متن مقتطف البحث (مثل "14 أكتوبر 2026" أو "Oct 14, 2026" أو "منذ 3 ساعات")
+  if text_snippet:
+    return parse_any_date(text_snippet[:120], fallback_offset_sec=fallback_offset_sec)
+
+  return parse_any_date("", fallback_offset_sec=fallback_offset_sec)
+
+
 def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
   now_ts = time.time()
   if not date_str or not str(date_str).strip():
@@ -712,20 +886,51 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
     pass
 
   rel_lower = raw.lower()
+
+  # عبارات زمنية نسبية مختصرة مثل "3h ago", "2d ago", "45m ago"
+  m_short_rel = re.search(
+      r"\b(\d+)\s*(s|sec|secs|m|min|mins|h|hr|hrs|d|day|days|w|wk|wks)\b(?:\s*ago)?",
+      rel_lower,
+  )
+  if m_short_rel and ("ago" in rel_lower or len(raw) < 25):
+    n = int(m_short_rel.group(1))
+    u = m_short_rel.group(2)
+    if u.startswith("s"):
+      ts = now_ts - n
+    elif u.startswith("m"):
+      ts = now_ts - n * 60
+    elif u.startswith("h"):
+      ts = now_ts - n * 3600
+    elif u.startswith("d"):
+      ts = now_ts - n * 86400
+    else:
+      ts = now_ts - n * 7 * 86400
+    return (
+        datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        ts,
+    )
+
   num_match = re.search(r"(\d+)", rel_lower)
   num = int(num_match.group(1)) if num_match else 1
 
-  if any(w in rel_lower for w in ["ثانية", "ثواني", "second", "sec", "الآن", "just now"]):
+  if any(
+      w in rel_lower
+      for w in ["ثانية", "ثواني", "second", "just now", "الآن", "قبل لحظات"]
+  ):
     ts = now_ts - 60
-  elif any(w in rel_lower for w in ["دقيقة", "دقائق", "دقيقتين", "minute", "min"]):
+  elif any(
+      w in rel_lower for w in ["دقيقة", "دقائق", "دقيقتين", "minute"]
+  ):
     if "دقيقتين" in rel_lower:
       num = 2
     ts = now_ts - (num * 60)
-  elif any(w in rel_lower for w in ["ساعة", "ساعات", "ساعتين", "hour", "hr"]):
+  elif any(w in rel_lower for w in ["ساعة", "ساعات", "ساعتين", "hour"]):
     if "ساعتين" in rel_lower:
       num = 2
     ts = now_ts - (num * 3600)
-  elif any(w in rel_lower for w in ["يوم", "أيام", "يومين", "أمس", "day", "yesterday"]):
+  elif any(
+      w in rel_lower for w in ["يوم", "أيام", "يومين", "أمس", "yesterday"]
+  ):
     if "يومين" in rel_lower:
       num = 2
     elif "أمس" in rel_lower or "yesterday" in rel_lower:
@@ -738,6 +943,48 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
   elif any(w in rel_lower for w in ["سنة", "سنوات", "عام", "year"]):
     ts = now_ts - (num * 365 * 86400)
   else:
+    # صيغة تاريخ عربي مثل "14 أكتوبر 2026"
+    for ar_m, m_idx in ARABIC_MONTHS.items():
+      m_ar = re.search(rf"(\d{{1,2}})\s+{ar_m}\s+(20\d{{2}})", raw)
+      if m_ar:
+        try:
+          dt = datetime(
+              int(m_ar.group(2)),
+              m_idx,
+              int(m_ar.group(1)),
+              12,
+              0,
+              tzinfo=timezone.utc,
+          )
+          ts = min(dt.timestamp(), now_ts)
+          return dt.strftime("%Y-%m-%d %H:%M"), ts
+        except Exception:
+          pass
+
+    # صيغة تاريخ إنجليزي مثل "Oct 14, 2026" أو "14 Oct 2026"
+    for en_m, m_idx in ENGLISH_MONTHS.items():
+      m_en1 = re.search(
+          rf"\b{en_m}[a-z]*\s+(\d{{1,2}}),?\s+(20\d{{2}})", rel_lower
+      )
+      m_en2 = re.search(
+          rf"(\d{{1,2}})\s+{en_m}[a-z]*,?\s+(20\d{{2}})", rel_lower
+      )
+      m_en = m_en1 or m_en2
+      if m_en:
+        try:
+          dt = datetime(
+              int(m_en.group(2)),
+              m_idx,
+              int(m_en.group(1)),
+              12,
+              0,
+              tzinfo=timezone.utc,
+          )
+          ts = min(dt.timestamp(), now_ts)
+          return dt.strftime("%Y-%m-%d %H:%M"), ts
+        except Exception:
+          pass
+
     m_ymd = re.search(r"(20\d{2})[-/](\d{1,2})[-/](\d{1,2})", raw)
     if m_ymd:
       try:
@@ -790,7 +1037,11 @@ def build_search_queries(keywords_input: str):
 
 
 def is_relevant_item(
-    title: str, snippet: str, keywords_input: str, is_target: bool = False
+    title: str,
+    snippet: str,
+    keywords_input: str,
+    is_target: bool = False,
+    from_judicial_query: bool = False,
 ) -> bool:
   text = f"{title} {snippet}".lower()
   custom_kws = [
@@ -800,7 +1051,7 @@ def is_relevant_item(
   ]
   if custom_kws:
     return any(k in text for k in custom_kws)
-  if is_target:
+  if is_target or from_judicial_query:
     return True
   return any(term.lower() in text for term in JUDICIAL_CORE_TERMS)
 
@@ -831,13 +1082,21 @@ def parse_rss_xml(
   except Exception:
     return results
 
-  ns = {"atom": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015"}
+  ns = {
+      "atom": "http://www.w3.org/2005/Atom",
+      "yt": "http://www.youtube.com/xml/schemas/2015",
+      "media": "http://search.yahoo.com/mrss/",
+  }
 
   for item in root.findall(".//item"):
     title = clean_html_text(item.findtext("title") or "")
     link = (item.findtext("link") or "").strip()
     desc = clean_html_text(item.findtext("description") or "")
-    pub_raw = item.findtext("pubDate") or item.findtext("dc:date") or ""
+    pub_raw = (
+        item.findtext("pubDate")
+        or item.findtext("{http://purl.org/dc/elements/1.1/}date")
+        or ""
+    )
     source_el = item.find("source")
     source_name = (
         clean_html_text(source_el.text)
@@ -851,11 +1110,13 @@ def parse_rss_xml(
 
     if not title or not link:
       continue
-    pub_str, pub_ts = parse_any_date(pub_raw, fallback_offset_sec=fallback_offset)
+    pub_str, pub_ts = extract_date_from_url_or_text(
+        link, desc, pub_raw, fallback_offset_sec=fallback_offset
+    )
     results.append({
         "title": title,
         "url": link,
-        "raw_snippet": desc[:500] if desc else title,
+        "raw_snippet": desc[:600] if desc else title,
         "source_name": source_name or default_platform,
         "platform": default_platform,
         "pub_date": pub_str,
@@ -863,24 +1124,33 @@ def parse_rss_xml(
     })
 
   for entry in root.findall(".//atom:entry", ns):
-    title = clean_html_text(entry.findtext("atom:title", default="", namespaces=ns))
+    title = clean_html_text(
+        entry.findtext("atom:title", default="", namespaces=ns)
+    )
     link_el = entry.find("atom:link", ns)
     link = link_el.attrib.get("href", "").strip() if link_el is not None else ""
-    pub_raw = (
-        entry.findtext("atom:published", default="", namespaces=ns)
-        or entry.findtext("atom:updated", default="", namespaces=ns)
-    )
+    pub_raw = entry.findtext(
+        "atom:published", default="", namespaces=ns
+    ) or entry.findtext("atom:updated", default="", namespaces=ns)
     author_name = entry.findtext(
         "atom:author/atom:name", default=default_source, namespaces=ns
     )
+    media_desc = entry.findtext(
+        "media:group/media:description", default="", namespaces=ns
+    )
+    snippet_txt = clean_html_text(media_desc) or title
     if not title or not link:
       continue
-    pub_str, pub_ts = parse_any_date(pub_raw, fallback_offset_sec=fallback_offset)
+    pub_str, pub_ts = extract_date_from_url_or_text(
+        link, snippet_txt, pub_raw, fallback_offset_sec=fallback_offset
+    )
     results.append({
         "title": title,
         "url": link,
-        "raw_snippet": title,
-        "source_name": clean_html_text(author_name or default_source or default_platform),
+        "raw_snippet": snippet_txt[:600],
+        "source_name": clean_html_text(
+            author_name or default_source or default_platform
+        ),
         "platform": default_platform,
         "pub_date": pub_str,
         "pub_timestamp": pub_ts,
@@ -907,7 +1177,9 @@ def scrape_moroccan_press(keywords_input: str, progress_cb=None):
       break
     step += 1
     if progress_cb:
-      progress_cb(min(0.95, step / max(1, total_steps)), f"رصد الصحافة الوطنية: {q}")
+      progress_cb(
+          min(0.95, step / max(1, total_steps)), f"رصد الصحافة الوطنية: {q}"
+      )
     rss_url = (
         "https://news.google.com/rss/search?q="
         f"{urllib.parse.quote(q + ' when:7d')}&hl=ar&gl=MA&ceid=MA:ar"
@@ -917,7 +1189,10 @@ def scrape_moroccan_press(keywords_input: str, progress_cb=None):
       if r.status_code == 200:
         for entry in parse_rss_xml(r.content, "الصحف"):
           if entry["url"] not in seen_urls and is_relevant_item(
-              entry["title"], entry["raw_snippet"], keywords_input
+              entry["title"],
+              entry["raw_snippet"],
+              keywords_input,
+              from_judicial_query=True,
           ):
             seen_urls.add(entry["url"])
             items.append(entry)
@@ -950,7 +1225,10 @@ def scrape_moroccan_press(keywords_input: str, progress_cb=None):
       if r.status_code == 200:
         for entry in parse_rss_xml(r.content, "الصحف"):
           if entry["url"] not in seen_urls and is_relevant_item(
-              entry["title"], entry["raw_snippet"], keywords_input
+              entry["title"],
+              entry["raw_snippet"],
+              keywords_input,
+              from_judicial_query=True,
           ):
             seen_urls.add(entry["url"])
             items.append(entry)
@@ -958,6 +1236,51 @@ def scrape_moroccan_press(keywords_input: str, progress_cb=None):
       pass
 
   return items
+
+
+def _extract_yt_renderers_from_html(html_text: str):
+  """استخراج الفيديوهات مع عنوانها، اسم القناة، تاريخ النشر، والوصف المختصر من صفحة يوتيوب."""
+  results = []
+  chunks = html_text.split('"videoRenderer":')[1:]
+  for chunk in chunks[:20]:
+    vid_m = re.search(r'"videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"', chunk)
+    title_m = re.search(
+        r'"title"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        chunk,
+    )
+    if not vid_m or not title_m:
+      continue
+    vid = vid_m.group(1)
+    title = decode_js_escaped_text(title_m.group(1))
+    pub_m = re.search(
+        r'"publishedTimeText"\s*:\s*\{"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        chunk,
+    )
+    pub_rel = decode_js_escaped_text(pub_m.group(1)) if pub_m else ""
+    owner_m = re.search(
+        r'"ownerText"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        chunk,
+    )
+    channel_name = (
+        decode_js_escaped_text(owner_m.group(1)) if owner_m else "YouTube"
+    )
+    desc_runs = re.findall(
+        r'"detailedMetadataSnippets".*?"snippetText"\s*:\s*\{"runs"\s*:\s*\[(.*?)\]\s*\}',
+        chunk,
+    )
+    desc_text = ""
+    if desc_runs:
+      parts = re.findall(r'"text"\s*:\s*"((?:[^"\\]|\\.)*)"', desc_runs[0])
+      desc_text = decode_js_escaped_text(" ".join(parts))
+
+    results.append({
+        "vid": vid,
+        "title": title,
+        "pub_rel": pub_rel,
+        "channel_name": channel_name,
+        "desc": desc_text or title,
+    })
+  return results
 
 
 def scrape_youtube_platform(keywords_input: str, progress_cb=None):
@@ -982,37 +1305,153 @@ def scrape_youtube_platform(keywords_input: str, progress_cb=None):
           timeout=12,
       )
       if r.status_code == 200:
-        m = re.search(r"var ytInitialData = (\{.*?\});</script>", r.text)
-        if not m:
-          m = re.search(r"ytInitialData\s*=\s*(\{.*?\});", r.text)
-        if m:
-          video_blocks = re.findall(
-              r'"videoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"\}\]'
-              r'.*?(?:"publishedTimeText":\{"simpleText":"(.*?)"\})?',
-              m.group(1),
+        for v in _extract_yt_renderers_from_html(r.text):
+          v_url = f"https://www.youtube.com/watch?v={v['vid']}"
+          if v_url in seen_urls:
+            continue
+          if not is_relevant_item(
+              v["title"],
+              v["desc"],
+              keywords_input,
+              from_judicial_query=True,
+          ):
+            continue
+          pub_str, pub_ts = extract_date_from_url_or_text(
+              v_url, v["desc"], v["pub_rel"], fallback_offset_sec=3600
           )
-          for vid, raw_title, pub_rel in video_blocks[:15]:
-            v_url = f"https://www.youtube.com/watch?v={vid}"
-            if v_url in seen_urls:
-              continue
-            title = decode_js_escaped_text(raw_title)
-            if not is_relevant_item(title, "", keywords_input):
-              continue
-            pub_str, pub_ts = parse_any_date(pub_rel, fallback_offset_sec=5400)
-            seen_urls.add(v_url)
-            items.append({
-                "title": title,
-                "url": v_url,
-                "raw_snippet": title,
-                "source_name": "YouTube",
-                "platform": "يوتيوب",
-                "pub_date": pub_str,
-                "pub_timestamp": pub_ts,
-            })
+          seen_urls.add(v_url)
+          items.append({
+              "title": v["title"],
+              "url": v_url,
+              "raw_snippet": v["desc"],
+              "source_name": f"قناة {v['channel_name']}",
+              "platform": "يوتيوب",
+              "pub_date": pub_str,
+              "pub_timestamp": pub_ts,
+          })
     except Exception:
       pass
 
   return items
+
+
+def _scrape_yahoo_and_ddg_html(
+    query: str,
+    platform_label: str,
+    allowed_domains: list,
+    keywords_input: str,
+    seen_urls: set,
+):
+  """جلب مباشر لمنشورات فيسبوك وإكس وتيك توك عبر محركات Yahoo وDuckDuckGo HTML التي لا تحظر السحابة."""
+  found = []
+
+  # 1) محرك بحث Yahoo HTML
+  yahoo_url = f"https://search.yahoo.com/search?p={urllib.parse.quote(query)}&n=15"
+  try:
+    ry = requests.get(yahoo_url, headers=DEFAULT_HEADERS, timeout=10)
+    if ry.status_code == 200 and BeautifulSoup is not None:
+      soup = BeautifulSoup(ry.text, "html.parser")
+      for div in soup.select("div.algo, div.Sr"):
+        a_el = div.select_one("h3 a, a")
+        if not a_el:
+          continue
+        href = a_el.get("href", "")
+        if "RU=" in href:
+          m_ru = re.search(r"/RU=([^/]+)/RK=", href)
+          if m_ru:
+            href = urllib.parse.unquote(m_ru.group(1))
+        href = href.strip()
+        if not href or href in seen_urls:
+          continue
+        if allowed_domains and not any(d in href.lower() for d in allowed_domains):
+          continue
+        title = clean_html_text(a_el.get_text(" ", strip=True))
+        comp_text = div.select_one("div.compText, p")
+        snippet = (
+            clean_html_text(comp_text.get_text(" ", strip=True))
+            if comp_text
+            else title
+        )
+        time_span = div.select_one("span.fc-falcon, span.s-time")
+        raw_dt = (
+            clean_html_text(time_span.get_text(" ", strip=True))
+            if time_span
+            else ""
+        )
+        if not title or not is_relevant_item(
+            title, snippet, keywords_input, from_judicial_query=True
+        ):
+          continue
+        pub_str, pub_ts = extract_date_from_url_or_text(
+            href, snippet, raw_dt, fallback_offset_sec=3600
+        )
+        seen_urls.add(href)
+        found.append({
+            "title": title,
+            "url": href,
+            "raw_snippet": snippet,
+            "source_name": platform_label,
+            "platform": platform_label,
+            "pub_date": pub_str,
+            "pub_timestamp": pub_ts,
+        })
+  except Exception:
+    pass
+
+  # 2) محرك بحث DuckDuckGo HTML
+  ddg_html_url = "https://html.duckduckgo.com/html/"
+  try:
+    rd = requests.post(
+        ddg_html_url,
+        data={"q": query},
+        headers=DEFAULT_HEADERS,
+        timeout=10,
+    )
+    if rd.status_code == 200 and BeautifulSoup is not None:
+      soup = BeautifulSoup(rd.text, "html.parser")
+      for res_div in soup.select("div.result, div.web-result"):
+        a_el = res_div.select_one("a.result__a")
+        if not a_el:
+          continue
+        href = a_el.get("href", "").strip()
+        if "uddg=" in href:
+          parsed_qs = urllib.parse.parse_qs(
+              urllib.parse.urlparse(href).query
+          )
+          if "uddg" in parsed_qs:
+            href = parsed_qs["uddg"][0]
+        if not href or href in seen_urls:
+          continue
+        if allowed_domains and not any(d in href.lower() for d in allowed_domains):
+          continue
+        title = clean_html_text(a_el.get_text(" ", strip=True))
+        snip_el = res_div.select_one("a.result__snippet, div.result__snippet")
+        snippet = (
+            clean_html_text(snip_el.get_text(" ", strip=True))
+            if snip_el
+            else title
+        )
+        if not title or not is_relevant_item(
+            title, snippet, keywords_input, from_judicial_query=True
+        ):
+          continue
+        pub_str, pub_ts = extract_date_from_url_or_text(
+            href, snippet, "", fallback_offset_sec=3600
+        )
+        seen_urls.add(href)
+        found.append({
+            "title": title,
+            "url": href,
+            "raw_snippet": snippet,
+            "source_name": platform_label,
+            "platform": platform_label,
+            "pub_date": pub_str,
+            "pub_timestamp": pub_ts,
+        })
+  except Exception:
+    pass
+
+  return found
 
 
 def _multi_engine_social_search(
@@ -1024,7 +1463,6 @@ def _multi_engine_social_search(
   items = []
   seen_urls = set()
   queries = build_search_queries(keywords_input)[:3]
-  site_filter = " OR ".join(f"site:{d}" for d in site_domains)
 
   for idx, q in enumerate(queries):
     if is_stop_requested():
@@ -1035,79 +1473,119 @@ def _multi_engine_social_search(
           f"مسح {platform_label}: {q}",
       )
 
+    # 1) فحص محركات Yahoo HTML + DuckDuckGo HTML + Bing RSS لكل نطاق
     for d in site_domains[:2]:
       if is_stop_requested():
         break
-      bing_q = f"site:{d} {q}"
-      bing_rss = f"https://www.bing.com/search?q={urllib.parse.quote(bing_q)}&format=rss"
+      site_q = f"site:{d} {q}"
+
+      # أ. Yahoo & DDG HTML
+      html_hits = _scrape_yahoo_and_ddg_html(
+          site_q, platform_label, site_domains, keywords_input, seen_urls
+      )
+      items.extend(html_hits)
+
+      # ب. Bing Search & News RSS
+      for bing_base in [
+          "https://www.bing.com/search?q=",
+          "https://www.bing.com/news/search?q=",
+      ]:
+        bing_rss = f"{bing_base}{urllib.parse.quote(site_q)}&format=rss"
+        try:
+          r = requests.get(bing_rss, headers=DEFAULT_HEADERS, timeout=9)
+          if r.status_code == 200 and b"<item>" in r.content:
+            for entry in parse_rss_xml(
+                r.content,
+                platform_label,
+                default_source=platform_label,
+                fallback_offset=3600,
+            ):
+              if entry["url"] not in seen_urls and is_relevant_item(
+                  entry["title"],
+                  entry["raw_snippet"],
+                  keywords_input,
+                  from_judicial_query=True,
+              ):
+                seen_urls.add(entry["url"])
+                items.append(entry)
+        except Exception:
+          pass
+
+    # 2) مكتبة DDGS باستعلام مباشر نظيف بدون أقواس معقدة
+    if DDGS is not None and not is_stop_requested():
+      for d in site_domains[:2]:
+        try:
+          with DDGS() as ddgs:
+            ddg_q = f"site:{d} {q}"
+            for res in ddgs.text(ddg_q, max_results=10):
+              href = (res.get("href") or res.get("url") or "").strip()
+              title = clean_html_text(res.get("title") or "")
+              body = clean_html_text(res.get("body") or "")
+              if not href or href in seen_urls:
+                continue
+              if not is_relevant_item(
+                  title, body, keywords_input, from_judicial_query=True
+              ):
+                continue
+              pub_str, pub_ts = extract_date_from_url_or_text(
+                  href, body, "", fallback_offset_sec=4200
+              )
+              seen_urls.add(href)
+              items.append({
+                  "title": title or body[:95],
+                  "url": href,
+                  "raw_snippet": body or title,
+                  "source_name": platform_label,
+                  "platform": platform_label,
+                  "pub_date": pub_str,
+                  "pub_timestamp": pub_ts,
+              })
+        except Exception:
+          pass
+
+  # 3) تغطية Google News RSS الواسعة للمنشورات والتدوينات والتغريدات القضائية المتداولة
+  if not is_stop_requested():
+    platform_ar_queries = {
+        "فيسبوك": [
+            '(القضاء OR العدالة OR المحكمة OR "المجلس الأعلى للسلطة القضائية") (فيسبوك OR فايسبوك OR "تدوينة" OR "صفحة") المغرب',
+            'site:facebook.com القضاء المغرب',
+        ],
+        "إكس": [
+            '(القضاء OR العدالة OR المحكمة OR "السلطة القضائية") (تغريدة OR "منصة إكس" OR تويتر) المغرب',
+            '(القضاء OR المحكمة OR النيابة العامة) (إكس OR تويتر) المغرب',
+        ],
+        "أخرى": [
+            '(القضاء OR العدالة OR المحكمة) (تيك توك OR إنستغرام OR لينكدإن OR فيديو) المغرب',
+        ],
+    }
+    social_g_queries = platform_ar_queries.get(platform_label, [])
+    if keywords_input.strip():
+      social_g_queries = [
+          f"{keywords_input.strip()} ({platform_label} OR تدوينة OR منشور) المغرب"
+      ]
+
+    for sq in social_g_queries:
+      gnews_social_url = (
+          "https://news.google.com/rss/search?q="
+          f"{urllib.parse.quote(sq)}&hl=ar&gl=MA&ceid=MA:ar"
+      )
       try:
-        r = requests.get(bing_rss, headers=DEFAULT_HEADERS, timeout=10)
-        if r.status_code == 200 and b"<item>" in r.content:
+        r = requests.get(gnews_social_url, headers=DEFAULT_HEADERS, timeout=10)
+        if r.status_code == 200:
           for entry in parse_rss_xml(
-              r.content,
-              platform_label,
-              default_source=platform_label,
-              fallback_offset=5400,
+              r.content, platform_label, fallback_offset=3600
           ):
             if entry["url"] not in seen_urls and is_relevant_item(
-                entry["title"], entry["raw_snippet"], keywords_input
+                entry["title"],
+                entry["raw_snippet"],
+                keywords_input,
+                from_judicial_query=True,
             ):
+              entry["platform"] = platform_label
               seen_urls.add(entry["url"])
               items.append(entry)
       except Exception:
         pass
-
-    if DDGS is not None and not is_stop_requested():
-      try:
-        with DDGS() as ddgs:
-          ddg_q = f"({site_filter}) {q}"
-          for res in ddgs.text(ddg_q, max_results=10):
-            href = (res.get("href") or res.get("url") or "").strip()
-            title = clean_html_text(res.get("title") or "")
-            body = clean_html_text(res.get("body") or "")
-            if not href or href in seen_urls:
-              continue
-            if not is_relevant_item(title, body, keywords_input):
-              continue
-            pub_str, pub_ts = parse_any_date("", fallback_offset_sec=7200)
-            seen_urls.add(href)
-            items.append({
-                "title": title or body[:90],
-                "url": href,
-                "raw_snippet": body or title,
-                "source_name": platform_label,
-                "platform": platform_label,
-                "pub_date": pub_str,
-                "pub_timestamp": pub_ts,
-            })
-      except Exception:
-        pass
-
-  if not is_stop_requested():
-    platform_ar_keywords = {
-        "فيسبوك": "فيسبوك OR فايسبوك OR Facebook",
-        "إكس": "منصة إكس OR تويتر OR تغريدة",
-        "أخرى": "تيك توك OR إنستغرام OR لينكدإن OR TikTok",
-    }
-    p_kw = platform_ar_keywords.get(platform_label, platform_label)
-    base_q = queries[0] if queries else "المجلس الأعلى للسلطة القضائية المغرب"
-    gnews_social_url = (
-        "https://news.google.com/rss/search?q="
-        f"{urllib.parse.quote(f'{base_q} ({p_kw}) when:7d')}&hl=ar&gl=MA&ceid=MA:ar"
-    )
-    try:
-      r = requests.get(gnews_social_url, headers=DEFAULT_HEADERS, timeout=10)
-      if r.status_code == 200:
-        for entry in parse_rss_xml(
-            r.content, platform_label, fallback_offset=3600
-        ):
-          if entry["url"] not in seen_urls and is_relevant_item(
-              entry["title"], entry["raw_snippet"], keywords_input
-          ):
-            seen_urls.add(entry["url"])
-            items.append(entry)
-    except Exception:
-      pass
 
   return items
 
@@ -1263,6 +1741,13 @@ def scrape_custom_targets(targets: list, global_kw: str = "", progress_cb=None):
 
     else:
       search_term = f"site:{domain} {handle_clean} {t_kw}".strip()
+      for h_item in _scrape_yahoo_and_ddg_html(
+          search_term, platform, [domain], t_kw, seen_urls
+      ):
+        h_item["is_custom_target"] = 1
+        h_item["source_name"] = f"🎯 {handle_clean or domain}"
+        items.append(h_item)
+
       bing_u = f"https://www.bing.com/search?q={urllib.parse.quote(search_term)}&format=rss"
       try:
         rb = requests.get(bing_u, headers=DEFAULT_HEADERS, timeout=10)
@@ -1289,7 +1774,9 @@ def scrape_custom_targets(targets: list, global_kw: str = "", progress_cb=None):
               body = clean_html_text(res.get("body") or "")
               if not href or href in seen_urls:
                 continue
-              pub_str, pub_ts = parse_any_date("", fallback_offset_sec=5400)
+              pub_str, pub_ts = extract_date_from_url_or_text(
+                  href, body, "", fallback_offset_sec=5400
+              )
               seen_urls.add(href)
               items.append({
                   "title": title or body[:90],
@@ -1313,9 +1800,14 @@ def scrape_custom_targets(targets: list, global_kw: str = "", progress_cb=None):
 def analyze_with_gemini(item: dict, api_key: str):
   title = clean_display_text(item.get("title", ""))
   snippet = clean_display_text(item.get("raw_snippet", "")) or title
+  platform = item.get("platform", "الصحف")
+  source_name = item.get("source_name", platform)
 
+  fallback_summary = build_rich_arabic_summary(
+      title, snippet, platform, source_name
+  )
   default_result = {
-      "summary": snippet if len(snippet) > 30 else f"رصد إعلامي قضائي: {title}",
+      "summary": fallback_summary,
       "sentiment": "محايد",
       "category": "شؤون قضائية",
       "relevance_score": 88,
@@ -1329,24 +1821,26 @@ def analyze_with_gemini(item: dict, api_key: str):
     model = genai.GenerativeModel(GEMINI_MODEL_NAME)
     prompt = (
         "أنت محلل إعلامي قضائي بالمجلس الأعلى للسلطة القضائية بالمغرب.\n"
-        "حلل الخبر التالي وأرجع JSON فقط بالمفاتيح التالية:\n"
-        '{"summary": "ملخص مركز ودقيق في جملتين بالعربية", '
+        "حلل المحتوى التالي (سواء كان مقالاً صحفياً أو فيديو يوتيوب أو منشور فيسبوك/إكس) "
+        "وأرجع JSON فقط بالمفاتيح التالية:\n"
+        '{"summary": "ملخص وافٍ ومركز في جملتين أو ثلاث جمل بالعربية يوضح مضمون الخبر أو المنشور أو الفيديو", '
         '"sentiment": "إيجابي أو محايد أو سلبي", '
         '"category": "بلاغ رسمي أو محاكم وقضايا أو شؤون قضائية أو رأي ومتابعات", '
         '"relevance_score": 90}\n'
+        f"المنصة: {platform} ({source_name})\n"
         f"العنوان: {title}\n"
-        f"المقتطف: {snippet[:400]}"
+        f"المقتطف/التفاصيل: {snippet[:500]}"
     )
     resp = model.generate_content(prompt)
     txt = (resp.text or "").strip()
     m = re.search(r"\{.*\}", txt, re.DOTALL)
     if m:
       parsed = json.loads(m.group(0))
+      ai_sum = clean_display_text(parsed.get("summary"))
+      if not ai_sum or len(ai_sum) < 25:
+        ai_sum = fallback_summary
       return {
-          "summary": (
-              clean_display_text(parsed.get("summary"))
-              or default_result["summary"]
-          ),
+          "summary": ai_sum,
           "sentiment": clean_display_text(parsed.get("sentiment")) or "محايد",
           "category": (
               clean_display_text(parsed.get("category")) or "شؤون قضائية"
@@ -1376,10 +1870,11 @@ def send_telegram_alert(item: dict, cfg: dict):
       f"⚖️ *المرصد الوطني للعدالة والقضاء*\n"
       f"{target_badge}"
       f"{icon} *المنصة:* {item.get('platform', 'الصحف')} | *المصدر:* {item.get('source_name', '')}\n"
+      f"📅 *تاريخ النشر:* {item.get('pub_date', '')}\n"
       f"📌 *العنوان:* {item.get('title', '')}\n\n"
       f"📝 *الملخص:* {item.get('summary', '')}\n\n"
-      f"🕒 *التاريخ:* {item.get('pub_date', '')} | *التصنيف:* {item.get('category', '')}\n"
-      f"🔗 [رابط المصدر الأصلي]({item.get('url', '')})"
+      f"🏷️ *التصنيف:* {item.get('category', '')}\n"
+      f"🔗 [فتح المصدر الأصلي]({item.get('url', '')})"
   )
   try:
     requests.post(
@@ -1461,34 +1956,35 @@ def quick_process_and_save(
   for it in candidates:
     if is_stop_requested():
       break
-    if ai_calls < 8 and api_key.startswith("AIza"):
+    plat = it.get("platform", "الصحف")
+    src = clean_display_text(it.get("source_name") or plat)
+    raw_snip = clean_display_text(it.get("raw_snippet") or "")
+
+    if ai_calls < 10 and api_key.startswith("AIza"):
       ai_res = analyze_with_gemini(it, api_key)
       ai_calls += 1
     else:
-      snippet = clean_display_text(it.get("raw_snippet") or it.get("title", ""))
       ai_res = {
-          "summary": (
-              snippet
-              if len(snippet) > 30
-              else f"رصد قضائي: {it.get('title', '')}"
+          "summary": build_rich_arabic_summary(
+              it["title"], raw_snip, plat, src
           ),
           "sentiment": "محايد",
           "category": "شؤون قضائية",
-          "relevance_score": 85,
+          "relevance_score": 86,
       }
 
     pub_str = it.get("pub_date") or ""
     pub_ts = float(it.get("pub_timestamp") or 0)
-    if pub_ts <= 0:
-      pub_str, pub_ts = parse_any_date(pub_str, fallback_offset_sec=3600)
+    if pub_ts <= 0 or not pub_str:
+      pub_str, pub_ts = extract_date_from_url_or_text(
+          it.get("url", ""), raw_snip, pub_str, fallback_offset_sec=3600
+      )
 
     record = {
-        "title": clean_display_text(it.get("title", "")),
+        "title": it["title"],
         "summary": clean_display_text(ai_res["summary"]),
-        "source_name": clean_display_text(
-            it.get("source_name") or it.get("platform", "الصحف")
-        ),
-        "platform": it.get("platform", "الصحف"),
+        "source_name": src,
+        "platform": plat,
         "url": it.get("url", "").strip(),
         "pub_date": pub_str,
         "pub_timestamp": pub_ts,
@@ -1498,7 +1994,7 @@ def quick_process_and_save(
         "is_custom_target": (
             1 if (is_target_run or it.get("is_custom_target")) else 0
         ),
-        "raw_snippet": clean_display_text(it.get("raw_snippet") or "")[:600],
+        "raw_snippet": raw_snip[:600],
         "created_at": time.time(),
     }
     prepared_rows.append(record)
@@ -1658,7 +2154,7 @@ if os.environ.get("CRON_MODE") == "1" or st is None:
   sys.exit(0)
 
 # =====================================================================
-# 9. تهيئة واجهة Streamlit والتصميم الزجاجي المتجاوب مع كافة الشاشات
+# 9. تهيئة واجهة Streamlit والتصميم الزجاجي المتجاوب مع فرض صارم لاتجاه RTL
 # =====================================================================
 st.set_page_config(
     page_title="المرصد الوطني للعدالة والقضاء",
@@ -1678,10 +2174,19 @@ render_html("""
     box-sizing: border-box;
 }
 
-html, body, [class*="css"], .stApp {
+/* فرض صارم لاتجاه اللغة العربية RTL على التطبيق وجميع الحاويات والتبويبات */
+html, body, .stApp, .main,
+[data-testid="stAppViewContainer"],
+[data-testid="stMarkdownContainer"],
+[data-testid="stVerticalBlock"],
+[data-baseweb="tab-panel"],
+[class*="st-emotion-cache"] {
     font-family: 'Cairo', sans-serif !important;
     direction: rtl !important;
     text-align: right !important;
+}
+
+.stApp {
     background: radial-gradient(circle at 15% 15%, #111c35 0%, #090d16 55%, #05080f 100%) !important;
     color: #f1f5f9 !important;
     overflow-x: hidden !important;
@@ -1693,6 +2198,8 @@ html, body, [class*="css"], .stApp {
     padding-left: clamp(0.6rem, 2.2vw, 2rem) !important;
     padding-right: clamp(0.6rem, 2.2vw, 2rem) !important;
     max-width: 1440px !important;
+    direction: rtl !important;
+    text-align: right !important;
 }
 
 /* تجاوب الأعمدة والأزرار تلقائياً على جميع مقاسات الشاشات */
@@ -1701,6 +2208,7 @@ div[data-testid="stHorizontalBlock"] {
     flex-wrap: wrap !important;
     gap: 10px !important;
     align-items: stretch !important;
+    direction: rtl !important;
 }
 
 div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
@@ -1711,7 +2219,7 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
 
 /* الهيدر الزجاجي المتجاوب */
 .hero-glass {
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.86) 0%, rgba(30, 41, 59, 0.68) 100%);
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.88) 0%, rgba(30, 41, 59, 0.72) 100%);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid rgba(56, 189, 248, 0.28);
@@ -1724,6 +2232,8 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 10px;
+    direction: rtl !important;
+    text-align: right !important;
 }
 
 .hero-title {
@@ -1748,6 +2258,7 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
     font-size: clamp(0.74rem, 1.4vw, 0.84rem);
     font-weight: 700;
     max-width: 100%;
+    direction: rtl !important;
 }
 
 .pulse-dot {
@@ -1847,6 +2358,8 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     align-items: center;
     gap: 16px;
     box-shadow: 0 10px 30px rgba(2, 132, 199, 0.22);
+    direction: rtl !important;
+    text-align: right !important;
 }
 
 .radar-scanner {
@@ -1907,6 +2420,8 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     font-weight: 800;
     font-size: clamp(0.84rem, 1.5vw, 0.96rem);
     box-shadow: 0 8px 25px rgba(16, 185, 129, 0.25);
+    direction: rtl !important;
+    text-align: right !important;
 }
 
 /* شبكة الإحصائيات المتجاوبة (CSS Grid) */
@@ -1915,6 +2430,7 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
     gap: 10px;
     margin: 10px 0 16px 0;
+    direction: rtl !important;
 }
 
 .metric-glass {
@@ -1923,7 +2439,7 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     border: 1px solid rgba(148, 163, 184, 0.2);
     border-radius: 14px;
     padding: 12px 10px;
-    text-align: center;
+    text-align: center !important;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
 }
 
@@ -1932,6 +2448,7 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     font-weight: 900;
     color: #38bdf8;
     line-height: 1.2;
+    text-align: center !important;
 }
 
 .metric-lbl {
@@ -1939,22 +2456,25 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     color: #94a3b8;
     font-weight: 700;
     margin-top: 2px;
+    text-align: center !important;
 }
 
-/* بطاقات الأخبار والمنشورات الزجاجية المتجاوبة */
+/* بطاقات الأخبار والمنشورات الزجاجية المتجاوبة باتجاه RTL صارم */
 .news-card {
-    background: linear-gradient(145deg, rgba(15, 23, 42, 0.88) 0%, rgba(30, 41, 59, 0.68) 100%);
+    background: linear-gradient(145deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.72) 100%);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     border: 1px solid rgba(148, 163, 184, 0.22);
-    border-right: 4px solid #38bdf8;
+    border-right: 5px solid #38bdf8;
     border-radius: 16px;
-    padding: clamp(14px, 2vw, 20px);
-    margin-bottom: 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+    padding: clamp(14px, 2vw, 22px);
+    margin-bottom: 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     transition: transform 0.2s ease, border-color 0.2s ease;
     word-wrap: break-word;
     overflow-wrap: anywhere;
+    direction: rtl !important;
+    text-align: right !important;
 }
 
 .news-card:hover {
@@ -1973,35 +2493,54 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 8px;
-    font-size: clamp(0.76rem, 1.3vw, 0.84rem);
+    gap: 10px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    font-size: clamp(0.78rem, 1.3vw, 0.86rem);
     color: #94a3b8;
+    direction: rtl !important;
+    text-align: right !important;
 }
 
 .news-meta-right {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
+    gap: 8px;
+    direction: rtl !important;
+}
+
+.pub-date-pill {
+    display: inline-flex;
+    align-items: center;
     gap: 6px;
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    color: #e2e8f0;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: clamp(0.75rem, 1.25vw, 0.83rem);
+    font-weight: 700;
+    direction: rtl !important;
 }
 
 .badge-plat {
-    padding: 2px 10px;
+    padding: 3px 11px;
     border-radius: 999px;
     font-weight: 800;
-    font-size: 0.75rem;
-    background: rgba(56, 189, 248, 0.16);
+    font-size: 0.78rem;
+    background: rgba(56, 189, 248, 0.18);
     color: #7dd3fc;
-    border: 1px solid rgba(56, 189, 248, 0.35);
+    border: 1px solid rgba(56, 189, 248, 0.38);
     display: inline-block;
 }
 
 .badge-target {
-    padding: 2px 10px;
+    padding: 3px 11px;
     border-radius: 999px;
     font-weight: 800;
-    font-size: 0.75rem;
+    font-size: 0.76rem;
     background: rgba(217, 119, 6, 0.22);
     color: #fcd34d;
     border: 1px solid rgba(245, 158, 11, 0.45);
@@ -2009,36 +2548,55 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
 }
 
 .news-title {
-    font-size: clamp(0.98rem, 1.8vw, 1.14rem);
+    font-size: clamp(1.02rem, 1.8vw, 1.18rem);
     font-weight: 800;
     color: #f8fafc;
-    margin: 6px 0 8px 0;
-    line-height: 1.55;
+    margin: 8px 0 10px 0;
+    line-height: 1.6;
+    direction: rtl !important;
+    text-align: right !important;
 }
 
-.news-summary {
-    font-size: clamp(0.86rem, 1.5vw, 0.95rem);
-    color: #cbd5e1;
-    line-height: 1.7;
+.news-summary-box {
+    background: rgba(9, 13, 22, 0.55);
+    border-right: 3px solid rgba(56, 189, 248, 0.55);
+    border-radius: 10px;
+    padding: 10px 14px;
     margin-bottom: 12px;
+    font-size: clamp(0.88rem, 1.5vw, 0.96rem);
+    color: #cbd5e1;
+    line-height: 1.75;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+.news-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    direction: rtl !important;
+    text-align: right !important;
 }
 
 .news-link {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(56, 189, 248, 0.15);
-    border: 1px solid rgba(56, 189, 248, 0.38);
+    background: rgba(56, 189, 248, 0.16);
+    border: 1px solid rgba(56, 189, 248, 0.4);
     color: #38bdf8 !important;
     text-decoration: none !important;
-    padding: 6px 14px;
+    padding: 6px 15px;
     border-radius: 10px;
-    font-size: 0.82rem;
-    font-weight: 700;
+    font-size: 0.84rem;
+    font-weight: 800;
+    direction: rtl !important;
 }
 
 .news-link:hover {
-    background: rgba(56, 189, 248, 0.28);
+    background: rgba(56, 189, 248, 0.3);
 }
 
 /* التبويبات القابلة للتمرير الأفقي السلس على الهواتف */
@@ -2051,6 +2609,7 @@ div[data-baseweb="tab-list"] {
     overflow-x: auto !important;
     flex-wrap: nowrap !important;
     scrollbar-width: thin;
+    direction: rtl !important;
 }
 
 button[data-baseweb="tab"] {
@@ -2076,10 +2635,14 @@ div[data-baseweb="select"] > div {
     border-color: rgba(148, 163, 184, 0.32) !important;
     color: #f8fafc !important;
     border-radius: 12px !important;
+    direction: rtl !important;
+    text-align: right !important;
 }
 
 input {
     color: #f8fafc !important;
+    direction: rtl !important;
+    text-align: right !important;
 }
 
 /* تحسينات خاصة لشاشات الهواتف والأجهزة اللوحية */
@@ -2188,9 +2751,9 @@ auto_badge_text = (
 )
 
 render_html(f"""
-<div class="hero-glass">
+<div class="hero-glass" dir="rtl">
     <h1 class="hero-title">⚖️ المرصد الوطني للعدالة والقضاء</h1>
-    <div class="status-pill">
+    <div class="status-pill" dir="rtl">
         <span class="pulse-dot"></span>
         <span>{html.escape(auto_badge_text)}</span>
     </div>
@@ -2288,9 +2851,9 @@ def execute_interactive_scan(mode_key: str):
     pct_int = max(5, min(100, int(pct * 100)))
     render_html(
         f"""
-        <div class="radar-panel">
+        <div class="radar-panel" dir="rtl">
             <div class="radar-scanner"></div>
-            <div style="flex:1;">
+            <div style="flex:1;direction:rtl;text-align:right;">
                 <div style="font-size:1rem;font-weight:800;color:#38bdf8;margin-bottom:3px;">
                     📡 {html.escape(clean_display_text(status_msg))}
                 </div>
@@ -2371,7 +2934,7 @@ if time.time() - float(rt_state.get("last_done_ts", 0)) < 25:
   if rt_state.get("last_done_mode") == "stopped":
     render_html(
         """
-        <div class="done-banner" style="background:rgba(127,29,29,0.85);border-color:#f87171;">
+        <div class="done-banner" dir="rtl" style="background:rgba(127,29,29,0.85);border-color:#f87171;">
             <span>🛑 تم إيقاف عملية الرصد بطلب من المستخدم</span>
             <span>STOPPED</span>
         </div>
@@ -2382,7 +2945,7 @@ if time.time() - float(rt_state.get("last_done_ts", 0)) < 25:
     c_new = int(rt_state.get("last_done_count", 0))
     render_html(
         f"""
-        <div class="done-banner">
+        <div class="done-banner" dir="rtl">
             <span>✨ تـم بنجاح / DONE — تم رصد وتحديث القاعدة ({c_new} منشور/خبر جديد)</span>
             <span>100% DONE ✅</span>
         </div>
@@ -2428,10 +2991,10 @@ metrics_data = [
     ("الأرشيف", len(archive_articles)),
 ]
 metrics_cards_html = "".join(
-    f'<div class="metric-glass"><div class="metric-num">{m_val}</div><div class="metric-lbl">{m_label}</div></div>'
+    f'<div class="metric-glass" dir="rtl"><div class="metric-num">{m_val}</div><div class="metric-lbl">{m_label}</div></div>'
     for m_label, m_val in metrics_data
 )
-render_html(f'<div class="metrics-grid">{metrics_cards_html}</div>')
+render_html(f'<div class="metrics-grid" dir="rtl">{metrics_cards_html}</div>')
 
 
 def render_article_cards(
@@ -2440,7 +3003,7 @@ def render_article_cards(
 ):
   if not items_list:
     render_html(
-        f"<div style='text-align:center;padding:30px;color:#64748b;background:rgba(15,23,42,0.5);border-radius:16px;border:1px dashed rgba(148,163,184,0.2);'>{html.escape(empty_msg)}</div>"
+        f"<div dir='rtl' style='direction:rtl;text-align:center;padding:30px;color:#64748b;background:rgba(15,23,42,0.5);border-radius:16px;border:1px dashed rgba(148,163,184,0.2);'>{html.escape(empty_msg)}</div>"
     )
     return
 
@@ -2452,46 +3015,77 @@ def render_article_cards(
       "أخرى": "plat-other",
   }
 
+  plat_type_label = {
+      "الصحف": "📰 مقال صحفي",
+      "فيسبوك": "🟦 منشور فيسبوك",
+      "إكس": "⬛ منشور إكس",
+      "يوتيوب": "🟥 فيديو يوتيوب",
+      "أخرى": "🟪 منشور رقمي",
+  }
+
   cards_buffer = []
   for item in items_list:
     plat = clean_display_text(item.get("platform") or "الصحف")
     css_cls = plat_css_map.get(plat, "plat-press")
-    title_safe = html.escape(clean_display_text(item.get("title") or ""))
-    summary_safe = html.escape(clean_display_text(item.get("summary") or ""))
-    source_safe = html.escape(
-        clean_display_text(item.get("source_name") or plat)
-    )
-    pub_date_safe = html.escape(clean_display_text(item.get("pub_date") or ""))
-    rel_time = html.escape(
-        format_relative_arabic(float(item.get("pub_timestamp", 0)))
-    )
+    type_badge_txt = plat_type_label.get(plat, plat)
+
+    raw_title = clean_display_text(item.get("title") or "")
+    raw_summary = clean_display_text(item.get("summary") or "")
+    raw_snip = clean_display_text(item.get("raw_snippet") or "")
+    raw_src = clean_display_text(item.get("source_name") or plat)
+
+    # ضمان وجود ملخص غني ومفصل لكل مقال أو فيديو أو منشور حتى للبيانات المخزنة مسبقا
+    if (
+        not raw_summary
+        or raw_summary.lower() == raw_title.lower()
+        or len(raw_summary) < 25
+    ):
+      raw_summary = build_rich_arabic_summary(
+          raw_title, raw_snip, plat, raw_src
+      )
+
+    pub_ts = float(item.get("pub_timestamp") or (time.time() - 3600))
+    raw_pub_date = clean_display_text(item.get("pub_date") or "")
+    if not raw_pub_date:
+      raw_pub_date = datetime.fromtimestamp(
+          pub_ts, tz=timezone.utc
+      ).strftime("%Y-%m-%d %H:%M")
+
+    title_safe = html.escape(raw_title)
+    summary_safe = html.escape(raw_summary)
+    source_safe = html.escape(raw_src)
+    pub_date_safe = html.escape(raw_pub_date)
+    rel_time = html.escape(format_relative_arabic(pub_ts))
     category_safe = html.escape(
         clean_display_text(item.get("category") or "شؤون قضائية")
     )
     raw_url = str(item.get("url") or "#").strip()
     url_safe = html.escape(raw_url, quote=True)
     target_tag = (
-        '<span class="badge-target">🎯 مخصص</span>'
+        '<span class="badge-target">🎯 رصد مخصص</span>'
         if int(item.get("is_custom_target", 0)) == 1
         else ""
     )
 
     card_html = (
-        f'<div class="news-card {css_cls}">'
-        '<div class="news-meta">'
-        '<div class="news-meta-right">'
-        f'<span class="badge-plat">{html.escape(plat)}</span>'
+        f'<div class="news-card {css_cls}" dir="rtl" style="direction:rtl;text-align:right;">'
+        '<div class="news-meta" dir="rtl" style="direction:rtl;text-align:right;">'
+        '<div class="news-meta-right" dir="rtl">'
+        f'<span class="badge-plat">{html.escape(type_badge_txt)}</span>'
         f"{target_tag}"
-        f'<span style="font-weight:700;color:#e2e8f0;">{source_safe}</span>'
+        f'<span style="font-weight:800;color:#e2e8f0;">{source_safe}</span>'
         f'<span style="color:#64748b;">• {category_safe}</span>'
         "</div>"
-        '<div style="direction:rtl;">'
-        f'🕒 <strong style="color:#38bdf8;">{rel_time}</strong> ({pub_date_safe})'
+        '<div class="pub-date-pill" dir="rtl">'
+        f'<span>📅 تاريخ النشر: <strong style="color:#38bdf8;" dir="ltr">{pub_date_safe}</strong></span>'
+        f'<span style="color:#34d399;font-weight:800;">({rel_time})</span>'
         "</div>"
         "</div>"
-        f'<div class="news-title">{title_safe}</div>'
-        f'<div class="news-summary">{summary_safe}</div>'
-        "<div>"
+        f'<div class="news-title" dir="rtl" style="direction:rtl;text-align:right;">{title_safe}</div>'
+        f'<div class="news-summary-box" dir="rtl" style="direction:rtl;text-align:right;">'
+        f'<strong style="color:#38bdf8;">📝 ملخص المحتوى: </strong>{summary_safe}'
+        "</div>"
+        '<div class="news-footer" dir="rtl" style="direction:rtl;text-align:right;">'
         f'<a class="news-link" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 فتح المصدر الأصلي</a>'
         "</div>"
         "</div>"
