@@ -33,8 +33,6 @@ except ImportError:
 # =====================================================================
 # 1. إعدادات النظام والثوابت الأساسية
 # =====================================================================
-# استخدام المسار المؤقت للنظام (tmpfs) لتشغيل SQLite بسرعة فائقة وبدون أخطاء القفل
-# في بيئة Streamlit Cloud (/mount/src)، مع المزامنة الفورية لملفات المستودع الدائمة.
 REPO_DB_FILE = "morocco_justice_hub.db"
 DB_FILE = os.path.join(tempfile.gettempdir(), "morocco_justice_hub_runtime.db")
 ARCHIVE_JSON_FILE = "articles_archive.json"
@@ -119,6 +117,44 @@ INTERVAL_MAP = {
     "كل 12 ساعة": 43200,
     "كل 24 ساعة": 86400,
 }
+
+
+def compact_html(raw_html: str) -> str:
+  """إزالة المسافات البادئة والأسطر الفارغة لمنع Markdown من تحويل HTML إلى كود نصي."""
+  return "\n".join(
+      line.strip() for line in str(raw_html).splitlines() if line.strip()
+  )
+
+
+def render_html(raw_html: str, target=None):
+  cleaned = compact_html(raw_html)
+  if target is not None:
+    target.markdown(cleaned, unsafe_allow_html=True)
+  elif st is not None:
+    st.markdown(cleaned, unsafe_allow_html=True)
+
+
+def clean_display_text(val: str) -> str:
+  """تنظيف النصوص من أي بقايا HTML أو JSON أو أسطر متعددة قبل عرضها في البطاقات."""
+  if not val:
+    return ""
+  txt = str(val).strip()
+  txt = re.sub(r"```(?:json|html)?", "", txt, flags=re.IGNORECASE).replace("```", "").strip()
+  if txt.startswith("{") and "summary" in txt:
+    try:
+      parsed = json.loads(txt)
+      if isinstance(parsed, dict) and parsed.get("summary"):
+        txt = str(parsed["summary"])
+    except Exception:
+      m = re.search(r'"summary"\s*:\s*"([^"]+)"', txt)
+      if m:
+        txt = m.group(1)
+  txt = html.unescape(txt)
+  txt = re.sub(r"<[^>]+>", " ", txt)
+  txt = re.sub(r"[\r\n\t]+", " ", txt)
+  txt = re.sub(r"\s+", " ", txt).strip()
+  return txt
+
 
 # =====================================================================
 # 2. قفل التزامن المركزي لمنع تضارب SQLite والخيوط (Thread-Safety)
@@ -458,9 +494,9 @@ def restore_db_from_json_if_needed():
                                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
                   (
-                      item.get("title", ""),
-                      item.get("summary", ""),
-                      item.get("source_name", ""),
+                      clean_display_text(item.get("title", "")),
+                      clean_display_text(item.get("summary", "")),
+                      clean_display_text(item.get("source_name", "")),
                       item.get("platform", "الصحف"),
                       item.get("url", ""),
                       item.get("pub_date", ""),
@@ -469,7 +505,7 @@ def restore_db_from_json_if_needed():
                       item.get("category", "شؤون قضائية"),
                       int(item.get("relevance_score", 85)),
                       int(item.get("is_custom_target", 0)),
-                      item.get("raw_snippet", ""),
+                      clean_display_text(item.get("raw_snippet", "")),
                       float(item.get("created_at", time.time())),
                   ),
               )
@@ -770,12 +806,17 @@ def is_relevant_item(
 
 
 def clean_html_text(raw_html: str) -> str:
-  if not raw_html:
+  return clean_display_text(raw_html)
+
+
+def decode_js_escaped_text(raw_str: str) -> str:
+  if not raw_str:
     return ""
-  txt = html.unescape(str(raw_html))
-  txt = re.sub(r"<[^>]+>", " ", txt)
-  txt = re.sub(r"\s+", " ", txt).strip()
-  return txt
+  s = re.sub(
+      r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), str(raw_str)
+  )
+  s = s.replace('\\"', '"').replace("\\/", "/").replace("\\n", " ")
+  return clean_display_text(s)
 
 
 def parse_rss_xml(
@@ -839,7 +880,7 @@ def parse_rss_xml(
         "title": title,
         "url": link,
         "raw_snippet": title,
-        "source_name": author_name or default_source or default_platform,
+        "source_name": clean_html_text(author_name or default_source or default_platform),
         "platform": default_platform,
         "pub_date": pub_str,
         "pub_timestamp": pub_ts,
@@ -954,11 +995,7 @@ def scrape_youtube_platform(keywords_input: str, progress_cb=None):
             v_url = f"https://www.youtube.com/watch?v={vid}"
             if v_url in seen_urls:
               continue
-            title = clean_html_text(
-                raw_title.encode("utf-8").decode("unicode_escape", errors="ignore")
-                if "\\u" in raw_title
-                else raw_title
-            )
+            title = decode_js_escaped_text(raw_title)
             if not is_relevant_item(title, "", keywords_input):
               continue
             pub_str, pub_ts = parse_any_date(pub_rel, fallback_offset_sec=5400)
@@ -1274,8 +1311,8 @@ def scrape_custom_targets(targets: list, global_kw: str = "", progress_cb=None):
 # 7. تحليل الذكاء الاصطناعي Gemini وتنبيهات تيليجرام وحفظ آمن
 # =====================================================================
 def analyze_with_gemini(item: dict, api_key: str):
-  title = item.get("title", "")
-  snippet = item.get("raw_snippet", "") or title
+  title = clean_display_text(item.get("title", ""))
+  snippet = clean_display_text(item.get("raw_snippet", "")) or title
 
   default_result = {
       "summary": snippet if len(snippet) > 30 else f"رصد إعلامي قضائي: {title}",
@@ -1306,9 +1343,14 @@ def analyze_with_gemini(item: dict, api_key: str):
     if m:
       parsed = json.loads(m.group(0))
       return {
-          "summary": parsed.get("summary") or default_result["summary"],
-          "sentiment": parsed.get("sentiment") or "محايد",
-          "category": parsed.get("category") or "شؤون قضائية",
+          "summary": (
+              clean_display_text(parsed.get("summary"))
+              or default_result["summary"]
+          ),
+          "sentiment": clean_display_text(parsed.get("sentiment")) or "محايد",
+          "category": (
+              clean_display_text(parsed.get("category")) or "شؤون قضائية"
+          ),
           "relevance_score": int(parsed.get("relevance_score", 88)),
       }
   except Exception:
@@ -1360,7 +1402,6 @@ def quick_process_and_save(
   if not items:
     return 0
 
-  # 1. قراءة الروابط والعناوين الموجودة سريعا جدا مع قفل آمن وإغلاق الاتصال فورا
   existing_urls = set()
   existing_titles = set()
   lock = get_db_lock()
@@ -1391,7 +1432,6 @@ def quick_process_and_save(
       except Exception:
         pass
 
-  # 2. فلترة العناصر الجديدة وترتيبها زمنيا (خارج اتصال SQLite تماما لمنع أي قفل!)
   candidates = []
   seen_batch_urls = set()
   seen_batch_titles = set()
@@ -1399,7 +1439,7 @@ def quick_process_and_save(
       items, key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
   ):
     u = (it.get("url") or "").strip()
-    t = (it.get("title") or "").strip()
+    t = clean_display_text(it.get("title") or "")
     if not u or not t:
       continue
     if u in existing_urls or t in existing_titles:
@@ -1408,12 +1448,12 @@ def quick_process_and_save(
       continue
     seen_batch_urls.add(u)
     seen_batch_titles.add(t)
+    it["title"] = t
     candidates.append(it)
 
   if not candidates:
     return 0
 
-  # 3. تحليل الذكاء الاصطناعي خارج اتصال قاعدة البيانات
   api_key = (cfg.get("gemini_api_key") or "").strip()
   prepared_rows = []
   ai_calls = 0
@@ -1425,7 +1465,7 @@ def quick_process_and_save(
       ai_res = analyze_with_gemini(it, api_key)
       ai_calls += 1
     else:
-      snippet = it.get("raw_snippet") or it.get("title", "")
+      snippet = clean_display_text(it.get("raw_snippet") or it.get("title", ""))
       ai_res = {
           "summary": (
               snippet
@@ -1443,20 +1483,22 @@ def quick_process_and_save(
       pub_str, pub_ts = parse_any_date(pub_str, fallback_offset_sec=3600)
 
     record = {
-        "title": it.get("title", "").strip(),
-        "summary": ai_res["summary"],
-        "source_name": it.get("source_name") or it.get("platform", "الصحف"),
+        "title": clean_display_text(it.get("title", "")),
+        "summary": clean_display_text(ai_res["summary"]),
+        "source_name": clean_display_text(
+            it.get("source_name") or it.get("platform", "الصحف")
+        ),
         "platform": it.get("platform", "الصحف"),
         "url": it.get("url", "").strip(),
         "pub_date": pub_str,
         "pub_timestamp": pub_ts,
-        "sentiment": ai_res["sentiment"],
-        "category": ai_res["category"],
+        "sentiment": clean_display_text(ai_res["sentiment"]),
+        "category": clean_display_text(ai_res["category"]),
         "relevance_score": int(ai_res["relevance_score"]),
         "is_custom_target": (
             1 if (is_target_run or it.get("is_custom_target")) else 0
         ),
-        "raw_snippet": (it.get("raw_snippet") or "")[:600],
+        "raw_snippet": clean_display_text(it.get("raw_snippet") or "")[:600],
         "created_at": time.time(),
     }
     prepared_rows.append(record)
@@ -1464,7 +1506,6 @@ def quick_process_and_save(
   if not prepared_rows:
     return 0
 
-  # 4. إدخال دفعة واحدة سريعة ومؤمنة بالكامل داخل قفل SQLite مع إصلاح ذاتي للجدول
   added_items = []
   with lock:
     for attempt in range(3):
@@ -1516,7 +1557,6 @@ def quick_process_and_save(
         if attempt == 2:
           added_items = list(prepared_rows)
 
-  # 5. تحديث ملف الأرشيف الدائم وإرسال تنبيهات تيليجرام
   if added_items:
     sync_db_to_json(extra_items=added_items)
     for rec in added_items[:10]:
@@ -1545,7 +1585,6 @@ def run_headless_background_cycle() -> int:
     targets = load_custom_targets()
     kw = cfg.get("keywords_input", "")
 
-    # تحديث طابع آخر تشغيل فورا لمنع أي خيط آخر من تكرار الدورة بالتوازي
     m_state = load_monitor_state()
     m_state["last_auto_run"] = time.time()
     save_monitor_state(m_state)
@@ -1619,7 +1658,7 @@ if os.environ.get("CRON_MODE") == "1" or st is None:
   sys.exit(0)
 
 # =====================================================================
-# 9. تهيئة واجهة Streamlit والتصميم الزجاجي المظلم (Dark Glassmorphism)
+# 9. تهيئة واجهة Streamlit والتصميم الزجاجي المتجاوب مع كافة الشاشات
 # =====================================================================
 st.set_page_config(
     page_title="المرصد الوطني للعدالة والقضاء",
@@ -1631,10 +1670,13 @@ st.set_page_config(
 init_db()
 ensure_background_daemon()
 
-st.markdown(
-    """
+render_html("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
 
 html, body, [class*="css"], .stApp {
     font-family: 'Cairo', sans-serif !important;
@@ -1642,39 +1684,56 @@ html, body, [class*="css"], .stApp {
     text-align: right !important;
     background: radial-gradient(circle at 15% 15%, #111c35 0%, #090d16 55%, #05080f 100%) !important;
     color: #f1f5f9 !important;
+    overflow-x: hidden !important;
 }
 
 .block-container {
-    padding-top: 1.4rem !important;
-    padding-bottom: 2.5rem !important;
-    max-width: 1420px !important;
+    padding-top: 1.1rem !important;
+    padding-bottom: 2.2rem !important;
+    padding-left: clamp(0.6rem, 2.2vw, 2rem) !important;
+    padding-right: clamp(0.6rem, 2.2vw, 2rem) !important;
+    max-width: 1440px !important;
 }
 
-/* الهيدر الزجاجي الفخم */
+/* تجاوب الأعمدة والأزرار تلقائياً على جميع مقاسات الشاشات */
+div[data-testid="stHorizontalBlock"] {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+    align-items: stretch !important;
+}
+
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+    flex: 1 1 145px !important;
+    min-width: 140px !important;
+}
+
+/* الهيدر الزجاجي المتجاوب */
 .hero-glass {
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.82) 0%, rgba(30, 41, 59, 0.65) 100%);
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.86) 0%, rgba(30, 41, 59, 0.68) 100%);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(56, 189, 248, 0.25);
-    border-radius: 20px;
-    padding: 18px 26px;
-    margin-bottom: 18px;
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    border-radius: 18px;
+    padding: clamp(12px, 2vw, 20px) clamp(14px, 2.5vw, 26px);
+    margin-bottom: 14px;
     box-shadow: 0 12px 35px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 14px;
+    gap: 10px;
 }
 
 .hero-title {
-    font-size: 1.75rem;
+    font-size: clamp(1.2rem, 2.6vw, 1.75rem);
     font-weight: 900;
     background: linear-gradient(90deg, #38bdf8, #818cf8, #f472b6);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin: 0;
-    letter-spacing: -0.3px;
+    line-height: 1.35;
 }
 
 .status-pill {
@@ -1684,15 +1743,17 @@ html, body, [class*="css"], .stApp {
     background: rgba(16, 185, 129, 0.14);
     border: 1px solid rgba(16, 185, 129, 0.4);
     color: #34d399;
-    padding: 6px 14px;
+    padding: 5px 13px;
     border-radius: 999px;
-    font-size: 0.84rem;
+    font-size: clamp(0.74rem, 1.4vw, 0.84rem);
     font-weight: 700;
+    max-width: 100%;
 }
 
 .pulse-dot {
     width: 9px;
     height: 9px;
+    min-width: 9px;
     background: #10b981;
     border-radius: 50%;
     box-shadow: 0 0 10px #10b981;
@@ -1704,21 +1765,23 @@ html, body, [class*="css"], .stApp {
     50% { transform: scale(1.35); opacity: 0.55; }
 }
 
-/* إلغاء الخلفية البيضاء لجميع الأزرار بشكل مطلق وتطبيق تدرجات داكنة احترافية */
+/* إلغاء الخلفية البيضاء لجميع الأزرار وتطبيق تدرجات داكنة احترافية */
 div.stButton > button,
 div.stDownloadButton > button,
 div[data-testid="stFormSubmitButton"] > button {
     width: 100% !important;
+    min-height: 44px !important;
     background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important;
     color: #f8fafc !important;
-    border: 1px solid rgba(148, 163, 184, 0.32) !important;
-    border-radius: 13px !important;
-    padding: 0.62rem 0.9rem !important;
+    border: 1px solid rgba(148, 163, 184, 0.35) !important;
+    border-radius: 12px !important;
+    padding: 0.5rem 0.65rem !important;
     font-family: 'Cairo', sans-serif !important;
     font-weight: 800 !important;
-    font-size: 0.92rem !important;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38) !important;
-    transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    font-size: clamp(0.8rem, 1.3vw, 0.92rem) !important;
+    white-space: nowrap !important;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.35) !important;
+    transition: all 0.2s ease !important;
 }
 
 div.stButton > button *,
@@ -1732,70 +1795,64 @@ div.stDownloadButton > button:hover,
 div[data-testid="stFormSubmitButton"] > button:hover {
     transform: translateY(-2px) !important;
     border-color: #38bdf8 !important;
-    box-shadow: 0 10px 24px rgba(56, 189, 248, 0.28) !important;
+    box-shadow: 0 8px 22px rgba(56, 189, 248, 0.28) !important;
 }
 
-/* ألوان مخصصة لكل منصة ولكل زر عبر :has() */
+/* ألوان مخصصة لكل منصة ولكل زر */
 div[data-testid="stVerticalBlock"]:has(.btn-marker-all) div.stButton > button {
     background: linear-gradient(135deg, #0284c7 0%, #1d4ed8 100%) !important;
-    border: 1px solid rgba(125, 211, 252, 0.5) !important;
-    box-shadow: 0 6px 20px rgba(2, 132, 199, 0.35) !important;
+    border: 1px solid rgba(125, 211, 252, 0.55) !important;
 }
 div[data-testid="stVerticalBlock"]:has(.btn-marker-press) div.stButton > button {
     background: linear-gradient(135deg, #059669 0%, #065f46 100%) !important;
-    border: 1px solid rgba(110, 231, 183, 0.45) !important;
-    box-shadow: 0 6px 20px rgba(5, 150, 105, 0.32) !important;
+    border: 1px solid rgba(110, 231, 183, 0.5) !important;
 }
 div[data-testid="stVerticalBlock"]:has(.btn-marker-fb) div.stButton > button {
     background: linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%) !important;
-    border: 1px solid rgba(147, 197, 253, 0.45) !important;
-    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35) !important;
+    border: 1px solid rgba(147, 197, 253, 0.5) !important;
 }
 div[data-testid="stVerticalBlock"]:has(.btn-marker-x) div.stButton > button {
     background: linear-gradient(135deg, #334155 0%, #0f172a 100%) !important;
-    border: 1px solid rgba(203, 213, 225, 0.4) !important;
-    box-shadow: 0 6px 20px rgba(51, 65, 85, 0.4) !important;
+    border: 1px solid rgba(203, 213, 225, 0.45) !important;
 }
 div[data-testid="stVerticalBlock"]:has(.btn-marker-yt) div.stButton > button {
     background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%) !important;
-    border: 1px solid rgba(252, 165, 165, 0.45) !important;
-    box-shadow: 0 6px 20px rgba(220, 38, 38, 0.35) !important;
+    border: 1px solid rgba(252, 165, 165, 0.5) !important;
 }
 div[data-testid="stVerticalBlock"]:has(.btn-marker-other) div.stButton > button {
     background: linear-gradient(135deg, #7c3aed 0%, #4c1d95 100%) !important;
-    border: 1px solid rgba(196, 181, 253, 0.45) !important;
-    box-shadow: 0 6px 20px rgba(124, 58, 237, 0.35) !important;
+    border: 1px solid rgba(196, 181, 253, 0.5) !important;
 }
 div[data-testid="stVerticalBlock"]:has(.btn-marker-target) div.stButton > button {
     background: linear-gradient(135deg, #d97706 0%, #78350f 100%) !important;
-    border: 1px solid rgba(253, 230, 138, 0.45) !important;
-    box-shadow: 0 6px 20px rgba(217, 119, 6, 0.35) !important;
+    border: 1px solid rgba(253, 230, 138, 0.5) !important;
 }
 div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     background: linear-gradient(135deg, #991b1b 0%, #450a0a 100%) !important;
-    border: 1px solid rgba(248, 113, 113, 0.45) !important;
-    padding: 0.38rem 0.65rem !important;
-    font-size: 0.8rem !important;
+    border: 1px solid rgba(248, 113, 113, 0.5) !important;
+    min-height: 34px !important;
+    padding: 0.25rem 0.5rem !important;
+    font-size: 0.76rem !important;
 }
 
 /* رادار المسح الضوئي 360 درجة */
 .radar-panel {
-    background: rgba(15, 23, 42, 0.85);
+    background: rgba(15, 23, 42, 0.88);
     backdrop-filter: blur(16px);
-    border: 1px solid rgba(56, 189, 248, 0.38);
-    border-radius: 18px;
-    padding: 18px 24px;
-    margin: 12px 0 18px 0;
+    border: 1px solid rgba(56, 189, 248, 0.42);
+    border-radius: 16px;
+    padding: 14px 18px;
+    margin: 10px 0 14px 0;
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 16px;
     box-shadow: 0 10px 30px rgba(2, 132, 199, 0.22);
 }
 
 .radar-scanner {
-    width: 66px;
-    height: 66px;
-    min-width: 66px;
+    width: 58px;
+    height: 58px;
+    min-width: 58px;
     border-radius: 50%;
     position: relative;
     background:
@@ -1803,7 +1860,7 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
         radial-gradient(circle, transparent 48%, rgba(56, 189, 248, 0.25) 49%, transparent 51%),
         #070d19;
     border: 2px solid #38bdf8;
-    box-shadow: 0 0 20px rgba(56, 189, 248, 0.45), inset 0 0 15px rgba(56, 189, 248, 0.25);
+    box-shadow: 0 0 18px rgba(56, 189, 248, 0.45), inset 0 0 12px rgba(56, 189, 248, 0.25);
     overflow: hidden;
 }
 
@@ -1811,8 +1868,8 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     content: "";
     position: absolute;
     inset: -50%;
-    background: conic-gradient(from 0deg, transparent 55%, rgba(56, 189, 248, 0.75) 100%);
-    animation: radarSpin 1.35s linear infinite;
+    background: conic-gradient(from 0deg, transparent 55%, rgba(56, 189, 248, 0.8) 100%);
+    animation: radarSpin 1.3s linear infinite;
 }
 
 .radar-scanner::after {
@@ -1820,8 +1877,8 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     background: #38bdf8;
     border-radius: 50%;
     transform: translate(-50%, -50%);
@@ -1835,60 +1892,74 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
 
 /* شارة اكتمال الرصد DONE */
 .done-banner {
-    background: linear-gradient(135deg, rgba(6, 95, 70, 0.85) 0%, rgba(4, 120, 87, 0.75) 100%);
+    background: linear-gradient(135deg, rgba(6, 95, 70, 0.88) 0%, rgba(4, 120, 87, 0.78) 100%);
     backdrop-filter: blur(14px);
     border: 1px solid rgba(52, 211, 153, 0.55);
-    border-radius: 16px;
-    padding: 12px 22px;
-    margin: 10px 0 16px 0;
+    border-radius: 14px;
+    padding: 11px 18px;
+    margin: 8px 0 14px 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
     color: #ecfdf5;
     font-weight: 800;
+    font-size: clamp(0.84rem, 1.5vw, 0.96rem);
     box-shadow: 0 8px 25px rgba(16, 185, 129, 0.25);
 }
 
-/* بطاقات الإحصائيات الزجاجية */
+/* شبكة الإحصائيات المتجاوبة (CSS Grid) */
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    gap: 10px;
+    margin: 10px 0 16px 0;
+}
+
 .metric-glass {
-    background: rgba(15, 23, 42, 0.68);
+    background: rgba(15, 23, 42, 0.72);
     backdrop-filter: blur(14px);
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 16px;
-    padding: 14px 16px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 14px;
+    padding: 12px 10px;
     text-align: center;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
 }
 
 .metric-num {
-    font-size: 1.65rem;
+    font-size: clamp(1.3rem, 2.2vw, 1.65rem);
     font-weight: 900;
     color: #38bdf8;
     line-height: 1.2;
 }
 
 .metric-lbl {
-    font-size: 0.82rem;
+    font-size: clamp(0.75rem, 1.2vw, 0.84rem);
     color: #94a3b8;
     font-weight: 700;
+    margin-top: 2px;
 }
 
-/* بطاقات الأخبار والمنشورات الزجاجية */
+/* بطاقات الأخبار والمنشورات الزجاجية المتجاوبة */
 .news-card {
-    background: linear-gradient(145deg, rgba(15, 23, 42, 0.84) 0%, rgba(30, 41, 59, 0.64) 100%);
+    background: linear-gradient(145deg, rgba(15, 23, 42, 0.88) 0%, rgba(30, 41, 59, 0.68) 100%);
     backdrop-filter: blur(16px);
-    border: 1px solid rgba(148, 163, 184, 0.2);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(148, 163, 184, 0.22);
     border-right: 4px solid #38bdf8;
     border-radius: 16px;
-    padding: 18px 22px;
-    margin-bottom: 14px;
+    padding: clamp(14px, 2vw, 20px);
+    margin-bottom: 12px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
     transition: transform 0.2s ease, border-color 0.2s ease;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
 }
 
 .news-card:hover {
     transform: translateY(-2px);
-    border-color: rgba(56, 189, 248, 0.45);
+    border-color: rgba(56, 189, 248, 0.48);
 }
 
 .news-card.plat-press { border-right-color: #10b981; }
@@ -1904,32 +1975,51 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     flex-wrap: wrap;
     gap: 8px;
     margin-bottom: 8px;
-    font-size: 0.82rem;
+    font-size: clamp(0.76rem, 1.3vw, 0.84rem);
     color: #94a3b8;
 }
 
+.news-meta-right {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
 .badge-plat {
-    padding: 3px 11px;
+    padding: 2px 10px;
     border-radius: 999px;
     font-weight: 800;
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     background: rgba(56, 189, 248, 0.16);
     color: #7dd3fc;
     border: 1px solid rgba(56, 189, 248, 0.35);
+    display: inline-block;
+}
+
+.badge-target {
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-weight: 800;
+    font-size: 0.75rem;
+    background: rgba(217, 119, 6, 0.22);
+    color: #fcd34d;
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    display: inline-block;
 }
 
 .news-title {
-    font-size: 1.12rem;
+    font-size: clamp(0.98rem, 1.8vw, 1.14rem);
     font-weight: 800;
     color: #f8fafc;
-    margin: 4px 0 8px 0;
-    line-height: 1.5;
+    margin: 6px 0 8px 0;
+    line-height: 1.55;
 }
 
 .news-summary {
-    font-size: 0.94rem;
+    font-size: clamp(0.86rem, 1.5vw, 0.95rem);
     color: #cbd5e1;
-    line-height: 1.65;
+    line-height: 1.7;
     margin-bottom: 12px;
 }
 
@@ -1937,13 +2027,13 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(56, 189, 248, 0.14);
-    border: 1px solid rgba(56, 189, 248, 0.35);
+    background: rgba(56, 189, 248, 0.15);
+    border: 1px solid rgba(56, 189, 248, 0.38);
     color: #38bdf8 !important;
     text-decoration: none !important;
-    padding: 5px 14px;
+    padding: 6px 14px;
     border-radius: 10px;
-    font-size: 0.84rem;
+    font-size: 0.82rem;
     font-weight: 700;
 }
 
@@ -1951,22 +2041,28 @@ div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
     background: rgba(56, 189, 248, 0.28);
 }
 
-/* التبويبات وحقول الإدخال الداكنة */
+/* التبويبات القابلة للتمرير الأفقي السلس على الهواتف */
 div[data-baseweb="tab-list"] {
-    gap: 8px !important;
-    background: rgba(15, 23, 42, 0.75) !important;
+    gap: 6px !important;
+    background: rgba(15, 23, 42, 0.78) !important;
     padding: 6px !important;
     border-radius: 14px !important;
-    border: 1px solid rgba(148, 163, 184, 0.18) !important;
+    border: 1px solid rgba(148, 163, 184, 0.2) !important;
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    scrollbar-width: thin;
 }
 
 button[data-baseweb="tab"] {
     background: transparent !important;
     color: #94a3b8 !important;
     border-radius: 10px !important;
-    padding: 8px 16px !important;
+    padding: 7px 13px !important;
     font-family: 'Cairo', sans-serif !important;
     font-weight: 800 !important;
+    font-size: clamp(0.78rem, 1.4vw, 0.9rem) !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
 }
 
 button[data-baseweb="tab"][aria-selected="true"] {
@@ -1976,8 +2072,8 @@ button[data-baseweb="tab"][aria-selected="true"] {
 
 div[data-baseweb="input"] > div,
 div[data-baseweb="select"] > div {
-    background-color: rgba(15, 23, 42, 0.85) !important;
-    border-color: rgba(148, 163, 184, 0.3) !important;
+    background-color: rgba(15, 23, 42, 0.88) !important;
+    border-color: rgba(148, 163, 184, 0.32) !important;
     color: #f8fafc !important;
     border-radius: 12px !important;
 }
@@ -1985,10 +2081,33 @@ div[data-baseweb="select"] > div {
 input {
     color: #f8fafc !important;
 }
+
+/* تحسينات خاصة لشاشات الهواتف والأجهزة اللوحية */
+@media (max-width: 768px) {
+    div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+        flex: 1 1 calc(50% - 8px) !important;
+        min-width: 130px !important;
+    }
+    .hero-glass {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .metrics-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .radar-panel {
+        padding: 12px 14px;
+        gap: 12px;
+    }
+    .radar-scanner {
+        width: 46px;
+        height: 46px;
+        min-width: 46px;
+    }
+}
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""")
 
 # =====================================================================
 # 10. تحميل الإعدادات والبيانات
@@ -1998,7 +2117,6 @@ custom_targets = load_custom_targets()
 monitor_state = load_monitor_state()
 rt_state = get_shared_runtime()
 
-# القائمة الجانبية للإعدادات والنسخ الاحتياطي
 with st.sidebar:
   st.markdown("### ⚙️ إعدادات المنصة")
   gemini_key_in = st.text_input(
@@ -2057,7 +2175,7 @@ with st.sidebar:
       st.error("ملف غير صالح")
 
 # =====================================================================
-# 11. الهيدر الرئيسي وشريط البحث المخصص
+# 11. الهيدر الرئيسي وشريط البحث المخصص والروابط المخصصة
 # =====================================================================
 last_auto_ts = float(monitor_state.get("last_auto_run", 0))
 last_auto_label = (
@@ -2069,73 +2187,67 @@ auto_badge_text = (
     else "الرصد اليدوي"
 )
 
-st.markdown(
-    f"""
+render_html(f"""
 <div class="hero-glass">
     <h1 class="hero-title">⚖️ المرصد الوطني للعدالة والقضاء</h1>
     <div class="status-pill">
         <span class="pulse-dot"></span>
-        <span>{auto_badge_text}</span>
+        <span>{html.escape(auto_badge_text)}</span>
     </div>
 </div>
-""",
-    unsafe_allow_html=True,
+""")
+
+kw_input = st.text_input(
+    "🔍 تخصيص بكلمات مفتاحية (اختياري)",
+    value=cfg.get("keywords_input", ""),
+    placeholder="🔍 اتركه فارغاً للرصد القضائي العام، أو أدخل كلمات مفتاحية مفصولة بفاصلة...",
+    label_visibility="collapsed",
 )
+if kw_input != cfg.get("keywords_input", ""):
+  cfg["keywords_input"] = kw_input
+  save_credentials(cfg)
 
-# شريط البحث الاختياري وإدارة الروابط المخصصة
-col_search, col_target_exp = st.columns([2.2, 1.8])
-with col_search:
-  kw_input = st.text_input(
-      "🔍 تخصيص بكلمات مفتاحية (اختياري)",
-      value=cfg.get("keywords_input", ""),
-      placeholder="اتركه فارغاً للرصد القضائي العام، أو أدخل كلمات مفصولة بفاصلة...",
-      label_visibility="collapsed",
-  )
-  if kw_input != cfg.get("keywords_input", ""):
-    cfg["keywords_input"] = kw_input
-    save_credentials(cfg)
+with st.expander(
+    f"🎯 الروابط والقنوات المخصصة ({len(custom_targets)})", expanded=False
+):
+  with st.form("add_custom_target_form", clear_on_submit=True):
+    c_u, c_k, c_b = st.columns([2.5, 1.5, 1.0])
+    with c_u:
+      new_t_url = st.text_input(
+          "الرابط",
+          placeholder="https://www.youtube.com/@... أو رابط صفحة/موقع",
+          label_visibility="collapsed",
+      )
+    with c_k:
+      new_t_kw = st.text_input(
+          "كلمة (اختياري)",
+          placeholder="كلمة فلترة (اختياري)...",
+          label_visibility="collapsed",
+      )
+    with c_b:
+      add_t_btn = st.form_submit_button("➕ إضافة رابط")
+    if add_t_btn and new_t_url.strip():
+      custom_targets.append(
+          {"url": new_t_url.strip(), "keyword": new_t_kw.strip()}
+      )
+      save_custom_targets(custom_targets)
+      st.rerun()
 
-with col_target_exp:
-  with st.expander(
-      f"🎯 الروابط والقنوات المخصصة ({len(custom_targets)})", expanded=False
-  ):
-    with st.form("add_custom_target_form", clear_on_submit=True):
-      c_u, c_k, c_b = st.columns([2.2, 1.3, 0.9])
-      with c_u:
-        new_t_url = st.text_input(
-            "الرابط", placeholder="https://...", label_visibility="collapsed"
-        )
-      with c_k:
-        new_t_kw = st.text_input(
-            "كلمة (اختياري)",
-            placeholder="كلمة فلترة...",
-            label_visibility="collapsed",
-        )
-      with c_b:
-        add_t_btn = st.form_submit_button("➕ إضافة")
-      if add_t_btn and new_t_url.strip():
-        custom_targets.append(
-            {"url": new_t_url.strip(), "keyword": new_t_kw.strip()}
-        )
+  for idx, t_item in enumerate(list(custom_targets)):
+    tc1, tc2 = st.columns([5, 1])
+    with tc1:
+      kw_tag = f" ({t_item['keyword']})" if t_item.get("keyword") else ""
+      render_html(
+          f"<div style='font-size:0.84rem;color:#cbd5e1;direction:ltr;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 0;'>🔗 {html.escape(t_item['url'])}{html.escape(kw_tag)}</div>"
+      )
+    with tc2:
+      if st.button("❌ حذف", key=f"del_target_{idx}"):
+        custom_targets.pop(idx)
         save_custom_targets(custom_targets)
         st.rerun()
 
-    for idx, t_item in enumerate(list(custom_targets)):
-      tc1, tc2 = st.columns([4.5, 1])
-      with tc1:
-        kw_tag = f" ({t_item['keyword']})" if t_item.get("keyword") else ""
-        st.markdown(
-            f"<div style='font-size:0.82rem;color:#cbd5e1;direction:ltr;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>🔗 {html.escape(t_item['url'])}{html.escape(kw_tag)}</div>",
-            unsafe_allow_html=True,
-        )
-      with tc2:
-        if st.button("❌", key=f"del_target_{idx}"):
-          custom_targets.pop(idx)
-          save_custom_targets(custom_targets)
-          st.rerun()
-
 # =====================================================================
-# 12. لوحة أزرار الرصد (الشامل، الخاص بكل منصة، والمخصص) مع أزرار الإيقاف
+# 12. لوحة أزرار الرصد المتجاوبة (تلتف تلقائياً حسب عرض الشاشة)
 # =====================================================================
 SCAN_MODES = [
     ("all", "🚀 رصد الشامل", "btn-marker-all"),
@@ -2152,11 +2264,11 @@ triggered_mode = None
 
 for col_idx, (mode_key, mode_label, marker_cls) in enumerate(SCAN_MODES):
   with btn_cols[col_idx]:
-    st.markdown(f'<span class="{marker_cls}"></span>', unsafe_allow_html=True)
+    render_html(f'<span class="{marker_cls}"></span>')
     if st.button(mode_label, key=f"start_scan_{mode_key}"):
       clear_stop_scan()
       triggered_mode = mode_key
-    st.markdown('<span class="btn-marker-stop"></span>', unsafe_allow_html=True)
+    render_html('<span class="btn-marker-stop"></span>')
     if st.button("🛑 إيقاف", key=f"stop_scan_{mode_key}"):
       request_stop_scan()
 
@@ -2174,21 +2286,21 @@ def execute_interactive_scan(mode_key: str):
 
   def update_ui_progress(pct: float, status_msg: str):
     pct_int = max(5, min(100, int(pct * 100)))
-    radar_placeholder.markdown(
+    render_html(
         f"""
         <div class="radar-panel">
             <div class="radar-scanner"></div>
             <div style="flex:1;">
-                <div style="font-size:1.05rem;font-weight:800;color:#38bdf8;margin-bottom:4px;">
-                    📡 {html.escape(status_msg)}
+                <div style="font-size:1rem;font-weight:800;color:#38bdf8;margin-bottom:3px;">
+                    📡 {html.escape(clean_display_text(status_msg))}
                 </div>
-                <div style="font-size:0.85rem;color:#94a3b8;">
+                <div style="font-size:0.82rem;color:#94a3b8;">
                     مسح ذكي بزاوية 360° للمصادر القضائية والإعلامية... ({pct_int}%)
                 </div>
             </div>
         </div>
         """,
-        unsafe_allow_html=True,
+        target=radar_placeholder,
     )
     progress_placeholder.progress(pct_int / 100.0)
 
@@ -2257,25 +2369,25 @@ if triggered_mode:
 
 if time.time() - float(rt_state.get("last_done_ts", 0)) < 25:
   if rt_state.get("last_done_mode") == "stopped":
-    done_placeholder.markdown(
+    render_html(
         """
-        <div class="done-banner" style="background:rgba(127,29,29,0.82);border-color:#f87171;">
+        <div class="done-banner" style="background:rgba(127,29,29,0.85);border-color:#f87171;">
             <span>🛑 تم إيقاف عملية الرصد بطلب من المستخدم</span>
             <span>STOPPED</span>
         </div>
         """,
-        unsafe_allow_html=True,
+        target=done_placeholder,
     )
   elif rt_state.get("last_done_mode"):
     c_new = int(rt_state.get("last_done_count", 0))
-    done_placeholder.markdown(
+    render_html(
         f"""
         <div class="done-banner">
             <span>✨ تـم بنجاح / DONE — تم رصد وتحديث القاعدة ({c_new} منشور/خبر جديد)</span>
             <span>100% DONE ✅</span>
         </div>
         """,
-        unsafe_allow_html=True,
+        target=done_placeholder,
     )
 
 # =====================================================================
@@ -2306,8 +2418,7 @@ target_live = [
     a for a in all_articles if int(a.get("is_custom_target", 0)) == 1
 ]
 
-# شريط الإحصائيات السريع
-m_cols = st.columns(6)
+# شبكة الإحصائيات المتجاوبة بالكامل عبر CSS Grid
 metrics_data = [
     ("الكل (24 ساعة)", len(live_articles)),
     ("الصحف", len(press_live)),
@@ -2316,19 +2427,11 @@ metrics_data = [
     ("يوتيوب", len(yt_live)),
     ("الأرشيف", len(archive_articles)),
 ]
-for idx, (m_label, m_val) in enumerate(metrics_data):
-  with m_cols[idx]:
-    st.markdown(
-        f"""
-        <div class="metric-glass">
-            <div class="metric-num">{m_val}</div>
-            <div class="metric-lbl">{m_label}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+metrics_cards_html = "".join(
+    f'<div class="metric-glass"><div class="metric-num">{m_val}</div><div class="metric-lbl">{m_label}</div></div>'
+    for m_label, m_val in metrics_data
+)
+render_html(f'<div class="metrics-grid">{metrics_cards_html}</div>')
 
 
 def render_article_cards(
@@ -2336,9 +2439,8 @@ def render_article_cards(
     empty_msg: str = "لا توجد منشورات مرصودة حالياً في هذا القسم.",
 ):
   if not items_list:
-    st.markdown(
-        f"<div style='text-align:center;padding:32px;color:#64748b;background:rgba(15,23,42,0.5);border-radius:16px;border:1px dashed rgba(148,163,184,0.2);'>{empty_msg}</div>",
-        unsafe_allow_html=True,
+    render_html(
+        f"<div style='text-align:center;padding:30px;color:#64748b;background:rgba(15,23,42,0.5);border-radius:16px;border:1px dashed rgba(148,163,184,0.2);'>{html.escape(empty_msg)}</div>"
     )
     return
 
@@ -2350,47 +2452,53 @@ def render_article_cards(
       "أخرى": "plat-other",
   }
 
+  cards_buffer = []
   for item in items_list:
-    plat = item.get("platform", "الصحف")
+    plat = clean_display_text(item.get("platform") or "الصحف")
     css_cls = plat_css_map.get(plat, "plat-press")
-    title_safe = html.escape(item.get("title") or "")
-    summary_safe = html.escape(item.get("summary") or "")
-    source_safe = html.escape(item.get("source_name") or plat)
-    pub_date_safe = html.escape(item.get("pub_date") or "")
-    rel_time = format_relative_arabic(float(item.get("pub_timestamp", 0)))
-    category_safe = html.escape(item.get("category") or "شؤون قضائية")
-    url_safe = html.escape(item.get("url") or "#")
+    title_safe = html.escape(clean_display_text(item.get("title") or ""))
+    summary_safe = html.escape(clean_display_text(item.get("summary") or ""))
+    source_safe = html.escape(
+        clean_display_text(item.get("source_name") or plat)
+    )
+    pub_date_safe = html.escape(clean_display_text(item.get("pub_date") or ""))
+    rel_time = html.escape(
+        format_relative_arabic(float(item.get("pub_timestamp", 0)))
+    )
+    category_safe = html.escape(
+        clean_display_text(item.get("category") or "شؤون قضائية")
+    )
+    raw_url = str(item.get("url") or "#").strip()
+    url_safe = html.escape(raw_url, quote=True)
     target_tag = (
-        '<span class="badge-plat" style="background:rgba(217,119,6,0.2);color:#fcd34d;border-color:#f59e0b;">🎯 مخصص</span>'
+        '<span class="badge-target">🎯 مخصص</span>'
         if int(item.get("is_custom_target", 0)) == 1
         else ""
     )
 
-    st.markdown(
-        f"""
-        <div class="news-card {css_cls}">
-            <div class="news-meta">
-                <div>
-                    <span class="badge-plat">{html.escape(plat)}</span>
-                    {target_tag}
-                    <span style="margin-right:8px;font-weight:700;color:#e2e8f0;">{source_safe}</span>
-                    <span style="margin-right:8px;color:#64748b;">• {category_safe}</span>
-                </div>
-                <div style="direction:rtl;">
-                    🕒 <strong style="color:#38bdf8;">{rel_time}</strong> ({pub_date_safe})
-                </div>
-            </div>
-            <div class="news-title">{title_safe}</div>
-            <div class="news-summary">{summary_safe}</div>
-            <div>
-                <a class="news-link" href="{url_safe}" target="_blank" rel="noopener noreferrer">
-                    🔗 فتح المصدر الأصلي
-                </a>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    card_html = (
+        f'<div class="news-card {css_cls}">'
+        '<div class="news-meta">'
+        '<div class="news-meta-right">'
+        f'<span class="badge-plat">{html.escape(plat)}</span>'
+        f"{target_tag}"
+        f'<span style="font-weight:700;color:#e2e8f0;">{source_safe}</span>'
+        f'<span style="color:#64748b;">• {category_safe}</span>'
+        "</div>"
+        '<div style="direction:rtl;">'
+        f'🕒 <strong style="color:#38bdf8;">{rel_time}</strong> ({pub_date_safe})'
+        "</div>"
+        "</div>"
+        f'<div class="news-title">{title_safe}</div>'
+        f'<div class="news-summary">{summary_safe}</div>'
+        "<div>"
+        f'<a class="news-link" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 فتح المصدر الأصلي</a>'
+        "</div>"
+        "</div>"
     )
+    cards_buffer.append(card_html)
+
+  render_html("\n".join(cards_buffer))
 
 
 # =====================================================================
@@ -2473,14 +2581,10 @@ if cfg.get("auto_monitor", True):
         name="OnLoadAsyncCycle",
     ).start()
 
-  # تحديث تلقائي خفيف لواجهة المتصفح كل 60 ثانية لعرض المستجدات دون تدخل يدوي
-  st.markdown(
-      """
-      <script>
-      setTimeout(function() {
-          window.parent.location.reload();
-      }, 60000);
-      </script>
-      """,
-      unsafe_allow_html=True,
-  )
+  render_html("""
+    <script>
+    setTimeout(function() {
+        window.parent.location.reload();
+    }, 60000);
+    </script>
+    """)
