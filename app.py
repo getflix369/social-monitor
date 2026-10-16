@@ -41,7 +41,9 @@ except ImportError:
 # =====================================================================
 REPO_DB_FILE = "morocco_justice_hub.db"
 DB_FILE = os.path.join(tempfile.gettempdir(), "morocco_justice_hub_runtime.db")
+PERSISTENT_HOME_DB = os.path.join(os.path.expanduser("~"), ".morocco_justice_hub_persistent.db")
 ARCHIVE_JSON_FILE = "articles_archive.json"
+PERSISTENT_HOME_ARCHIVE_JSON = os.path.join(os.path.expanduser("~"), ".morocco_justice_archive_persistent.json")
 CREDENTIALS_FILE = "credentials.json"
 CUSTOM_TARGETS_FILE = "custom_targets.json"
 MONITOR_STATE_FILE = "monitor_state.json"
@@ -1176,7 +1178,8 @@ def belongs_to_custom_target(item: dict, target_info: dict) -> bool:
   handle = (target_info.get("handle") or "").strip()
 
   # 1) رفض قاطع لأي رابط على يوتيوب أو فيسبوك أو إكس يوجه إلى الصفحة الرئيسية للقناة/الصفحة بدلاً من الفيديو/المنشور بعينه
-  if item_plat in ("يوتيوب", "فيسبوك", "إكس") or t_plat in ("يوتيوب", "فيسبوك", "إكس"):
+  u_dom = urllib.parse.urlparse(u).netloc.lower()
+  if any(sd in u_dom for sd in ("youtube.com", "youtu.be", "facebook.com", "fb.com", "fb.watch", "x.com", "twitter.com")):
     check_plat = item_plat if item_plat in ("يوتيوب", "فيسبوك", "إكس") else t_plat
     if not is_direct_social_post_url(u, check_plat):
       return False
@@ -1879,9 +1882,16 @@ def load_custom_targets():
   return default_targets
 
 
+def _has_inappropriate_terms(title: str, snippet: str, url: str) -> bool:
+  combined = f"{clean_display_text(title)} {clean_display_text(snippet)} {str(url or '')}".lower()
+  return any(bad_w in combined for bad_w in BLOCKED_INAPPROPRIATE_TERMS)
+
+
 def purge_invalid_articles_from_db():
+  """تطهير الأخبار المخالفة فقط مع حماية الأرشيف التاريخي بالكامل من الحذف عند تحديث الكود أو تعديل الروابط المخصصة."""
   lock = get_db_lock()
   current_targets = load_custom_targets()
+  now_ts = time.time()
   with lock:
     removed_any = False
     try:
@@ -1890,16 +1900,27 @@ def purge_invalid_articles_from_db():
       conn.row_factory = sqlite3.Row
       c = conn.cursor()
       c.execute(
-          "SELECT id, title, summary, source_name, platform, raw_snippet, url, is_custom_target FROM articles"
+          "SELECT id, title, summary, source_name, platform, raw_snippet, url, is_custom_target, pub_timestamp, created_at FROM articles"
       )
       rows = c.fetchall()
       bad_ids = []
       for r in rows:
         d = dict(r)
-        is_tgt = bool(d.get("is_custom_target"))
         snip = f"{d.get('summary') or ''} {d.get('raw_snippet') or ''}"
+        u_str = d.get("url") or ""
+        t_str = d.get("title") or ""
+        if _has_inappropriate_terms(t_str, snip, u_str):
+          bad_ids.append((d["id"],))
+          continue
+        pub_t = float(d.get("pub_timestamp") or 0)
+        mon_t = float(d.get("created_at") or pub_t)
+        is_archived_item = ((now_ts - mon_t) >= 86400) or ((now_ts - pub_t) >= 86400 and abs(mon_t - pub_t) < 120)
+        # لا نحذف العناصر المحفوظة في الأرشيف إطلاقاً طالما أنها نظيفة
+        if is_archived_item:
+          continue
+        is_tgt = bool(d.get("is_custom_target"))
         if not is_strictly_judicial_and_clean(
-            d.get("title") or "", snip, d.get("url") or "", "", is_target=is_tgt
+            t_str, snip, u_str, "", is_target=is_tgt
         ):
           bad_ids.append((d["id"],))
         elif is_tgt and not belongs_to_any_custom_target(d, current_targets):
@@ -1912,41 +1933,34 @@ def purge_invalid_articles_from_db():
     except Exception:
       pass
 
-    if os.path.exists(ARCHIVE_JSON_FILE):
-      try:
-        with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
-          arch_data = json.load(f)
-        if isinstance(arch_data, list):
-          cleaned_arch = []
-          for item in arch_data:
-            if not isinstance(item, dict):
-              continue
-            is_tgt = bool(item.get("is_custom_target", 0))
-            if not is_strictly_judicial_and_clean(
-                item.get("title", ""),
-                f"{item.get('summary', '')} {item.get('raw_snippet', '')}",
-                item.get("url", ""),
-                "",
-                is_target=is_tgt,
-            ):
-              continue
-            if is_tgt and not belongs_to_any_custom_target(
-                item, current_targets
-            ):
-              continue
-            cleaned_arch.append(item)
-          if len(cleaned_arch) != len(arch_data):
-            with open(ARCHIVE_JSON_FILE, "w", encoding="utf-8") as f:
-              json.dump(cleaned_arch, f, ensure_ascii=False, indent=2)
-            removed_any = True
-      except Exception:
-        pass
+    for arch_path in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
+      if os.path.exists(arch_path):
+        try:
+          with open(arch_path, "r", encoding="utf-8") as f:
+            arch_data = json.load(f)
+          if isinstance(arch_data, list):
+            cleaned_arch = [
+                item for item in arch_data
+                if isinstance(item, dict)
+                and not _has_inappropriate_terms(
+                    item.get("title", ""),
+                    f"{item.get('summary', '')} {item.get('raw_snippet', '')}",
+                    item.get("url", ""),
+                )
+            ]
+            if len(cleaned_arch) != len(arch_data):
+              with open(arch_path, "w", encoding="utf-8") as f:
+                json.dump(cleaned_arch, f, ensure_ascii=False, indent=2)
+              removed_any = True
+        except Exception:
+          pass
 
     if removed_any and os.path.exists(DB_FILE):
-      try:
-        shutil.copyfile(DB_FILE, REPO_DB_FILE)
-      except Exception:
-        pass
+      for dst_db in (REPO_DB_FILE, PERSISTENT_HOME_DB):
+        try:
+          shutil.copyfile(DB_FILE, dst_db)
+        except Exception:
+          pass
 
 
 def load_telegram_sent_ledger() -> set:
@@ -1975,7 +1989,7 @@ def save_telegram_sent_ledger(ledger: set):
 
 
 def deduplicate_and_seed_telegram_ledger():
-  """إزالة أي أخبار مكررة من قاعدة البيانات والأرشيف مع الحفاظ على أقدم وقت رصد (created_at) لببقائها 24 ساعة ثم إحالتها للأرشيف، وتغذية سجل تلغرام."""
+  """إزالة أي أخبار مكررة من قاعدة البيانات والأرشيف مع الحفاظ على أقدم وقت رصد (created_at) وتغذية سجل تلغرام."""
   lock = get_db_lock()
   with lock:
     ledger = load_telegram_sent_ledger()
@@ -1985,13 +1999,12 @@ def deduplicate_and_seed_telegram_ledger():
       _ensure_schema_on_conn(conn)
       conn.row_factory = sqlite3.Row
       c = conn.cursor()
-      c.execute("SELECT * FROM articles ORDER BY created_at ASC, id ASC")
+      c.execute("SELECT * FROM articles ORDER BY created_at ASC, pub_timestamp ASC, id ASC")
       rows = [dict(r) for r in c.fetchall()]
       seen_keys = set()
       dup_ids = []
       for r in rows:
         item_keys = compute_article_dedup_keys(r.get("title", ""), r.get("url", ""))
-        # جميع الأخبار المرصودة سابقاً في القاعدة تُسجل في سجل تلغرام حتى لا يُعاد إرسالها عند تشغيل الرصد التلقائي
         if not item_keys.issubset(ledger):
           ledger.update(item_keys)
           ledger_changed = True
@@ -2008,50 +2021,83 @@ def deduplicate_and_seed_telegram_ledger():
     except Exception:
       pass
 
-    if os.path.exists(ARCHIVE_JSON_FILE):
-      try:
-        with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
-          arch_list = json.load(f)
-        if isinstance(arch_list, list):
-          # نرتب من الأقدم في الرصد إلى الأحدث للحفاظ على أول رصد، ثم نعيد الترتيب حسب النشر
-          arch_sorted = sorted(arch_list, key=lambda x: float(x.get("created_at") or x.get("pub_timestamp") or 0))
-          seen_arch_keys = set()
-          deduped_arch = []
-          for item in arch_sorted:
-            if not isinstance(item, dict):
-              continue
-            ik = compute_article_dedup_keys(item.get("title", ""), item.get("url", ""))
-            if not ik.issubset(ledger):
-              ledger.update(ik)
-              ledger_changed = True
-            if ik & seen_arch_keys:
-              continue
-            seen_arch_keys.update(ik)
-            item["telegram_sent"] = 1
-            deduped_arch.append(item)
-          deduped_arch.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
-          if len(deduped_arch) != len(arch_list):
-            with open(ARCHIVE_JSON_FILE, "w", encoding="utf-8") as f:
-              json.dump(deduped_arch, f, ensure_ascii=False, indent=2)
-      except Exception:
-        pass
-
     if ledger_changed or not os.path.exists(TELEGRAM_LEDGER_FILE):
       save_telegram_sent_ledger(ledger)
+
+
+def _merge_external_sqlite_into_runtime(src_db_path: str):
+  """دمج كافة السجلات المحفوظة في قاعدة بيانات خارجية (REPO_DB_FILE أو PERSISTENT_HOME_DB) داخل قاعدة التشغيل دون فقدان أي عنصر من الأرشيف."""
+  if not src_db_path or not os.path.exists(src_db_path) or os.path.getsize(src_db_path) == 0:
+    return
+  if os.path.abspath(src_db_path) == os.path.abspath(DB_FILE):
+    return
+  try:
+    src_conn = sqlite3.connect(src_db_path, timeout=15.0)
+    src_conn.row_factory = sqlite3.Row
+    sc = src_conn.cursor()
+    sc.execute("SELECT * FROM articles")
+    src_rows = [dict(r) for r in sc.fetchall()]
+    src_conn.close()
+  except Exception:
+    return
+
+  if not src_rows:
+    return
+
+  try:
+    dst_conn = _open_sqlite_conn()
+    _ensure_schema_on_conn(dst_conn)
+    dc = dst_conn.cursor()
+    for r in src_rows:
+      pub_ts = float(r.get("pub_timestamp") or (time.time() - 90000))
+      # إذا كان العنصر قديماً ولم يسجل له created_at، نستخدم pub_timestamp حتى يبقى في الأرشيف ولا يعود للنشط
+      c_at = float(r.get("created_at") or pub_ts)
+      if c_at <= 0:
+        c_at = pub_ts
+      dc.execute(
+          """
+          INSERT OR IGNORE INTO articles (
+              title, summary, source_name, platform, url,
+              pub_date, pub_timestamp, sentiment, category,
+              relevance_score, is_custom_target, raw_snippet,
+              image_url, created_at, telegram_sent
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """,
+          (
+              clean_display_text(r.get("title", "")),
+              clean_display_text(r.get("summary", "")),
+              clean_display_text(r.get("source_name", "")),
+              r.get("platform", "الصحف"),
+              r.get("url", ""),
+              r.get("pub_date", ""),
+              pub_ts,
+              r.get("sentiment", "محايد"),
+              r.get("category", "شؤون قضائية"),
+              int(r.get("relevance_score") or 85),
+              int(r.get("is_custom_target") or 0),
+              clean_display_text(r.get("raw_snippet", "")),
+              r.get("image_url", ""),
+              c_at,
+              1,
+          ),
+      )
+    dst_conn.commit()
+    dst_conn.close()
+  except Exception:
+    pass
 
 
 def init_db():
   lock = get_db_lock()
   with lock:
-    if (
-        not os.path.exists(DB_FILE)
-        and os.path.exists(REPO_DB_FILE)
-        and os.path.getsize(REPO_DB_FILE) > 0
-    ):
-      try:
-        shutil.copyfile(REPO_DB_FILE, DB_FILE)
-      except Exception:
-        pass
+    if not os.path.exists(DB_FILE):
+      for candidate_src in (PERSISTENT_HOME_DB, REPO_DB_FILE):
+        if os.path.exists(candidate_src) and os.path.getsize(candidate_src) > 0:
+          try:
+            shutil.copyfile(candidate_src, DB_FILE)
+            break
+          except Exception:
+            pass
 
     try:
       conn = _open_sqlite_conn()
@@ -2068,40 +2114,38 @@ def init_db():
         pass
     except Exception:
       pass
+
+    # دمج جميع قواعد البيانات وملفات الأرشيف الدائمة في كل مرة يتم فيها تشغيل أو تحديث الكود لضمان عدم ضياع الأرشيف أبداً
+    _merge_external_sqlite_into_runtime(REPO_DB_FILE)
+    _merge_external_sqlite_into_runtime(PERSISTENT_HOME_DB)
     restore_db_from_json_if_needed()
     purge_invalid_articles_from_db()
     deduplicate_and_seed_telegram_ledger()
+    sync_db_to_json()
 
 
 def sync_db_to_json(extra_items: list = None):
   lock = get_db_lock()
-  current_targets = load_custom_targets()
   with lock:
     merged_by_url = {}
-    if os.path.exists(ARCHIVE_JSON_FILE):
-      try:
-        with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
-          existing_json = json.load(f)
-        if isinstance(existing_json, list):
-          for item in existing_json:
-            if not isinstance(item, dict) or not item.get("url"):
-              continue
-            is_tgt = bool(item.get("is_custom_target", 0))
-            if not is_strictly_judicial_and_clean(
-                item.get("title", ""),
-                f"{item.get('summary', '')} {item.get('raw_snippet', '')}",
-                item.get("url", ""),
-                "",
-                is_target=is_tgt,
-            ):
-              continue
-            if is_tgt and not belongs_to_any_custom_target(
-                item, current_targets
-            ):
-              continue
-            merged_by_url[item["url"]] = item
-      except Exception:
-        pass
+    for json_src in (PERSISTENT_HOME_ARCHIVE_JSON, ARCHIVE_JSON_FILE):
+      if os.path.exists(json_src):
+        try:
+          with open(json_src, "r", encoding="utf-8") as f:
+            existing_json = json.load(f)
+          if isinstance(existing_json, list):
+            for item in existing_json:
+              if not isinstance(item, dict) or not item.get("url"):
+                continue
+              if _has_inappropriate_terms(
+                  item.get("title", ""),
+                  f"{item.get('summary', '')} {item.get('raw_snippet', '')}",
+                  item.get("url", ""),
+              ):
+                continue
+              merged_by_url[item["url"]] = item
+        except Exception:
+          pass
 
     if extra_items:
       for item in extra_items:
@@ -2120,7 +2164,7 @@ def sync_db_to_json(extra_items: list = None):
           "SELECT title, summary, source_name, platform, url, pub_date, "
           "pub_timestamp, sentiment, category, relevance_score, "
           "is_custom_target, raw_snippet, image_url, created_at "
-          "FROM articles ORDER BY pub_timestamp DESC LIMIT 1500"
+          "FROM articles ORDER BY pub_timestamp DESC LIMIT 2500"
       )
       for r in c.fetchall():
         d = dict(r)
@@ -2135,103 +2179,110 @@ def sync_db_to_json(extra_items: list = None):
           merged_by_url.values(),
           key=lambda x: float(x.get("pub_timestamp", 0)),
           reverse=True,
-      )[:1500]
-      try:
-        tmp_file = f"{ARCHIVE_JSON_FILE}.tmp"
-        with open(tmp_file, "w", encoding="utf-8") as f:
-          json.dump(sorted_rows, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_file, ARCHIVE_JSON_FILE)
-      except Exception:
-        pass
+      )[:2500]
+      for target_json in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
+        try:
+          tmp_file = f"{target_json}.tmp"
+          with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(sorted_rows, f, ensure_ascii=False, indent=2)
+          os.replace(tmp_file, target_json)
+        except Exception:
+          pass
 
     if os.path.exists(DB_FILE):
-      try:
-        shutil.copyfile(DB_FILE, REPO_DB_FILE)
-      except Exception:
-        pass
+      for target_db in (REPO_DB_FILE, PERSISTENT_HOME_DB):
+        try:
+          shutil.copyfile(DB_FILE, target_db)
+        except Exception:
+          pass
 
 
 def restore_db_from_json_if_needed():
-  if not os.path.exists(ARCHIVE_JSON_FILE):
-    return
+  """استعادة ودمج جميع عناصر الأرشيف من ملفات JSON الدائمة داخل SQLite في كل تشغيل (حتى لو لم تكن القاعدة فارغة) مع الحفاظ على تواريخ الرصد الأصلية."""
   lock = get_db_lock()
-  current_targets = load_custom_targets()
   with lock:
+    all_json_items = []
+    for arch_file in (PERSISTENT_HOME_ARCHIVE_JSON, ARCHIVE_JSON_FILE):
+      if os.path.exists(arch_file):
+        try:
+          with open(arch_file, "r", encoding="utf-8") as f:
+            items = json.load(f)
+          if isinstance(items, list):
+            all_json_items.extend(items)
+        except Exception:
+          pass
+
+    if not all_json_items:
+      return
+
     try:
       conn = _open_sqlite_conn()
       _ensure_schema_on_conn(conn)
       c = conn.cursor()
-      c.execute("SELECT COUNT(*) FROM articles")
-      count = c.fetchone()[0]
-      if count == 0:
-        with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
-          items = json.load(f)
-        if isinstance(items, list) and items:
-          for item in items:
-            try:
-              t_clean = clean_display_text(item.get("title", ""))
-              s_clean = clean_display_text(item.get("summary", ""))
-              plat = item.get("platform", "الصحف")
-              src = clean_display_text(item.get("source_name", "") or plat)
-              raw_s = clean_display_text(item.get("raw_snippet", ""))
-              u_str = item.get("url", "")
-              is_tgt = int(item.get("is_custom_target", 0))
-              if not is_strictly_judicial_and_clean(
+      for item in all_json_items:
+        if not isinstance(item, dict):
+          continue
+        try:
+          t_clean = clean_display_text(item.get("title", ""))
+          s_clean = clean_display_text(item.get("summary", ""))
+          plat = item.get("platform", "الصحف")
+          src = clean_display_text(item.get("source_name", "") or plat)
+          raw_s = clean_display_text(item.get("raw_snippet", ""))
+          u_str = item.get("url", "")
+          is_tgt = int(item.get("is_custom_target", 0))
+          if not t_clean or not u_str:
+            continue
+          if _has_inappropriate_terms(t_clean, f"{s_clean} {raw_s}", u_str):
+            continue
+
+          if is_summary_just_title(t_clean, s_clean):
+            s_clean = build_extractive_arabic_summary(
+                t_clean, raw_s, plat, src
+            )
+          pub_ts = float(item.get("pub_timestamp") or (time.time() - 90000))
+          # الحفاظ الصارم على وقت الرصد الأصلي، وإذا لم يكن مسجلاً نعتمد وقت النشر (pub_ts) وليس time.time() حتى لا يختفي الأرشيف!
+          orig_created = float(item.get("created_at") or 0)
+          if orig_created <= 0:
+            orig_created = pub_ts
+          pub_dt = item.get("pub_date", "")
+          if not pub_dt:
+            pub_dt = datetime.fromtimestamp(
+                pub_ts, tz=timezone.utc
+            ).strftime("%Y-%m-%d %H:%M")
+          img_u = item.get("image_url") or extract_thumbnail_for_item(
+              u_str, "", plat
+          )
+
+          c.execute(
+              """
+              INSERT OR IGNORE INTO articles (
+                  title, summary, source_name, platform, url,
+                  pub_date, pub_timestamp, sentiment, category,
+                  relevance_score, is_custom_target, raw_snippet,
+                  image_url, created_at, telegram_sent
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              """,
+              (
                   t_clean,
-                  f"{s_clean} {raw_s}",
+                  s_clean,
+                  src,
+                  plat,
                   u_str,
-                  "",
-                  is_target=bool(is_tgt),
-              ):
-                continue
-              if is_tgt and not belongs_to_any_custom_target(
-                  item, current_targets
-              ):
-                continue
-
-              if is_summary_just_title(t_clean, s_clean):
-                s_clean = build_extractive_arabic_summary(
-                    t_clean, raw_s, plat, src
-                )
-              pub_ts = float(item.get("pub_timestamp", time.time() - 3600))
-              pub_dt = item.get("pub_date", "")
-              if not pub_dt:
-                pub_dt = datetime.fromtimestamp(
-                    pub_ts, tz=timezone.utc
-                ).strftime("%Y-%m-%d %H:%M")
-              img_u = item.get("image_url") or extract_thumbnail_for_item(
-                  u_str, "", plat
-              )
-
-              c.execute(
-                  """
-                                INSERT OR IGNORE INTO articles (
-                                    title, summary, source_name, platform, url,
-                                    pub_date, pub_timestamp, sentiment, category,
-                                    relevance_score, is_custom_target, raw_snippet,
-                                    image_url, created_at
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """,
-                  (
-                      t_clean,
-                      s_clean,
-                      src,
-                      plat,
-                      u_str,
-                      pub_dt,
-                      pub_ts,
-                      item.get("sentiment", "محايد"),
-                      item.get("category", "شؤون قضائية"),
-                      int(item.get("relevance_score", 85)),
-                      is_tgt,
-                      raw_s,
-                      img_u,
-                      float(item.get("created_at", time.time())),
-                  ),
-              )
-            except Exception:
-              continue
-          conn.commit()
+                  pub_dt,
+                  pub_ts,
+                  item.get("sentiment", "محايد"),
+                  item.get("category", "شؤون قضائية"),
+                  int(item.get("relevance_score", 85)),
+                  is_tgt,
+                  raw_s,
+                  img_u,
+                  orig_created,
+                  1,
+              ),
+          )
+        except Exception:
+          continue
+      conn.commit()
       conn.close()
     except Exception:
       pass
@@ -2240,6 +2291,7 @@ def restore_db_from_json_if_needed():
 def fetch_articles_from_db():
   lock = get_db_lock()
   current_targets = load_custom_targets()
+  now_ts = time.time()
   with lock:
     db_rows = []
     try:
@@ -2248,22 +2300,26 @@ def fetch_articles_from_db():
       conn.row_factory = sqlite3.Row
       c = conn.cursor()
       c.execute(
-          "SELECT * FROM articles ORDER BY pub_timestamp DESC, id DESC LIMIT"
-          " 1500"
+          "SELECT * FROM articles ORDER BY pub_timestamp DESC, id DESC LIMIT 2500"
       )
       for r in c.fetchall():
         d = dict(r)
-        is_tgt = bool(d.get("is_custom_target", 0))
-        if not is_strictly_judicial_and_clean(
-            d.get("title", ""),
-            f"{d.get('summary', '')} {d.get('raw_snippet', '')}",
-            d.get("url", ""),
-            "",
-            is_target=is_tgt,
-        ):
+        t_str = d.get("title", "")
+        snip_str = f"{d.get('summary', '')} {d.get('raw_snippet', '')}"
+        u_str = d.get("url", "")
+        if _has_inappropriate_terms(t_str, snip_str, u_str):
           continue
-        if is_tgt and not belongs_to_any_custom_target(d, current_targets):
-          continue
+        pub_t = float(d.get("pub_timestamp") or 0)
+        mon_t = float(d.get("created_at") or pub_t)
+        is_archived = ((now_ts - mon_t) >= 86400) or ((now_ts - pub_t) >= 86400 and abs(mon_t - pub_t) < 120)
+        if not is_archived:
+          is_tgt = bool(d.get("is_custom_target", 0))
+          if not is_strictly_judicial_and_clean(
+              t_str, snip_str, u_str, "", is_target=is_tgt
+          ):
+            continue
+          if is_tgt and not belongs_to_any_custom_target(d, current_targets):
+            continue
         db_rows.append(d)
       conn.close()
     except Exception:
@@ -2280,34 +2336,28 @@ def fetch_articles_from_db():
         unique_rows.append(r)
       return unique_rows
 
-    if os.path.exists(ARCHIVE_JSON_FILE):
-      try:
-        with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
-          data = json.load(f)
-        if isinstance(data, list):
-          valid_data = []
-          for d in data:
-            if not isinstance(d, dict):
-              continue
-            is_tgt = bool(d.get("is_custom_target", 0))
-            if not is_strictly_judicial_and_clean(
-                d.get("title", ""),
-                f"{d.get('summary', '')} {d.get('raw_snippet', '')}",
-                d.get("url", ""),
-                "",
-                is_target=is_tgt,
-            ):
-              continue
-            if is_tgt and not belongs_to_any_custom_target(d, current_targets):
-              continue
-            valid_data.append(d)
-          return sorted(
-              valid_data,
-              key=lambda x: float(x.get("pub_timestamp", 0)),
-              reverse=True,
-          )
-      except Exception:
-        pass
+    for arch_file in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
+      if os.path.exists(arch_file):
+        try:
+          with open(arch_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+          if isinstance(data, list) and data:
+            valid_data = [
+                d for d in data
+                if isinstance(d, dict)
+                and not _has_inappropriate_terms(
+                    d.get("title", ""),
+                    f"{d.get('summary', '')} {d.get('raw_snippet', '')}",
+                    d.get("url", ""),
+                )
+            ]
+            return sorted(
+                valid_data,
+                key=lambda x: float(x.get("pub_timestamp", 0)),
+                reverse=True,
+            )
+        except Exception:
+          pass
     return []
 
 
@@ -4545,6 +4595,52 @@ def _extract_post_permalink_from_fb_box(
   return ""
 
 
+def _fetch_fb_embed_plugin_content(post_u: str) -> tuple:
+  """استخراج النص الكامل والصورة والتاريخ لأي منشور أو فيديو فيسبوك عبر نقطة التضمين الرسمية (plugins/post.php و plugins/video.php) التي لا تطلب تسجيل الدخول على السحابة."""
+  u_clean = clean_social_post_url(post_u)
+  if not u_clean:
+    return "", "", ""
+  is_vid = any(x in u_clean.lower() for x in ("/videos/", "/watch", "/reel/", "fb.watch"))
+  endpoint = "https://www.facebook.com/plugins/video.php" if is_vid else "https://www.facebook.com/plugins/post.php"
+  embed_url = f"{endpoint}?href={urllib.parse.quote(u_clean)}&show_text=true&width=500"
+  hdr = dict(DEFAULT_HEADERS)
+  hdr.update({
+      "Referer": "https://www.facebook.com/",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  })
+  try:
+    r = requests.get(embed_url, headers=hdr, timeout=6)
+    if r.status_code != 200 or not r.text:
+      return "", "", ""
+    doc = _unwrap_facebook_bigpipe_html(r.text)
+    if BeautifulSoup is None:
+      return "", "", ""
+    soup = BeautifulSoup(doc, "html.parser")
+    texts = []
+    for sel in ["div._5pbx", "div.userContent", "div[data-ad-preview='message']", "p"]:
+      for el in soup.select(sel):
+        t = clean_display_text(el.get_text(" ", strip=True))
+        if len(t) >= 12 and t not in texts:
+          texts.append(t)
+    body = " ".join(texts[:3]).strip()
+    body = re.sub(r"\b(?:عرض المزيد|See More|See more|عرض الترجمة)\b", "", body, flags=re.IGNORECASE).strip()
+
+    img = ""
+    for img_el in soup.select("img[src]"):
+      s_img = html.unescape(img_el.get("src", "").strip())
+      if s_img.startswith("http") and "scontent" in s_img and "p50x50" not in s_img and "s50x50" not in s_img:
+        img = s_img
+        break
+
+    utime = ""
+    ut_el = soup.select_one("abbr[data-utime], span[data-utime]")
+    if ut_el:
+      utime = str(ut_el.get("data-utime") or "").strip()
+    return _strip_fb_sidebar_noise(body), img, utime
+  except Exception:
+    return "", "", ""
+
+
 def _scrape_facebook_plugin_timeline(
     canonical_fb_url: str,
     t_info: dict,
@@ -4554,19 +4650,18 @@ def _scrape_facebook_plugin_timeline(
     handle: str = "",
     page_id: str = "",
 ) -> list:
-  """استخراج المنشورات الفورية غير المؤرشفة مباشرة من أداة الخط الزمني لفيسبوك (plugins/page.php) بعد فك تعليقات BigPipe."""
+  """استخراج المنشورات الفورية غير المؤرشفة مباشرة من أداة الخط الزمني لفيسبوك (plugins/page.php) بعد فك تعليقات BigPipe ودعم المعرف الرقمي المباشر."""
   posts = []
   seen_post_urls = set()
 
-  candidate_hrefs = [canonical_fb_url]
+  candidate_hrefs = []
   if handle and not handle.startswith("fb_") and not handle.isdigit():
-    u_h = f"https://www.facebook.com/{handle}"
-    if u_h not in candidate_hrefs:
-      candidate_hrefs.append(u_h)
+    candidate_hrefs.append(f"https://www.facebook.com/{handle}")
   if page_id and page_id.isdigit():
-    u_pid = f"https://www.facebook.com/profile.php?id={page_id}"
-    if u_pid not in candidate_hrefs:
-      candidate_hrefs.append(u_pid)
+    # أداة plugins/page.php تقبل المسار الرقمي المباشر facebook.com/{page_id} بينما ترفض profile.php?id=
+    candidate_hrefs.append(f"https://www.facebook.com/{page_id}")
+  if canonical_fb_url and canonical_fb_url not in candidate_hrefs:
+    candidate_hrefs.append(canonical_fb_url)
 
   iframe_headers = dict(DEFAULT_HEADERS)
   iframe_headers.update({
@@ -4577,7 +4672,7 @@ def _scrape_facebook_plugin_timeline(
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   })
 
-  for target_href in candidate_hrefs[:2]:
+  for target_href in candidate_hrefs[:3]:
     plugin_url = (
         "https://www.facebook.com/plugins/page.php?"
         f"href={urllib.parse.quote(target_href)}"
@@ -4586,21 +4681,23 @@ def _scrape_facebook_plugin_timeline(
     )
     for hdr in (iframe_headers, FB_CRAWLER_HEADERS):
       try:
-        r = requests.get(plugin_url, headers=hdr, timeout=10)
+        r = requests.get(plugin_url, headers=hdr, cookies={"locale": "ar_AR"}, timeout=9)
         if r.status_code != 200 or not r.text:
           continue
 
         unwrapped_doc = _unwrap_facebook_bigpipe_html(r.text)
+        if not page_id:
+          m_pid_doc = re.search(r'"(?:page_id|content_owner_id_new)"\s*:\s*"?(\d{6,})"?', unwrapped_doc)
+          if m_pid_doc:
+            page_id = m_pid_doc.group(1)
 
         if BeautifulSoup is not None:
           soup = BeautifulSoup(unwrapped_doc, "html.parser")
-          post_containers = soup.select("div._5pcr, div.userContentWrapper")
-          if not post_containers:
-            post_containers = soup.select(
-                "div[data-ft*='top_level_post_id'], div[role='article']"
-            )
+          post_containers = soup.select(
+              "div._5pcr, div.userContentWrapper, div._4-u2._5v3q, div._4-u2._5pat, div[data-ft*='top_level_post_id'], div[data-ft*='tl_objid'], div[data-ft*='mf_story_key'], div[role='article']"
+          )
 
-          for idx, box in enumerate(post_containers[:15]):
+          for idx, box in enumerate(post_containers[:18]):
             post_link = _extract_post_permalink_from_fb_box(
                 box, target_href, handle=handle, page_id=page_id
             )
@@ -4638,9 +4735,16 @@ def _scrape_facebook_plugin_timeline(
             ).strip()
 
             if not post_text or len(post_text) < 12:
+              emb_txt, emb_img, _ = _fetch_fb_embed_plugin_content(post_link)
+              if emb_txt:
+                post_text = emb_txt
+              if emb_img and not page_avatar:
+                page_avatar = emb_img
+
+            if not post_text or len(post_text) < 12:
               continue
             if not is_strictly_judicial_and_clean(
-                post_text, post_text, post_link, t_kw, is_target=True
+                post_text, post_text, post_link, t_kw, is_target=bool(t_info)
             ):
               continue
 
@@ -4667,7 +4771,7 @@ def _scrape_facebook_plugin_timeline(
                 str(raw_utime),
                 fallback_offset_sec=1800 + (idx * 600),
             )
-            title_short = post_text[:110] + ("..." if len(post_text) > 110 else "")
+            title_short = post_text[:115] + ("..." if len(post_text) > 115 else "")
             entry = {
                 "title": title_short,
                 "url": post_link,
@@ -4678,7 +4782,8 @@ def _scrape_facebook_plugin_timeline(
                 "pub_timestamp": pub_ts,
                 "image_url": post_img,
             }
-            _tag_custom_target_item(entry, t_info, source_badge)
+            if t_info:
+              _tag_custom_target_item(entry, t_info, source_badge)
             seen_post_urls.add(post_link)
             posts.append(entry)
 
@@ -4733,15 +4838,27 @@ def _verify_and_enrich_fb_post_url(
     page_id: str = "",
     page_official_name: str = "",
 ) -> tuple:
-  """فحص رابط المنشور عبر ترويسة facebookexternalhit مع التعامل الذكي مع جدار تسجيل الدخول على السحابة دون إسقاط المنشور."""
+  """فحص رابط المنشور عبر ترويسات المعاينة + نقطة التضمين الرسمية (plugins/post.php) للتغلب على جدار تسجيل الدخول على السحابة."""
   try:
-    rp = requests.get(post_u, headers=FB_CRAWLER_HEADERS, timeout=6)
-    if rp.status_code != 200 or not rp.text:
+    p_html = ""
+    rp = None
+    for bot_hdr in FB_PREVIEW_BOT_HEADERS[:2]:
+      try:
+        r_try = requests.get(post_u, headers=bot_hdr, timeout=5)
+        if r_try.status_code == 200 and r_try.text:
+          rp = r_try
+          p_html = r_try.text[:45000]
+          if "og:description" in p_html or "og:title" in p_html:
+            break
+      except Exception:
+        pass
+
+    if not p_html:
+      emb_body, emb_img, _ = _fetch_fb_embed_plugin_content(post_u)
       is_owned = _is_fb_post_owned_by_target(
           post_u, handle=handle, page_id=page_id, page_official_name=page_official_name
       )
-      return is_owned, "", page_avatar, post_u
-    p_html = rp.text[:45000]
+      return is_owned, emb_body, emb_img or page_avatar, post_u
 
     post_title_og = ""
     for t_pat in [
@@ -4754,7 +4871,6 @@ def _verify_and_enrich_fb_post_url(
         post_title_og = _strip_fb_sidebar_noise(m_t.group(1))
         break
 
-    # نرفض فقط الروابط المعطوبة فعلياً (Page Not Found)، أما جدار تسجيل الدخول فيعني أن الرابط سليم ولكن فيسبوك يطلب الدخول من السيرفر
     not_found_titles = [
         "page not found",
         "الصفحة غير موجودة",
@@ -4763,7 +4879,7 @@ def _verify_and_enrich_fb_post_url(
       return False, "", "", post_u
 
     is_login_wall = bool(
-        (rp.url and "login" in rp.url.lower())
+        (rp is not None and rp.url and "login" in rp.url.lower())
         or (
             post_title_og
             and any(
@@ -4781,10 +4897,12 @@ def _verify_and_enrich_fb_post_url(
         )
     )
     if is_login_wall:
+      # عند ظهور جدار تسجيل الدخول على السيرفر، نستعين بنقطة التضمين الرسمية plugins/post.php لاستخراج متن المنشور وصورته!
+      emb_body, emb_img, _ = _fetch_fb_embed_plugin_content(post_u)
       is_owned = _is_fb_post_owned_by_target(
           post_u, handle=handle, page_id=page_id, page_official_name=page_official_name
       )
-      return is_owned, "", page_avatar, post_u
+      return is_owned, emb_body, emb_img or page_avatar, post_u
 
     m_og_u = re.search(
         r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
@@ -4840,6 +4958,13 @@ def _verify_and_enrich_fb_post_url(
         ]
     ):
       final_body = ""
+
+    if not final_body or len(final_body) < 15:
+      emb_body, emb_img, _ = _fetch_fb_embed_plugin_content(resolved_u)
+      if emb_body:
+        final_body = emb_body
+      if emb_img and post_img == page_avatar:
+        post_img = emb_img
 
     return True, final_body, post_img, resolved_u
   except Exception:
@@ -5744,6 +5869,39 @@ def _scrape_social_custom_target(
       seen_target_urls.add(raw_entry_u)
       _tag_custom_target_item(entry, t_info, source_badge)
       all_target_posts.append(entry)
+
+  # 5) إذا حجب فيسبوك ومحركات البحث روابط pfbid المباشرة على خادم السحابة، نفحص خلاصات الأخبار الحية المقيدة حصرياً باسم الصفحة أو معرفها لاستخراج المنشورات والتصريحات الصادرة عنها
+  if not all_target_posts and (page_official_name or (handle and not handle.startswith("fb_"))):
+    ident_name = page_official_name or handle
+    gnews_target_q = f'"{ident_name}" {t_kw} when:{when_tag}'.strip()
+    gnews_t_url = (
+        "https://news.google.com/rss/search?q="
+        f"{urllib.parse.quote(gnews_target_q)}&hl=ar&gl=MA&ceid=MA:ar"
+    )
+    try:
+      r_gt = requests.get(gnews_t_url, headers=DEFAULT_HEADERS, timeout=8)
+      if r_gt.status_code == 200:
+        for g_ent in parse_rss_xml(
+            r_gt.content,
+            platform,
+            default_source=source_badge,
+            fallback_offset=1800,
+            max_age_sec=0,
+        ):
+          comb_g = normalize_arabic_for_dedup(f"{g_ent.get('title', '')} {g_ent.get('raw_snippet', '')}")
+          ident_norm = normalize_arabic_for_dedup(ident_name)
+          if ident_norm and len(ident_norm) >= 4 and ident_norm not in comb_g:
+            continue
+          if not is_strictly_judicial_and_clean(
+              g_ent["title"], g_ent["raw_snippet"], g_ent["url"], t_kw, is_target=True
+          ):
+            continue
+          if not g_ent.get("image_url") and page_avatar:
+            g_ent["image_url"] = page_avatar
+          _tag_custom_target_item(g_ent, t_info, source_badge)
+          all_target_posts.append(g_ent)
+    except Exception:
+      pass
 
   all_target_posts.sort(
       key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
@@ -7055,33 +7213,155 @@ div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseB
     background: rgba(56, 189, 248, 0.3);
 }
 
-div[data-baseweb="tab-list"] {
-    gap: 6px !important;
-    background: rgba(15, 23, 42, 0.78) !important;
-    padding: 6px !important;
+/* تصميم زجاجي فاخر لقسم وشريط 🎯 الروابط والقنوات المخصصة (Expander) */
+div[data-testid="stExpander"],
+details[data-testid="stExpander"] {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.78) 0%, rgba(30, 41, 59, 0.58) 100%) !important;
+    backdrop-filter: blur(22px) saturate(165%) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(165%) !important;
+    border: 1px solid rgba(251, 191, 36, 0.42) !important;
+    border-radius: 18px !important;
+    margin: 8px 0 14px 0 !important;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.16) !important;
+    overflow: hidden !important;
+}
+
+div[data-testid="stExpander"] summary,
+details[data-testid="stExpander"] > summary,
+div[data-testid="stExpander"] [ data-testid="stExpanderHeader"] {
+    background: linear-gradient(90deg, rgba(217, 119, 6, 0.22) 0%, rgba(15, 23, 42, 0.65) 100%) !important;
+    padding: 12px 18px !important;
+    border-radius: 17px !important;
+    color: #fef3c7 !important;
+    font-family: 'Cairo', sans-serif !important;
+    font-weight: 900 !important;
+    font-size: 0.98rem !important;
+    direction: rtl !important;
+    text-align: right !important;
+    transition: all 0.2s ease !important;
+}
+
+div[data-testid="stExpander"] summary:hover,
+details[data-testid="stExpander"] > summary:hover {
+    background: linear-gradient(90deg, rgba(245, 158, 11, 0.32) 0%, rgba(30, 41, 59, 0.78) 100%) !important;
+    color: #ffffff !important;
+}
+
+div[data-testid="stExpander"] summary *,
+details[data-testid="stExpander"] > summary * {
+    color: #fde68a !important;
+    font-weight: 900 !important;
+    font-size: 0.96rem !important;
+}
+
+div[data-testid="stExpanderDetails"] {
+    padding: 12px 16px 16px 16px !important;
+    background: rgba(9, 13, 22, 0.42) !important;
+    border-top: 1px solid rgba(251, 191, 36, 0.22) !important;
+}
+
+div[data-testid="stForm"] {
+    background: rgba(15, 23, 42, 0.62) !important;
+    border: 1px solid rgba(56, 189, 248, 0.28) !important;
     border-radius: 14px !important;
-    border: 1px solid rgba(148, 163, 184, 0.2) !important;
+    padding: 12px 14px !important;
+    margin-bottom: 10px !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.target-glass-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.68) 0%, rgba(15, 23, 42, 0.82) 100%);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(148, 163, 184, 0.26);
+    border-right: 4px solid #f59e0b;
+    border-radius: 12px;
+    padding: 8px 14px;
+    margin-bottom: 6px;
+    direction: rtl !important;
+    text-align: right !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.target-plat-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(245, 158, 11, 0.18);
+    border: 1px solid rgba(251, 191, 36, 0.45);
+    color: #fde68a;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.target-url-pill {
+    font-size: 0.84rem;
+    color: #e2e8f0;
+    direction: ltr;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 700;
+    max-width: 460px;
+}
+
+/* تصميم زجاجي احترافي لشريط التبويبات وقائمة عرض النتائج حسب المنصة (st.tabs) */
+div[data-baseweb="tab-list"] {
+    gap: 8px !important;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.84) 0%, rgba(9, 13, 22, 0.92) 100%) !important;
+    backdrop-filter: blur(22px) saturate(170%) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(170%) !important;
+    padding: 8px 10px !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(56, 189, 248, 0.32) !important;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42), inset 0 1px 1px rgba(255, 255, 255, 0.14) !important;
     overflow-x: auto !important;
     flex-wrap: nowrap !important;
     scrollbar-width: thin;
     direction: rtl !important;
+    margin-bottom: 12px !important;
+}
+
+div[data-baseweb="tab-highlight"],
+div[data-baseweb="tab-border"] {
+    display: none !important;
 }
 
 button[data-baseweb="tab"] {
-    background: transparent !important;
-    color: #94a3b8 !important;
-    border-radius: 10px !important;
-    padding: 7px 13px !important;
+    background: rgba(30, 41, 59, 0.52) !important;
+    border: 1px solid rgba(148, 163, 184, 0.24) !important;
+    color: #cbd5e1 !important;
+    border-radius: 12px !important;
+    padding: 9px 15px !important;
     font-family: 'Cairo', sans-serif !important;
     font-weight: 800 !important;
-    font-size: clamp(0.78rem, 1.4vw, 0.9rem) !important;
+    font-size: clamp(0.8rem, 1.35vw, 0.92rem) !important;
     white-space: nowrap !important;
     flex-shrink: 0 !important;
+    transition: all 0.22s ease !important;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22) !important;
+}
+
+button[data-baseweb="tab"]:hover {
+    background: rgba(51, 65, 85, 0.72) !important;
+    border-color: rgba(56, 189, 248, 0.55) !important;
+    color: #ffffff !important;
+    transform: translateY(-2px) !important;
 }
 
 button[data-baseweb="tab"][aria-selected="true"] {
-    background: linear-gradient(135deg, #0284c7 0%, #1e40af 100%) !important;
+    background: linear-gradient(135deg, rgba(2, 132, 199, 0.88) 0%, rgba(37, 99, 235, 0.92) 100%) !important;
+    border: 1.5px solid rgba(125, 211, 252, 0.9) !important;
     color: #ffffff !important;
+    box-shadow: 0 6px 20px rgba(2, 132, 199, 0.48), inset 0 1px 1px rgba(255, 255, 255, 0.35) !important;
+    transform: translateY(-1px) !important;
 }
 
 div[data-baseweb="input"] > div,
@@ -7250,24 +7530,29 @@ with col_period:
     save_credentials(cfg)
 
 with st.expander(
-    f"🎯 الروابط والقنوات المخصصة ({len(custom_targets)})", expanded=False
+    f"🎯 إدارة الروابط والقنوات والصفحات المخصصة ({len(custom_targets)} مصدر مضاف)", expanded=False
 ):
+  render_html(
+      "<div style='font-size:0.84rem;color:#cbd5e1;margin-bottom:8px;direction:rtl;text-align:right;'>"
+      "أضف رابط أي صفحة فيسبوك أو قناة يوتيوب أو حساب إكس أو موقع إخباري (أو اكتب اسم القناة/الصفحة مباشرة) لرصد أحدث منشوراتها وفيديوهاتها بدقة:"
+      "</div>"
+  )
   with st.form("add_custom_target_form", clear_on_submit=True):
-    c_u, c_k, c_b = st.columns([2.5, 1.5, 1.0])
+    c_u, c_k, c_b = st.columns([2.6, 1.4, 0.9])
     with c_u:
       new_t_url = st.text_input(
           "الرابط",
-          placeholder="رابط قناة/صفحة (يوتيوب/فيسبوك/إكس) أو اكتب اسم القناة أو الصفحة أو صاحبها مباشرة...",
+          placeholder="🔗 رابط صفحة فيسبوك / قناة يوتيوب / حساب إكس أو اسم القناة/الصفحة...",
           label_visibility="collapsed",
       )
     with c_k:
       new_t_kw = st.text_input(
           "كلمة (اختياري)",
-          placeholder="كلمة فلترة داخل القناة/الصفحة (اختياري)...",
+          placeholder="🔍 كلمة فلترة داخل الصفحة (اختياري)...",
           label_visibility="collapsed",
       )
     with c_b:
-      add_t_btn = st.form_submit_button("➕ إضافة رابط")
+      add_t_btn = st.form_submit_button("➕ إضافة المصدر")
     if add_t_btn and new_t_url.strip():
       custom_targets.append(
           {"url": new_t_url.strip(), "keyword": new_t_kw.strip()}
@@ -7275,15 +7560,39 @@ with st.expander(
       save_custom_targets(custom_targets)
       st.rerun()
 
+  plat_icon_map = {
+      "يوتيوب": "🟥 قناة يوتيوب",
+      "فيسبوك": "🟦 صفحة فيسبوك",
+      "إكس": "⬛ حساب إكس",
+      "الصحف": "📰 موقع إخباري",
+      "أخرى": "🟪 منصة رقمية",
+      "شامل": "🎯 اسم مخصص",
+  }
   for idx, t_item in enumerate(list(custom_targets)):
-    tc1, tc2 = st.columns([5, 1])
+    tc1, tc2 = st.columns([5.2, 0.9])
+    t_parsed = parse_custom_target_identity(t_item.get("url", ""))
+    p_badge = plat_icon_map.get(t_parsed.get("platform", "شامل"), "🎯 مصدر مخصص")
+    disp_name = t_parsed.get("display_label") or t_item.get("url", "")
+    kw_chip = (
+        f"<span style='background:rgba(56,189,248,0.18);border:1px solid rgba(56,189,248,0.4);color:#7dd3fc;padding:2px 8px;border-radius:999px;font-size:0.73rem;font-weight:800;'>🔍 {html.escape(t_item['keyword'])}</span>"
+        if t_item.get("keyword")
+        else ""
+    )
     with tc1:
-      kw_tag = f" ({t_item['keyword']})" if t_item.get("keyword") else ""
       render_html(
-          f"<div style='font-size:0.84rem;color:#cbd5e1;direction:ltr;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 0;'>🔗 {html.escape(t_item['url'])}{html.escape(kw_tag)}</div>"
+          f"""
+          <div class="target-glass-item" dir="rtl">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;direction:rtl;">
+                  <span class="target-plat-chip">{p_badge}</span>
+                  <span style="font-weight:900;color:#f8fafc;font-size:0.88rem;">{html.escape(disp_name)}</span>
+                  {kw_chip}
+              </div>
+              <div class="target-url-pill" title="{html.escape(t_item['url'])}">🔗 {html.escape(t_item['url'])}</div>
+          </div>
+          """
       )
     with tc2:
-      if st.button("❌ حذف", key=f"del_target_{idx}"):
+      if st.button("🗑️ حذف", key=f"del_target_{idx}"):
         custom_targets.pop(idx)
         save_custom_targets(custom_targets)
         st.rerun()
@@ -7507,7 +7816,9 @@ archive_articles = []
 for a in all_articles:
   pub_t = float(a.get("pub_timestamp", 0))
   mon_t = float(a.get("created_at") or pub_t)
-  # يبقى الخبر المرصود في الواجهة النشطة لمدة 24 ساعة من وقت رصده الأول (created_at)، وبمجرد مرور 24 ساعة يُحال تلقائياً إلى الأرشيف ولا يُعاد رصده مرة أخرى
+  if mon_t <= 0:
+    mon_t = pub_t
+  # يبقى الخبر المرصود في الواجهة النشطة لمدة 24 ساعة من وقت رصده الأول (created_at)، وبمجرد مرور 24 ساعة يُحال تلقائياً إلى الأرشيف الدائم
   is_monitored_within_24h = (now_ts - mon_t) < 86400
   if is_monitored_within_24h:
     live_articles.append(a)
@@ -7532,12 +7843,13 @@ target_live = [
 ]
 
 metrics_data = [
-    ("الكل (النشط)", len(live_articles)),
-    ("الصحف", len(press_live)),
-    ("فيسبوك", len(fb_live)),
-    ("إكس", len(x_live)),
-    ("يوتيوب", len(yt_live)),
-    ("الأرشيف", len(archive_articles)),
+    ("🌐 الكل (النشط)", len(live_articles)),
+    ("📰 الصحف", len(press_live)),
+    ("🟦 فيسبوك", len(fb_live)),
+    ("⬛ إكس", len(x_live)),
+    ("🟥 يوتيوب", len(yt_live)),
+    ("🎯 المخصص", len(target_live)),
+    ("🗄️ الأرشيف", len(archive_articles)),
 ]
 metrics_cards_html = "".join(
     f'<div class="metric-glass" dir="rtl"><div class="metric-num">{m_val}</div><div class="metric-lbl">{m_label}</div></div>'
@@ -7665,14 +7977,14 @@ def render_article_cards(
 # 18. التبويبات الرئيسية (بأسماء مختصرة من كلمة واحدة)
 # =====================================================================
 tabs = st.tabs([
-    f"الكل ({len(live_articles)})",
-    f"الصحف ({len(press_live)})",
-    f"فيسبوك ({len(fb_live)})",
-    f"إكس ({len(x_live)})",
-    f"يوتيوب ({len(yt_live)})",
-    f"أخرى ({len(other_live)})",
-    f"المخصص ({len(target_live)})",
-    f"الأرشيف ({len(archive_articles)})",
+    f"🌐 الكل ({len(live_articles)})",
+    f"📰 الصحف ({len(press_live)})",
+    f"🟦 فيسبوك ({len(fb_live)})",
+    f"⬛ إكس ({len(x_live)})",
+    f"🟥 يوتيوب ({len(yt_live)})",
+    f"🟪 أخرى ({len(other_live)})",
+    f"🎯 المخصص ({len(target_live)})",
+    f"🗄️ الأرشيف ({len(archive_articles)})",
 ])
 
 with tabs[0]:
