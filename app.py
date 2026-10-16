@@ -45,6 +45,7 @@ ARCHIVE_JSON_FILE = "articles_archive.json"
 CREDENTIALS_FILE = "credentials.json"
 CUSTOM_TARGETS_FILE = "custom_targets.json"
 MONITOR_STATE_FILE = "monitor_state.json"
+TELEGRAM_LEDGER_FILE = "telegram_sent_ledger.json"
 
 DEFAULT_TG_TOKEN = "8806182263:AAFw5HbBup_TRif3FHvZP0QFYj0YPI4mb6c"
 DEFAULT_TG_CHAT_ID = "1357905784"
@@ -420,7 +421,91 @@ def clean_display_text(val: str) -> str:
 
 
 def strip_internal_url_fragments(url: str) -> str:
-  return re.sub(r"#(?:plat|v3target|v2target|target)=[^\s#]*", "", str(url or "").strip())
+  return re.sub(r"#(?:plat|v4target|v3target|v2target|target)=[^\s#]*", "", str(url or "").strip())
+
+
+def normalize_arabic_for_dedup(text: str) -> str:
+  """تطبيع النص العربي بدقة عالية لكشف الأخبار والمنشورات المكررة حتى مع اختلاف التشكيل أو علامات الترقيم."""
+  if not text:
+    return ""
+  t = clean_display_text(text).lower()
+  t = re.sub(r"https?://\S+", " ", t)
+  t = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", t)
+  t = re.sub(r"[أإآٱ]", "ا", t)
+  t = re.sub(r"ة", "ه", t)
+  t = re.sub(r"ى", "ي", t)
+  t = re.sub(r"ؤ", "و", t)
+  t = re.sub(r"ئ", "ي", t)
+  t = re.sub(r"[^\u0600-\u06FFa-z0-9\s]", " ", t)
+  t = re.sub(r"\s+", " ", t).strip()
+  return t
+
+
+def extract_canonical_post_or_video_id(url: str) -> str:
+  """استخراج المعرف الفريد للفيديو أو المنشور (YouTube / Facebook / X) لمنع تكرار نفس المنشور بصيغ روابط مختلفة."""
+  u = clean_social_post_url(url)
+  if not u:
+    return ""
+  m_yt = re.search(
+      r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})",
+      u,
+  )
+  if m_yt:
+    return f"yt:{m_yt.group(1)}"
+
+  m_x = re.search(r"(?:x\.com|twitter\.com)/[^/]+/status/(\d{10,22})", u, re.IGNORECASE)
+  if m_x:
+    return f"x:{m_x.group(1)}"
+
+  if "facebook.com" in u.lower() or "fb.watch" in u.lower():
+    parsed = urllib.parse.urlparse(u)
+    qs = urllib.parse.parse_qs(parsed.query)
+    for k in ("story_fbid", "fbid", "v"):
+      if qs.get(k) and len(qs[k][0].strip()) >= 6:
+        return f"fb:{qs[k][0].strip()}"
+    parts = [p.strip() for p in urllib.parse.unquote(parsed.path).strip("/").split("/") if p.strip()]
+    for idx, seg in enumerate(parts):
+      if seg.lower() in ("posts", "videos", "reel", "reels", "photos", "permalink") and idx + 1 < len(parts):
+        tail = parts[-1].strip()
+        if tail.startswith("pfbid") or (tail.isdigit() and len(tail) >= 7):
+          return f"fb:{tail}"
+  return ""
+
+
+def canonicalize_url_for_dedup(url: str) -> str:
+  """توحيد الرابط الأساسي بدون وسوم داخلية أو معاملات تتبع لضمان عدم جلب أو إرسال نفس الخبر مرتين."""
+  u = clean_social_post_url(url)
+  if not u:
+    return ""
+  try:
+    p = urllib.parse.urlparse(u)
+    netloc = p.netloc.lower().replace("www.", "").replace("m.", "").replace("web.", "")
+    path = urllib.parse.unquote(p.path).rstrip("/")
+    if netloc in ("youtube.com", "youtu.be", "facebook.com", "x.com", "twitter.com"):
+      pid = extract_canonical_post_or_video_id(u)
+      if pid:
+        return f"{netloc}/{pid}"
+    return f"{netloc}{path}".lower()
+  except Exception:
+    return u.lower()
+
+
+def compute_article_dedup_keys(title: str, url: str) -> set:
+  """توليد مفاتيح البصمة الفريدة للخبر (الرابط الموحد + معرف المنشور + البصمة النصية للعنوان)."""
+  keys = set()
+  raw_u = strip_internal_url_fragments(url)
+  if raw_u:
+    keys.add(f"raw_u:{raw_u.lower().rstrip('/')}")
+  canon_u = canonicalize_url_for_dedup(url)
+  if canon_u and len(canon_u) >= 6:
+    keys.add(f"canon_u:{canon_u}")
+  pid = extract_canonical_post_or_video_id(url)
+  if pid:
+    keys.add(f"pid:{pid}")
+  norm_t = normalize_arabic_for_dedup(title)
+  if len(norm_t) >= 20:
+    keys.add(f"title:{norm_t[:85]}")
+  return keys
 
 
 def clean_social_post_url(url: str) -> str:
@@ -688,7 +773,7 @@ def _is_fb_post_owned_by_target(
     page_official_name: str = "",
     og_title: str = "",
 ) -> bool:
-  """التحقق الصارم من أن المنشور صادر فعلياً عن الصفحة المخصصة نفسها وليس عن صفحة أو مجموعة أخرى ذكرت اسمها."""
+  """التحقق الصارم من أن المنشور صادر فعلياً عن الصفحة المخصصة نفسها وليس عن صفحة أو مجموعة أخرى."""
   u = clean_social_post_url(post_url)
   if not u or not is_direct_social_post_url(u, "فيسبوك"):
     return False
@@ -699,17 +784,29 @@ def _is_fb_post_owned_by_target(
   qs = urllib.parse.parse_qs(parsed.query)
 
   clean_handle = (handle or "").strip().lower().lstrip("@")
-  if clean_handle.startswith("fb_"):
-    clean_handle = clean_handle[3:]
+  if clean_handle.startswith("fb_") or clean_handle.isdigit():
+    clean_handle = ""
   clean_cid = (page_id or "").strip().lower()
   valid_owners = {x for x in [clean_handle, clean_cid] if x and len(x) >= 2}
+
+  def _matches_official_name(text_to_check: str) -> bool:
+    if not text_to_check or not page_official_name:
+      return False
+    t_norm = normalize_arabic_for_dedup(text_to_check)
+    n_norm = normalize_arabic_for_dedup(page_official_name)
+    if n_norm and len(n_norm) >= 4 and n_norm in t_norm:
+      return True
+    n_words = [w for w in n_norm.split() if len(w) >= 3]
+    if len(n_words) >= 2 and all(w in t_norm for w in n_words[:2]):
+      return True
+    return False
 
   # 1) إذا كان الرابط منشور مجموعة: facebook.com/groups/{group_id_or_slug}/posts/...
   if len(parts_low) >= 2 and parts_low[0] == "groups":
     grp_owner = parts_low[1]
     if valid_owners:
       return grp_owner in valid_owners
-    return False
+    return _matches_official_name(og_title)
 
   # 2) إذا كان الرابط بصيغة people/{name}/{id}/... أو pages/{name}/{id}/...
   if len(parts_low) >= 3 and parts_low[0] in ("people", "pages"):
@@ -717,18 +814,21 @@ def _is_fb_post_owned_by_target(
     p_id = parts_low[2]
     if valid_owners:
       return (p_id in valid_owners) or (parts_low[1] in valid_owners) or (p_name in valid_owners)
+    return _matches_official_name(p_name) or _matches_official_name(og_title)
 
   # 3) إذا كان الرابط يحتوي على اسم الصفحة الناشرة في المسار: facebook.com/{owner}/(posts|videos|photos|reels)/...
   if len(parts_low) >= 2 and parts_low[1] in ("posts", "videos", "photos", "reels", "permalink"):
     url_owner = parts_low[0]
-    if valid_owners:
-      if url_owner in valid_owners:
+    if url_owner in valid_owners:
+      return True
+    if clean_handle and not url_owner.isdigit() and url_owner != clean_handle:
+      return False
+    if clean_cid and clean_cid.isdigit() and url_owner.isdigit() and url_owner != clean_cid:
+      return False
+    # إذا لم يكن لدينا handle نصي بعد، نشترط تطابق اسم الصفحة الرسمي مع عنوان المنشور أو اسم المسار
+    if not clean_handle:
+      if _matches_official_name(url_owner.replace(".", " ").replace("-", " ")) or _matches_official_name(og_title):
         return True
-      if clean_handle and not clean_handle.isdigit() and not url_owner.isdigit():
-        if url_owner != clean_handle:
-          return False
-      if clean_cid and url_owner.isdigit() and url_owner != clean_cid:
-        return False
       return False
 
   # 4) إذا كان الرابط بصيغة permalink.php?story_fbid=...&id={page_id}
@@ -736,21 +836,20 @@ def _is_fb_post_owned_by_target(
     url_id = ((qs.get("id") or [""])[0]).strip().lower()
     if url_id and clean_cid and clean_cid.isdigit():
       return url_id == clean_cid
-    if url_id and clean_handle and clean_handle.isdigit():
-      return url_id == clean_handle
-
-  # 5) إذا توفر عنوان og:title للمنشور من فيسبوك، نتحقق من أنه يخص الصفحة
-  if og_title and page_official_name:
-    og_low = clean_display_text(og_title).lower()
-    name_low = page_official_name.strip().lower()
-    if name_low in og_low:
+    if _matches_official_name(og_title):
       return True
-    for sub in re.split(r"[-|•–—:/()]+", name_low):
-      if len(sub.strip()) >= 4 and sub.strip() in og_low:
-        return True
-    return False
+    return bool(url_id and url_id in valid_owners)
 
-  return True
+  # 5) الروابط المختصرة مثل watch/?v= أو reel/ أو photo.php?fbid= أو share/
+  if og_title:
+    if clean_handle and clean_handle in og_title.lower():
+      return True
+    if _matches_official_name(og_title):
+      return True
+    if page_official_name:
+      return False
+
+  return bool(valid_owners)
 
 
 def is_summary_just_title(title: str, summary: str) -> bool:
@@ -890,6 +989,43 @@ def parse_custom_target_identity(target_url: str) -> dict:
   raw_u = str(target_url or "").strip()
   if not raw_u:
     return {}
+
+  # دعم البحث المباشر باسم القناة أو الصفحة أو اسم صاحبها (بدون رابط)
+  is_url_like = bool(
+      "://" in raw_u
+      or re.search(
+          r"(?:^|\b)(?:youtube\.com|youtu\.be|facebook\.com|fb\.com|fb\.watch|x\.com|twitter\.com|tiktok\.com|instagram\.com|linkedin\.com|[a-zA-Z0-9-]+\.(?:com|ma|net|org|info|tv|me|io))\b",
+          raw_u,
+          re.IGNORECASE,
+      )
+  )
+  if not is_url_like:
+    clean_name = raw_u
+    plat_hint = "شامل"
+    for prefix_map, p_val in [
+        (("يوتيوب:", "youtube:", "قناة يوتيوب", "يوتيوب"), "يوتيوب"),
+        (("فيسبوك:", "فايسبوك:", "facebook:", "صفحة فيسبوك", "فيسبوك", "فايسبوك"), "فيسبوك"),
+        (("إكس:", "اكس:", "تويتر:", "x:", "twitter:"), "إكس"),
+    ]:
+      for pref in prefix_map:
+        if clean_name.lower().startswith(pref):
+          plat_hint = p_val
+          clean_name = clean_name[len(pref) :].strip(" :-–—")
+          break
+    clean_name = clean_name.strip() or raw_u.strip()
+    tag_k = urllib.parse.quote(f"name_{clean_name.lower()}", safe="")
+    return {
+        "raw_url": clean_name,
+        "domain": "",
+        "platform": plat_hint,
+        "handle": clean_name.lstrip("@") if clean_name.startswith("@") else "",
+        "channel_id": "",
+        "official_name_hint": clean_name.lstrip("@"),
+        "is_name_target": True,
+        "display_label": clean_name,
+        "target_tag": f"#v4target={tag_k}",
+    }
+
   full_u = raw_u if "://" in raw_u else f"https://{raw_u}"
   parsed = urllib.parse.urlparse(full_u)
   domain = (
@@ -897,6 +1033,7 @@ def parse_custom_target_identity(target_url: str) -> dict:
       .replace("www.", "")
       .replace("m.", "")
       .replace("web.", "")
+      .replace("mbasic.", "")
   )
   path_parts = [
       urllib.parse.unquote(p).strip()
@@ -908,7 +1045,7 @@ def parse_custom_target_identity(target_url: str) -> dict:
   if "youtube.com" in domain or "youtu.be" in domain:
     platform = "يوتيوب"
     base_domain = "youtube.com"
-  elif "facebook.com" in domain or "fb.com" in domain:
+  elif "facebook.com" in domain or "fb.com" in domain or "fb.watch" in domain:
     platform = "فيسبوك"
     base_domain = "facebook.com"
   elif "x.com" in domain or "twitter.com" in domain:
@@ -929,6 +1066,7 @@ def parse_custom_target_identity(target_url: str) -> dict:
 
   handle = ""
   channel_id = ""
+  official_name_hint = ""
   display_label = domain
 
   if platform == "يوتيوب":
@@ -954,9 +1092,9 @@ def parse_custom_target_identity(target_url: str) -> dict:
         display_label = seg
   elif platform in ("فيسبوك", "إكس", "أخرى"):
     if "id" in qs and qs["id"]:
-      handle = qs["id"][0].strip()
-      channel_id = handle
-      display_label = f"fb_{handle}"
+      channel_id = qs["id"][0].strip()
+      handle = ""
+      display_label = f"fb_{channel_id}"
     elif len(path_parts) >= 2 and path_parts[0].lower() in (
         "people",
         "pages",
@@ -964,18 +1102,25 @@ def parse_custom_target_identity(target_url: str) -> dict:
         "in",
         "groups",
     ):
-      handle = path_parts[1].lstrip("@").replace("-", " ")
-      display_label = path_parts[1]
+      official_name_hint = path_parts[1].lstrip("@").replace("-", " ")
+      display_label = official_name_hint
       if len(path_parts) >= 3 and path_parts[2].isdigit():
         channel_id = path_parts[2]
+      elif path_parts[0].lower() == "groups":
+        handle = path_parts[1]
     elif len(path_parts) >= 2 and path_parts[0].lower() == "share":
-      handle = path_parts[-1]
-      display_label = f"fb_{handle}"
+      # رابط مشاركة فيسبوك (share/...) يحتاج إلى فك التوجيه أولاً لمعرفة اسم ومعرف الصفحة الحقيقي
+      handle = ""
+      display_label = f"fb_share_{path_parts[-1]}"
     else:
       for seg in path_parts:
         if seg.lower() not in GENERIC_SOCIAL_SEGMENTS:
-          handle = seg.lstrip("@")
-          display_label = handle
+          if seg.isdigit() and len(seg) >= 8:
+            channel_id = seg
+            display_label = f"fb_{seg}"
+          else:
+            handle = seg.lstrip("@")
+            display_label = handle
           break
   else:
     display_label = domain
@@ -983,7 +1128,7 @@ def parse_custom_target_identity(target_url: str) -> dict:
       handle = path_parts[0]
 
   target_tag_key = urllib.parse.quote(
-      (display_label or handle or base_domain).lower(), safe=""
+      (display_label or handle or channel_id or base_domain).lower(), safe=""
   )
 
   return {
@@ -992,8 +1137,10 @@ def parse_custom_target_identity(target_url: str) -> dict:
       "platform": platform,
       "handle": handle,
       "channel_id": channel_id,
+      "official_name_hint": official_name_hint,
+      "is_name_target": False,
       "display_label": display_label or base_domain,
-      "target_tag": f"#v3target={target_tag_key}",
+      "target_tag": f"#v4target={target_tag_key}",
   }
 
 
@@ -1004,22 +1151,21 @@ def belongs_to_custom_target(item: dict, target_info: dict) -> bool:
   raw_item_url = str(item.get("url") or "").strip()
   raw_item_url_low = raw_item_url.lower()
   u = clean_social_post_url(raw_item_url)
+  item_plat = item.get("platform", "")
   t_plat = target_info.get("platform", "")
   handle = (target_info.get("handle") or "").strip()
-  cid = (target_info.get("channel_id") or "").strip()
-  disp = (target_info.get("display_label") or "").strip().lstrip("@")
-  t_dom = (target_info.get("domain") or "").lower()
 
-  # 1) رفض قاطع لأي رابط يوجه إلى الصفحة الرئيسية للقناة أو الصفحة بدلاً من الفيديو أو المنشور بعينه
-  if t_plat in ("يوتيوب", "فيسبوك", "إكس"):
-    if not is_direct_social_post_url(u, t_plat):
+  # 1) رفض قاطع لأي رابط على يوتيوب أو فيسبوك أو إكس يوجه إلى الصفحة الرئيسية للقناة/الصفحة بدلاً من الفيديو/المنشور بعينه
+  if item_plat in ("يوتيوب", "فيسبوك", "إكس") or t_plat in ("يوتيوب", "فيسبوك", "إكس"):
+    check_plat = item_plat if item_plat in ("يوتيوب", "فيسبوك", "إكس") else t_plat
+    if not is_direct_social_post_url(u, check_plat):
       return False
 
-  # 2) رفض وتطهير أي نتائج قديمة من الجلسات السابقة (#target= أو #v2target=) لضمان نظافة القاعدة بنسبة 100%
-  if ("#target=" in raw_item_url_low or "#v2target=" in raw_item_url_low) and "#v3target=" not in raw_item_url_low:
+  # 2) تطهير أي نتائج قديمة من النسخ السابقة
+  if any(old_t in raw_item_url_low for old_t in ("#target=", "#v2target=", "#v3target=")) and "#v4target=" not in raw_item_url_low:
     return False
 
-  # 3) إذا كان المنشور موسوماً بوسم التحقق الصارم الجديد #v3target= الخاص بهذا الهدف تحديداً، نتحقق فقط من عدم تعارض المالك الصريح في الرابط
+  # 3) التحقق من وسم الهدف المخصص الموثق #v4target=
   t_tag = (target_info.get("target_tag") or "").lower()
   if t_tag and t_tag in raw_item_url_low:
     if t_plat == "فيسبوك" and handle and not handle.startswith("fb_") and not handle.isdigit():
@@ -1029,8 +1175,6 @@ def belongs_to_custom_target(item: dict, target_info: dict) -> bool:
         url_owner = parts_u[0]
         if not url_owner.isdigit() and url_owner != handle.lower():
           return False
-      if len(parts_u) >= 2 and parts_u[0] == "groups" and parts_u[1] != handle.lower():
-        return False
     return True
 
   return False
@@ -1329,7 +1473,7 @@ def enrich_item_content_and_image(item: dict) -> dict:
         and "news.google.com" not in resolved_u
         and "news.google.com" in url
     ):
-      m_tag = re.search(r"(#(?:plat|v3target|v2target|target)=[^\s#]*)$", url)
+      m_tag = re.search(r"(#(?:plat|v4target|v3target|v2target|target)=[^\s#]*)$", url)
       item["url"] = f"{resolved_u}{m_tag.group(1) if m_tag else ''}"
 
   # عدم استدعاء Bing News للأهداف المخصصة أو منصات الفيديو/التواصل حتى لا يُستبدل ملخص الفيديو أو المنشور بمقال صحفي آخر
@@ -1564,6 +1708,7 @@ REQUIRED_COLUMNS = {
     "raw_snippet": "TEXT DEFAULT ''",
     "image_url": "TEXT DEFAULT ''",
     "created_at": "REAL DEFAULT 0",
+    "telegram_sent": "INTEGER DEFAULT 0",
 }
 
 INSERT_COLUMN_NAMES = [
@@ -1778,6 +1923,97 @@ def purge_invalid_articles_from_db():
         pass
 
 
+def load_telegram_sent_ledger() -> set:
+  """تحميل سجل البصمات المرسلة سابقاً إلى تلغرام لمنع تكرار الإرسال نهائياً."""
+  ledger = set()
+  if os.path.exists(TELEGRAM_LEDGER_FILE):
+    try:
+      with open(TELEGRAM_LEDGER_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+      if isinstance(data, list):
+        ledger.update(str(x) for x in data if x)
+    except Exception:
+      pass
+  return ledger
+
+
+def save_telegram_sent_ledger(ledger: set):
+  try:
+    trimmed = sorted(list(ledger))[-8000:]
+    tmp_p = f"{TELEGRAM_LEDGER_FILE}.tmp"
+    with open(tmp_p, "w", encoding="utf-8") as f:
+      json.dump(trimmed, f, ensure_ascii=False)
+    os.replace(tmp_p, TELEGRAM_LEDGER_FILE)
+  except Exception:
+    pass
+
+
+def deduplicate_and_seed_telegram_ledger():
+  """إزالة أي أخبار مكررة من قاعدة البيانات والأرشيف مع الحفاظ على أقدم وقت رصد (created_at) لببقائها 24 ساعة ثم إحالتها للأرشيف، وتغذية سجل تلغرام."""
+  lock = get_db_lock()
+  with lock:
+    ledger = load_telegram_sent_ledger()
+    ledger_changed = False
+    try:
+      conn = _open_sqlite_conn()
+      _ensure_schema_on_conn(conn)
+      conn.row_factory = sqlite3.Row
+      c = conn.cursor()
+      c.execute("SELECT * FROM articles ORDER BY created_at ASC, id ASC")
+      rows = [dict(r) for r in c.fetchall()]
+      seen_keys = set()
+      dup_ids = []
+      for r in rows:
+        item_keys = compute_article_dedup_keys(r.get("title", ""), r.get("url", ""))
+        # جميع الأخبار المرصودة سابقاً في القاعدة تُسجل في سجل تلغرام حتى لا يُعاد إرسالها عند تشغيل الرصد التلقائي
+        if not item_keys.issubset(ledger):
+          ledger.update(item_keys)
+          ledger_changed = True
+        if item_keys & seen_keys:
+          dup_ids.append((r["id"],))
+        else:
+          seen_keys.update(item_keys)
+      if dup_ids:
+        c.executemany("DELETE FROM articles WHERE id = ?", dup_ids)
+        conn.commit()
+      c.execute("UPDATE articles SET telegram_sent = 1 WHERE telegram_sent IS NULL OR telegram_sent = 0")
+      conn.commit()
+      conn.close()
+    except Exception:
+      pass
+
+    if os.path.exists(ARCHIVE_JSON_FILE):
+      try:
+        with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
+          arch_list = json.load(f)
+        if isinstance(arch_list, list):
+          # نرتب من الأقدم في الرصد إلى الأحدث للحفاظ على أول رصد، ثم نعيد الترتيب حسب النشر
+          arch_sorted = sorted(arch_list, key=lambda x: float(x.get("created_at") or x.get("pub_timestamp") or 0))
+          seen_arch_keys = set()
+          deduped_arch = []
+          for item in arch_sorted:
+            if not isinstance(item, dict):
+              continue
+            ik = compute_article_dedup_keys(item.get("title", ""), item.get("url", ""))
+            if not ik.issubset(ledger):
+              ledger.update(ik)
+              ledger_changed = True
+            if ik & seen_arch_keys:
+              continue
+            seen_arch_keys.update(ik)
+            item["telegram_sent"] = 1
+            deduped_arch.append(item)
+          deduped_arch.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
+          if len(deduped_arch) != len(arch_list):
+            with open(ARCHIVE_JSON_FILE, "w", encoding="utf-8") as f:
+              json.dump(deduped_arch, f, ensure_ascii=False, indent=2)
+      except Exception:
+        pass
+
+    if ledger_changed or not os.path.exists(TELEGRAM_LEDGER_FILE):
+      save_telegram_sent_ledger(ledger)
+
+
 def init_db():
   lock = get_db_lock()
   with lock:
@@ -1808,6 +2044,7 @@ def init_db():
       pass
     restore_db_from_json_if_needed()
     purge_invalid_articles_from_db()
+    deduplicate_and_seed_telegram_ledger()
 
 
 def sync_db_to_json(extra_items: list = None):
@@ -2007,7 +2244,15 @@ def fetch_articles_from_db():
       pass
 
     if db_rows:
-      return db_rows
+      unique_rows = []
+      seen_display_keys = set()
+      for r in db_rows:
+        dk = compute_article_dedup_keys(r.get("title", ""), r.get("url", ""))
+        if dk & seen_display_keys:
+          continue
+        seen_display_keys.update(dk)
+        unique_rows.append(r)
+      return unique_rows
 
     if os.path.exists(ARCHIVE_JSON_FILE):
       try:
@@ -2759,7 +3004,7 @@ def _extract_yt_renderers_from_html(
       r'"(?:videoRenderer|gridVideoRenderer|compactVideoRenderer|reelItemRenderer|shortsLockupViewModel|lockupViewModel)"\s*:',
       html_text,
   )[1:]
-  for chunk in chunks[:40]:
+  for chunk in chunks[:45]:
     vid_m = re.search(
         r'"(?:videoId|contentId)"\s*:\s*"([a-zA-Z0-9_-]{11})"', chunk[:2500]
     )
@@ -2801,12 +3046,28 @@ def _extract_yt_renderers_from_html(
 
     owner_m = re.search(
         r'"(?:ownerText|shortBylineText|longBylineText)"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
-        chunk[:4000],
+        chunk[:4500],
     )
     channel_name = (
         decode_js_escaped_text(owner_m.group(1))
         if owner_m
         else default_channel_name
+    )
+
+    owner_id_m = re.search(
+        r'"(?:ownerText|shortBylineText|longBylineText)".*?"browseId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"',
+        chunk[:4500],
+    )
+    owner_id = owner_id_m.group(1) if owner_id_m else ""
+
+    owner_h_m = re.search(
+        r'"canonicalBaseUrl"\s*:\s*"/(@?[^"\\]+)"',
+        chunk[:4500],
+    )
+    owner_handle = (
+        urllib.parse.unquote(owner_h_m.group(1)).lstrip("@")
+        if owner_h_m
+        else ""
     )
 
     desc_runs = re.findall(
@@ -2829,6 +3090,8 @@ def _extract_yt_renderers_from_html(
         "title": title,
         "pub_rel": pub_rel,
         "channel_name": channel_name,
+        "owner_id": owner_id,
+        "owner_handle": owner_handle,
         "desc": desc_text or title,
     })
   return results
@@ -3373,6 +3636,35 @@ def _verify_youtube_video_owner(
   return False, "", ""
 
 
+def _does_yt_video_belong_to_channel(
+    v: dict, handle: str = "", cid: str = "", channel_title: str = ""
+) -> bool:
+  """التحقق من أن الفيديو المستخرج من بحث يوتيوب الحي يعود للقناة المطلوبة حصراً."""
+  v_cid = (v.get("owner_id") or "").strip().lower()
+  v_handle = (v.get("owner_handle") or "").strip().lower().lstrip("@")
+  v_ch_name = (v.get("channel_name") or "").strip().lower()
+
+  t_cid = (cid or "").strip().lower()
+  t_handle = (handle or "").strip().lower().lstrip("@")
+  t_title = (channel_title or "").strip().lower().lstrip("@")
+
+  if t_cid and v_cid:
+    return v_cid == t_cid
+  if t_handle and v_handle:
+    if v_handle == t_handle or t_handle in v_handle or v_handle in t_handle:
+      return True
+  if t_handle and len(t_handle) >= 3 and t_handle in v_ch_name:
+    return True
+  if t_title and t_title != "youtube" and len(t_title) >= 3:
+    if t_title in v_ch_name or v_ch_name in t_title:
+      return True
+    for part in re.split(r"[-|•–—:/()]+", t_title):
+      p_clean = part.strip()
+      if len(p_clean) >= 4 and p_clean in v_ch_name:
+        return True
+  return False
+
+
 def _scrape_youtube_custom_channel(
     t_info: dict, t_kw: str, max_age_sec: int, seen_urls: set
 ) -> list:
@@ -3381,140 +3673,213 @@ def _scrape_youtube_custom_channel(
   raw_u = t_info["raw_url"]
   cid = t_info.get("channel_id", "")
   handle = t_info.get("handle", "")
-  channel_title = t_info.get("display_label", "YouTube")
+  name_hint = t_info.get("official_name_hint", "")
+  is_name_target = bool(t_info.get("is_name_target", False))
+  channel_title = name_hint or t_info.get("display_label", "YouTube")
 
   # إذا كان الرابط المضاف رابط فيديو يوتيوب مباشر، نرصده فوراً
-  m_direct_v = re.search(
-      r"(?:watch\?v=|youtu\.be/|/shorts/)([A-Za-z0-9_-]{11})", raw_u
-  )
-  if m_direct_v:
-    vid_id = m_direct_v.group(1)
-    v_url = f"https://www.youtube.com/watch?v={vid_id}"
-    _, v_oembed_title, v_author = _verify_youtube_video_owner(v_url)
-    _, p_body, _ = scrape_article_page_content_and_image(v_url)
-    v_title = v_oembed_title or (p_body[:105] if p_body else f"فيديو يوتيوب ({vid_id})")
-    badge_lbl = f"🎯 {v_author or channel_title}"
-    pub_str, pub_ts = extract_date_from_url_or_text(
-        v_url, p_body, "", fallback_offset_sec=1800
+  if not is_name_target:
+    m_direct_v = re.search(
+        r"(?:watch\?v=|youtu\.be/|/shorts/)([A-Za-z0-9_-]{11})", raw_u
     )
-    entry = {
-        "title": v_title,
-        "url": v_url,
-        "raw_snippet": p_body or v_title,
-        "source_name": badge_lbl,
-        "platform": "يوتيوب",
-        "pub_date": pub_str,
-        "pub_timestamp": pub_ts,
-        "image_url": f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg",
-    }
-    _tag_custom_target_item(entry, t_info, badge_lbl)
-    return [entry]
-
-  # بناء رابط نظيف لتبويب الفيديوهات بدون معاملات التتبع (?si=...)
-  parsed_u = urllib.parse.urlparse(raw_u)
-  clean_base_u = urllib.parse.urlunparse(
-      ("https", "www.youtube.com", parsed_u.path.rstrip("/"), "", "", "")
-  )
-  if cid and not handle:
-    videos_tab_url = f"https://www.youtube.com/channel/{cid}/videos"
-  elif handle:
-    h_prefix = (
-        f"@{handle}"
-        if not handle.startswith("@")
-        and "/c/" not in clean_base_u
-        and "/user/" not in clean_base_u
-        else handle
-    )
-    if "/c/" in clean_base_u or "/user/" in clean_base_u:
-      videos_tab_url = f"{clean_base_u}/videos"
-    else:
-      videos_tab_url = f"https://www.youtube.com/{h_prefix}/videos"
-  else:
-    videos_tab_url = (
-        clean_base_u
-        if any(clean_base_u.endswith(x) for x in ["/videos", "/streams", "/shorts"])
-        else f"{clean_base_u}/videos"
-    )
-
-  # 1) استخراج معرف القناة الدقيق UC عبر ترويسة facebookexternalhit المسموحة دائماً على خوادم السحابة بدون جدار كوكيز
-  if not cid:
-    try:
-      r_crawler = requests.get(clean_base_u, headers=FB_CRAWLER_HEADERS, timeout=8)
-      if r_crawler.status_code == 200 and r_crawler.text:
-        for c_pat in [
-            r'feeds/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{20,})',
-            r'https://www\.youtube\.com/channel/(UC[a-zA-Z0-9_-]{20,})',
-            r'"externalId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})',
-        ]:
-          m_cid = re.search(c_pat, r_crawler.text[:45000])
-          if m_cid:
-            cid = m_cid.group(1)
-            break
-        m_og_t = re.search(
-            r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
-            r_crawler.text[:35000],
-            re.IGNORECASE,
-        )
-        if m_og_t and m_og_t.group(1).strip():
-          c_title = clean_display_text(m_og_t.group(1).strip())
-          c_title = re.sub(r"\s*-\s*YouTube.*$", "", c_title, flags=re.IGNORECASE).strip()
-          if c_title and c_title.lower() != "youtube":
-            channel_title = c_title
-    except Exception:
-      pass
-
-  # 1-ب) استخراج معرف القناة الدقيق UC عبر YouTube InnerTube API إذا لم يظهر في الترويسة
-  if not cid:
-    cid, _ = _resolve_youtube_channel_via_innertube(clean_base_u)
-
-  # 2) جلب صفحة فيديوهات القناة المباشرة واستخراج معرف القناة من بيانات تعريف القناة حصراً
-  page_html = ""
-  for candidate_yt_url in [videos_tab_url, clean_base_u]:
-    try:
-      r = requests.get(
-          candidate_yt_url,
-          headers=DEFAULT_HEADERS,
-          cookies=YT_BYPASS_COOKIES,
-          timeout=10,
+    if m_direct_v:
+      vid_id = m_direct_v.group(1)
+      v_url = f"https://www.youtube.com/watch?v={vid_id}"
+      _, v_oembed_title, v_author = _verify_youtube_video_owner(v_url)
+      _, p_body, _ = scrape_article_page_content_and_image(v_url)
+      v_title = v_oembed_title or (
+          p_body[:105] if p_body else f"فيديو يوتيوب ({vid_id})"
       )
-      if r.status_code == 200 and r.text:
-        page_html = r.text
-        og_t = re.search(
-            r'<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']+)["\']',
-            page_html,
-            re.IGNORECASE,
-        )
-        if og_t and og_t.group(1).strip():
-          cand_name = clean_display_text(og_t.group(1).strip())
-          cand_name = re.sub(
-              r"\s*-\s*YouTube.*$", "", cand_name, flags=re.IGNORECASE
-          ).strip()
-          if cand_name and cand_name.lower() != "youtube":
-            channel_title = cand_name
+      badge_lbl = f"🎯 {v_author or channel_title}"
+      pub_str, pub_ts = extract_date_from_url_or_text(
+          v_url, p_body, "", fallback_offset_sec=1800
+      )
+      entry = {
+          "title": v_title,
+          "url": v_url,
+          "raw_snippet": p_body or v_title,
+          "source_name": badge_lbl,
+          "platform": "يوتيوب",
+          "pub_date": pub_str,
+          "pub_timestamp": pub_ts,
+          "image_url": f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg",
+      }
+      _tag_custom_target_item(entry, t_info, badge_lbl)
+      return [entry]
 
-        if not cid:
-          # المطابقة حصراً مع معرف القناة صاحبة الصفحة (externalId أو rssUrl أو canonical) وليس الفيديوهات المقترحة
-          for pat in [
-              r'feeds/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{20,})',
-              r'"channelMetadataRenderer"\s*:\s*\{[^{}]*"externalId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"',
+  page_html = ""
+  if not is_name_target:
+    parsed_u = urllib.parse.urlparse(raw_u)
+    clean_base_u = urllib.parse.urlunparse(
+        ("https", "www.youtube.com", parsed_u.path.rstrip("/"), "", "", "")
+    )
+    if cid and not handle:
+      videos_tab_url = f"https://www.youtube.com/channel/{cid}/videos"
+    elif handle:
+      h_prefix = (
+          f"@{handle}"
+          if not handle.startswith("@")
+          and "/c/" not in clean_base_u
+          and "/user/" not in clean_base_u
+          else handle
+      )
+      if "/c/" in clean_base_u or "/user/" in clean_base_u:
+        videos_tab_url = f"{clean_base_u}/videos"
+      else:
+        videos_tab_url = f"https://www.youtube.com/{h_prefix}/videos"
+    else:
+      videos_tab_url = (
+          clean_base_u
+          if any(
+              clean_base_u.endswith(x)
+              for x in ["/videos", "/streams", "/shorts"]
+          )
+          else f"{clean_base_u}/videos"
+      )
+
+    # 1) استخراج معرف القناة الدقيق UC عبر ترويسة facebookexternalhit المسموحة دائماً على خوادم السحابة
+    if not cid:
+      try:
+        r_crawler = requests.get(
+            clean_base_u, headers=FB_CRAWLER_HEADERS, timeout=8
+        )
+        if r_crawler.status_code == 200 and r_crawler.text:
+          for c_pat in [
+              r"feeds/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{20,})",
+              r"https://www\.youtube\.com/channel/(UC[a-zA-Z0-9_-]{20,})",
               r'"externalId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"',
-              r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']https://www\.youtube\.com/channel/(UC[a-zA-Z0-9_-]{20,})["\']',
-              r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']https://www\.youtube\.com/channel/(UC[a-zA-Z0-9_-]{20,})["\']',
-              r'<meta[^>]+itemprop=["\']channelId["\'][^>]+content=["\'](UC[a-zA-Z0-9_-]{20,})["\']',
           ]:
-            m_c = re.search(pat, page_html)
-            if m_c:
-              cid = m_c.group(1)
+            m_cid = re.search(c_pat, r_crawler.text[:45000])
+            if m_cid:
+              cid = m_cid.group(1)
               break
-        if cid or '"videoRenderer"' in page_html or '"gridVideoRenderer"' in page_html:
-          break
-    except Exception:
-      pass
+          m_og_t = re.search(
+              r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+              r_crawler.text[:35000],
+              re.IGNORECASE,
+          )
+          if m_og_t and m_og_t.group(1).strip():
+            c_title = clean_display_text(m_og_t.group(1).strip())
+            c_title = re.sub(
+                r"\s*-\s*YouTube.*$", "", c_title, flags=re.IGNORECASE
+            ).strip()
+            if c_title and c_title.lower() != "youtube":
+              channel_title = c_title
+      except Exception:
+        pass
+
+    if not cid:
+      cid, _ = _resolve_youtube_channel_via_innertube(clean_base_u)
+
+    # 2) جلب صفحة فيديوهات القناة المباشرة
+    for candidate_yt_url in [videos_tab_url, clean_base_u]:
+      try:
+        r = requests.get(
+            candidate_yt_url,
+            headers=DEFAULT_HEADERS,
+            cookies=YT_BYPASS_COOKIES,
+            timeout=10,
+        )
+        if r.status_code == 200 and r.text:
+          page_html = r.text
+          og_t = re.search(
+              r'<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']+)["\']',
+              page_html,
+              re.IGNORECASE,
+          )
+          if og_t and og_t.group(1).strip():
+            cand_name = clean_display_text(og_t.group(1).strip())
+            cand_name = re.sub(
+                r"\s*-\s*YouTube.*$", "", cand_name, flags=re.IGNORECASE
+            ).strip()
+            if cand_name and cand_name.lower() != "youtube":
+              channel_title = cand_name
+
+          if not cid:
+            for pat in [
+                r"feeds/videos\.xml\?channel_id=(UC[a-zA-Z0-9_-]{20,})",
+                r'"channelMetadataRenderer"\s*:\s*\{[^{}]*"externalId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"',
+                r'"externalId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"',
+                r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']https://www\.youtube\.com/channel/(UC[a-zA-Z0-9_-]{20,})["\']',
+                r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']https://www\.youtube\.com/channel/(UC[a-zA-Z0-9_-]{20,})["\']',
+                r'<meta[^>]+itemprop=["\']channelId["\'][^>]+content=["\'](UC[a-zA-Z0-9_-]{20,})["\']',
+            ]:
+              m_c = re.search(pat, page_html)
+              if m_c:
+                cid = m_c.group(1)
+                break
+          if (
+              cid
+              or '"videoRenderer"' in page_html
+              or '"gridVideoRenderer"' in page_html
+          ):
+            break
+      except Exception:
+        pass
+
+  # 3) البحث المباشر داخل يوتيوب باسم القناة أو معرفها لاستخراج معرف UC والفيديوهات الحية غير المؤرشفة
+  live_search_videos = []
+  search_ident = (
+      name_hint
+      or (f"@{handle}" if handle else "")
+      or (channel_title if channel_title.lower() != "youtube" else "")
+  )
+  if search_ident and (not cid or is_name_target or not page_html):
+    for sp_param in ["", "&sp=CAI%253D"]:
+      q_yt_live = f"{search_ident} {t_kw}".strip() if sp_param else search_ident
+      yt_search_u = (
+          "https://www.youtube.com/results?search_query="
+          f"{urllib.parse.quote(q_yt_live)}{sp_param}"
+      )
+      try:
+        rs_yt = requests.get(
+            yt_search_u,
+            headers=DEFAULT_HEADERS,
+            cookies=YT_BYPASS_COOKIES,
+            timeout=10,
+        )
+        if rs_yt.status_code == 200 and rs_yt.text:
+          if not cid:
+            # استخراج معرف القناة من بطاقة القناة الرسمية channelRenderer في نتائج البحث
+            m_ch_card = re.search(
+                r'"channelRenderer"\s*:\s*\{.*?"channelId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})".*?"title"\s*:\s*\{"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"',
+                rs_yt.text[:60000],
+            )
+            if m_ch_card:
+              cid = m_ch_card.group(1)
+              det_t = decode_js_escaped_text(m_ch_card.group(2))
+              if det_t:
+                channel_title = det_t
+            else:
+              m_ch_simple = re.search(
+                  r'"channelRenderer"\s*:\s*\{[^{}]*"channelId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"',
+                  rs_yt.text[:60000],
+              )
+              if m_ch_simple:
+                cid = m_ch_simple.group(1)
+
+          extracted_from_search = _extract_yt_renderers_from_html(
+              rs_yt.text, channel_title
+          )
+          for v_cand in extracted_from_search:
+            if _does_yt_video_belong_to_channel(
+                v_cand, handle=handle, cid=cid, channel_title=channel_title
+            ):
+              if not cid and v_cand.get("owner_id"):
+                cid = v_cand["owner_id"]
+              if (
+                  v_cand.get("channel_name")
+                  and channel_title.lower() == "youtube"
+              ):
+                channel_title = v_cand["channel_name"]
+              live_search_videos.append(v_cand)
+      except Exception:
+        pass
 
   now_ts = time.time()
   seen_channel_vids = set()
 
-  # 3) الجلب الفوري من واجهة YouTube InnerTube Browse API الخاصة بالقناة (يتجاوز عدم الأرشفة ويعمل بالوقت الفعلي)
+  # 4) الجلب الفوري من واجهة YouTube InnerTube Browse API الخاصة بالقناة
   if cid:
     innertube_vids, it_title = _browse_youtube_channel_via_innertube(
         cid, channel_title
@@ -3526,7 +3891,7 @@ def _scrape_youtube_custom_channel(
 
   source_badge = f"🎯 {channel_title}"
 
-  # 4) الجلب من خلاصة XML الرسمية للقناة (تتحدث بالثانية فور رفع أي فيديو جديد دون انتظار أرشفة محركات البحث)
+  # 5) الجلب من خلاصة XML الرسمية للقناة (تتحدث بالثانية فور رفع أي فيديو جديد دون انتظار أرشفة محركات البحث)
   if cid:
     xml_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}"
     try:
@@ -3557,16 +3922,19 @@ def _scrape_youtube_custom_channel(
     except Exception:
       pass
 
-  # 5) دمج الفيديوهات المستخرجة مباشرة من InnerTube Browse ومن كود تبويب /videos الخاص بالقناة نفسها حصراً
+  # 6) دمج الفيديوهات المستخرجة من InnerTube Browse ومن تبويب /videos ومن بحث يوتيوب الحي المفلتر بملكية القناة
   direct_renderers = list(innertube_vids)
   if page_html:
     direct_renderers.extend(
         _extract_yt_renderers_from_html(page_html, channel_title)
     )
+  direct_renderers.extend(live_search_videos)
 
   for v in direct_renderers:
     v_url = f"https://www.youtube.com/watch?v={v['vid']}"
-    if v_url in seen_channel_vids or not is_direct_social_post_url(v_url, "يوتيوب"):
+    if v_url in seen_channel_vids or not is_direct_social_post_url(
+        v_url, "يوتيوب"
+    ):
       continue
     if not is_strictly_judicial_and_clean(
         v["title"], v["desc"], v_url, t_kw, is_target=True
@@ -3575,29 +3943,94 @@ def _scrape_youtube_custom_channel(
     pub_str, pub_ts = extract_date_from_url_or_text(
         v_url, v["desc"], v["pub_rel"], fallback_offset_sec=3600
     )
+    v_badge = (
+        f"🎯 {v['channel_name']}"
+        if v.get("channel_name") and v["channel_name"] != "YouTube"
+        else source_badge
+    )
     entry = {
         "title": v["title"],
         "url": v_url,
         "raw_snippet": v["desc"],
-        "source_name": source_badge,
+        "source_name": v_badge,
         "platform": "يوتيوب",
         "pub_date": pub_str,
         "pub_timestamp": pub_ts,
         "image_url": f"https://i.ytimg.com/vi/{v['vid']}/hqdefault.jpg",
     }
     seen_channel_vids.add(v_url)
-    _tag_custom_target_item(entry, t_info, source_badge)
+    _tag_custom_target_item(entry, t_info, v_badge)
     all_channel_videos.append(entry)
 
-  # 6) احتياطي أخير مقيد بتحقق oEmbed الصارم من ملكية الفيديو للقناة (يمنع دخول أي فيديو من قناة أخرى بنسبة 100%)
-  if not all_channel_videos and (handle or cid):
-    yt_ident = f"@{handle.lstrip('@')}" if handle else cid
+  # 6-ب) إذا حجب يوتيوب صفحة القناة على السحابة ولم يظهر معرف UC بعد، نستخرجه من أول فيديو موثق للقناة عبر oEmbed ثم نسحب خلاصة XML الرسمية الفورية
+  if not cid and (handle or name_hint):
+    yt_ident_probe = f"@{handle.lstrip('@')}" if handle else name_hint
+    for probe_q in [f'site:youtube.com/watch "{yt_ident_probe}"', f'site:youtube.com "{yt_ident_probe}"']:
+      if cid:
+        break
+      for cand_v in _multi_engine_web_search(probe_q, platform="يوتيوب", max_results=8):
+        u_probe = clean_social_post_url(cand_v.get("url", ""))
+        if not is_direct_social_post_url(u_probe, "يوتيوب"):
+          continue
+        is_own, _, real_auth = _verify_youtube_video_owner(
+            u_probe, handle=handle, cid="", channel_title=channel_title
+        )
+        if is_own:
+          if real_auth and real_auth.lower() != "youtube":
+            channel_title = real_auth
+            source_badge = f"🎯 {channel_title}"
+          try:
+            rv_page = requests.get(u_probe, headers=FB_CRAWLER_HEADERS, timeout=6)
+            if rv_page.status_code == 200 and rv_page.text:
+              m_vcid = re.search(
+                  r'(?:itemprop=["\']channelId["\'][^>]+content=["\']|"channelId"\s*:\s*"|"externalChannelId"\s*:\s*")(UC[a-zA-Z0-9_-]{20,})',
+                  rv_page.text[:65000],
+              )
+              if m_vcid:
+                cid = m_vcid.group(1)
+                break
+          except Exception:
+            pass
+    if cid:
+      xml_url_retry = f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}"
+      try:
+        rx2 = requests.get(xml_url_retry, headers=DEFAULT_HEADERS, timeout=10)
+        if rx2.status_code == 200:
+          for entry in parse_rss_xml(
+              rx2.content,
+              "يوتيوب",
+              default_source=source_badge,
+              max_age_sec=0,
+          ):
+            u_clean_v = clean_social_post_url(entry.get("url", ""))
+            if not is_direct_social_post_url(u_clean_v, "يوتيوب"):
+              continue
+            if not is_strictly_judicial_and_clean(
+                entry["title"], entry["raw_snippet"], u_clean_v, t_kw, is_target=True
+            ):
+              continue
+            if u_clean_v not in seen_channel_vids:
+              seen_channel_vids.add(u_clean_v)
+              entry["url"] = u_clean_v
+              _tag_custom_target_item(entry, t_info, source_badge)
+              all_channel_videos.append(entry)
+      except Exception:
+        pass
+
+  # 7) احتياطي أخير عبر محركات البحث مقيد بتحقق oEmbed
+  if not all_channel_videos and (handle or cid or name_hint):
+    yt_ident = name_hint or (f"@{handle.lstrip('@')}" if handle else cid)
     q_web_yt = f'site:youtube.com "{yt_ident}" {t_kw}'.strip()
     for item_w in _multi_engine_web_search(
-        q_web_yt, platform="يوتيوب", default_source=source_badge, max_results=10
+        q_web_yt,
+        platform="يوتيوب",
+        default_source=source_badge,
+        max_results=10,
     ):
       u_w = clean_social_post_url(item_w.get("url", ""))
-      if u_w in seen_channel_vids or not is_direct_social_post_url(u_w, "يوتيوب"):
+      if u_w in seen_channel_vids or not is_direct_social_post_url(
+          u_w, "يوتيوب"
+      ):
         continue
       is_owner, real_v_title, real_author = _verify_youtube_video_owner(
           u_w, handle=handle, cid=cid, channel_title=channel_title
@@ -3611,7 +4044,9 @@ def _scrape_youtube_custom_channel(
       ):
         continue
       seen_channel_vids.add(u_w)
-      _tag_custom_target_item(item_w, t_info, f"🎯 {real_author or channel_title}")
+      _tag_custom_target_item(
+          item_w, t_info, f"🎯 {real_author or channel_title}"
+      )
       all_channel_videos.append(item_w)
 
   all_channel_videos.sort(
@@ -3624,7 +4059,7 @@ def _scrape_youtube_custom_channel(
       if max_age_sec <= 0
       or (now_ts - float(e.get("pub_timestamp", 0))) <= max_age_sec
   ]
-  chosen_list = in_window if in_window else all_channel_videos[:10]
+  chosen_list = in_window if in_window else all_channel_videos[:12]
   for entry in chosen_list:
     if entry["url"] not in seen_urls:
       seen_urls.add(entry["url"])
@@ -3994,6 +4429,26 @@ def _scrape_facebook_plugin_timeline(
   return posts
 
 
+def _strip_fb_sidebar_noise(text: str) -> str:
+  """إزالة نصوص الشريط الجانبي لفيسبوك (مثل: More videos you may like / فيديوهات أخرى قد تعجبك) من الملخصات."""
+  if not text:
+    return ""
+  t = clean_display_text(text)
+  for marker in [
+      "More videos you may like",
+      "فيديوهات أخرى قد تعجبك",
+      "مقاطع فيديو أخرى قد تعجبك",
+      "Related Pages",
+      "صفحات ذات صلة",
+      "See more from",
+      "عرض المزيد من",
+  ]:
+    pos = t.lower().find(marker.lower())
+    if pos != -1:
+      t = t[:pos].strip(" -–—·•|.")
+  return t
+
+
 def _verify_and_enrich_fb_post_url(
     post_u: str,
     page_avatar: str = "",
@@ -4001,14 +4456,15 @@ def _verify_and_enrich_fb_post_url(
     page_id: str = "",
     page_official_name: str = "",
 ) -> tuple:
-  """فحص رابط المنشور عبر ترويسة facebookexternalhit للتأكد من أنه يعمل ويتبع للصفحة المطلوبة حصراً."""
-  if not _is_fb_post_owned_by_target(post_u, handle=handle, page_id=page_id):
-    return False, "", "", post_u
+  """فحص رابط المنشور عبر ترويسة facebookexternalhit للتأكد من أنه يعمل ويتبع للصفحة المطلوبة حصراً واستخراج النص الأصلي النقي."""
   try:
     rp = requests.get(post_u, headers=FB_CRAWLER_HEADERS, timeout=6)
     if rp.status_code != 200 or not rp.text:
-      return True, "", page_avatar, post_u
-    p_html = rp.text[:40000]
+      is_owned = _is_fb_post_owned_by_target(
+          post_u, handle=handle, page_id=page_id, page_official_name=page_official_name
+      )
+      return is_owned, "", page_avatar, post_u
+    p_html = rp.text[:45000]
 
     post_title_og = ""
     for t_pat in [
@@ -4018,7 +4474,7 @@ def _verify_and_enrich_fb_post_url(
     ]:
       m_t = re.search(t_pat, p_html, re.IGNORECASE | re.DOTALL)
       if m_t:
-        post_title_og = clean_display_text(m_t.group(1))
+        post_title_og = _strip_fb_sidebar_noise(m_t.group(1))
         break
 
     bad_titles = [
@@ -4028,6 +4484,7 @@ def _verify_and_enrich_fb_post_url(
         "المحتوى غير متوفر",
         "الصفحة غير موجودة",
         "غير متوفر حاليا",
+        "log in or sign up",
     ]
     if post_title_og and any(bt in post_title_og.lower() for bt in bad_titles):
       return False, "", "", post_u
@@ -4068,8 +4525,8 @@ def _verify_and_enrich_fb_post_url(
     ]:
       m_d = re.search(d_pat, p_html, re.IGNORECASE)
       if m_d:
-        d_txt = clean_display_text(m_d.group(1))
-        if len(d_txt) >= 12:
+        d_txt = _strip_fb_sidebar_noise(m_d.group(1))
+        if len(d_txt) >= 10:
           post_desc = d_txt
           break
 
@@ -4092,7 +4549,10 @@ def _verify_and_enrich_fb_post_url(
 
     return True, final_body, post_img, resolved_u
   except Exception:
-    return True, "", page_avatar, post_u
+    is_owned = _is_fb_post_owned_by_target(
+        post_u, handle=handle, page_id=page_id, page_official_name=page_official_name
+    )
+    return is_owned, "", page_avatar, post_u
 
 
 def _extract_comet_relay_posts_from_html(
@@ -4389,15 +4849,17 @@ def _scrape_social_custom_target(
   all_target_posts = []
   seen_target_urls = set()
   raw_u = t_info["raw_url"]
-  domain = t_info["domain"]
-  platform = t_info["platform"]
+  domain = t_info["domain"] or "facebook.com"
+  platform = t_info["platform"] if t_info["platform"] != "شامل" else "فيسبوك"
   handle = t_info.get("handle", "")
   cid = t_info.get("channel_id", "")
+  name_hint = t_info.get("official_name_hint", "")
+  is_name_target = bool(t_info.get("is_name_target", False))
   disp = t_info.get("display_label", domain)
   now_ts = time.time()
 
   # إذا كان الرابط المضاف أصلاً رابط منشور مباشر بعينه، نرصده مباشرة
-  if is_direct_social_post_url(raw_u, platform):
+  if not is_name_target and is_direct_social_post_url(raw_u, platform):
     clean_direct_u = clean_social_post_url(raw_u)
     p_img, p_body, _ = scrape_article_page_content_and_image(clean_direct_u)
     if p_body:
@@ -4418,103 +4880,104 @@ def _scrape_social_custom_target(
       return [direct_entry]
 
   # 1) جلب بيانات الصفحة العامة عبر ترويسة facebookexternalhit الموثوقة
-  page_official_name = ""
+  page_official_name = name_hint
   page_description = ""
   page_avatar = ""
   page_raw_html = ""
   canonical_url = raw_u
   req_hdrs = FB_CRAWLER_HEADERS if platform == "فيسبوك" else DEFAULT_HEADERS
 
-  try:
-    rp = requests.get(raw_u, headers=req_hdrs, timeout=8, allow_redirects=True)
-    if rp.status_code == 200 and rp.text:
-      page_raw_html = rp.text
-      if rp.url:
-        unwrapped_rp_u = clean_social_post_url(rp.url)
-        if unwrapped_rp_u and "login" not in unwrapped_rp_u.lower():
-          canonical_url = unwrapped_rp_u
+  if not is_name_target:
+    try:
+      rp = requests.get(raw_u, headers=req_hdrs, timeout=8, allow_redirects=True)
+      if rp.status_code == 200 and rp.text:
+        page_raw_html = rp.text
+        if rp.url:
+          unwrapped_rp_u = clean_social_post_url(rp.url)
+          if unwrapped_rp_u and "login" not in unwrapped_rp_u.lower():
+            canonical_url = unwrapped_rp_u
 
-      m_og_u = re.search(
-          r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
-          rp.text[:35000],
-          re.IGNORECASE,
-      )
-      if m_og_u:
-        cand_og = clean_social_post_url(m_og_u.group(1))
-        if cand_og and "login" not in cand_og.lower():
-          canonical_url = cand_og
+        m_og_u = re.search(
+            r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
+            rp.text[:35000],
+            re.IGNORECASE,
+        )
+        if m_og_u:
+          cand_og = clean_social_post_url(m_og_u.group(1))
+          if cand_og and "login" not in cand_og.lower():
+            canonical_url = cand_og
 
-      re_parsed = parse_custom_target_identity(canonical_url)
-      if re_parsed.get("handle") and (
-          not handle or handle.startswith("fb_") or handle != re_parsed["handle"]
-      ):
-        handle = re_parsed["handle"]
-      if re_parsed.get("channel_id") and not cid:
-        cid = re_parsed["channel_id"]
+        re_parsed = parse_custom_target_identity(canonical_url)
+        if re_parsed.get("handle") and not re_parsed["handle"].isdigit():
+          handle = re_parsed["handle"]
+        if re_parsed.get("channel_id") and not cid:
+          cid = re_parsed["channel_id"]
+        if re_parsed.get("official_name_hint") and not page_official_name:
+          page_official_name = re_parsed["official_name_hint"]
 
-      if not cid and platform == "فيسبوك":
-        for id_pat in [
-            r"fb://(?:page|profile)/(\d{6,})",
-            r'"(?:page_id|delegate_page_id|entity_id|userID)"\s*:\s*"(\d{6,})"',
+        if not cid and platform == "فيسبوك":
+          for id_pat in [
+              r"fb://(?:page|profile)/(\d{6,})",
+              r'"(?:page_id|delegate_page_id|entity_id|userID)"\s*:\s*"(\d{6,})"',
+          ]:
+            m_pid = re.search(id_pat, rp.text[:60000])
+            if m_pid:
+              cid = m_pid.group(1)
+              break
+
+        for t_pat in [
+            r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:title["\']',
+            r"<title>(.*?)</title>",
         ]:
-          m_pid = re.search(id_pat, rp.text[:60000])
-          if m_pid:
-            cid = m_pid.group(1)
+          m_og_t = re.search(t_pat, rp.text[:35000], re.IGNORECASE | re.DOTALL)
+          if m_og_t:
+            cleaned_t = _clean_social_page_title(m_og_t.group(1))
+            if (
+                len(cleaned_t) >= 2
+                and not any(
+                    w in cleaned_t.lower()
+                    for w in [
+                        "log in",
+                        "login",
+                        "تسجيل الدخول",
+                        "قم بتسجيل الدخول",
+                        "not found",
+                        "غير متوفر",
+                    ]
+                )
+                and cleaned_t.lower() not in {"facebook", "فيسبوك", "فايسبوك"}
+            ):
+              page_official_name = cleaned_t
+              break
+
+        for d_pat in [
+            r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']',
+            r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+        ]:
+          m_og_d = re.search(d_pat, rp.text[:35000], re.IGNORECASE)
+          if m_og_d:
+            d_cand = clean_display_text(m_og_d.group(1))
+            if len(d_cand) > 15:
+              page_description = d_cand
+              break
+
+        for i_pat in [
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+        ]:
+          m_og_img = re.search(i_pat, rp.text[:35000], re.IGNORECASE)
+          if m_og_img:
+            page_avatar = html.unescape(m_og_img.group(1).strip())
             break
+    except Exception:
+      pass
 
-      for t_pat in [
-          r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
-          r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:title["\']',
-          r"<title>(.*?)</title>",
-      ]:
-        m_og_t = re.search(t_pat, rp.text[:35000], re.IGNORECASE | re.DOTALL)
-        if m_og_t:
-          cleaned_t = _clean_social_page_title(m_og_t.group(1))
-          if (
-              len(cleaned_t) >= 2
-              and not any(
-                  w in cleaned_t.lower()
-                  for w in [
-                      "log in",
-                      "login",
-                      "تسجيل الدخول",
-                      "قم بتسجيل الدخول",
-                      "not found",
-                      "غير متوفر",
-                  ]
-              )
-              and cleaned_t.lower() not in {"facebook", "فيسبوك", "فايسبوك"}
-          ):
-            page_official_name = cleaned_t
-            break
-
-      for d_pat in [
-          r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
-          r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']',
-          r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
-      ]:
-        m_og_d = re.search(d_pat, rp.text[:35000], re.IGNORECASE)
-        if m_og_d:
-          d_cand = clean_display_text(m_og_d.group(1))
-          if len(d_cand) > 15:
-            page_description = d_cand
-            break
-
-      for i_pat in [
-          r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-          r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
-      ]:
-        m_og_img = re.search(i_pat, rp.text[:35000], re.IGNORECASE)
-        if m_og_img:
-          page_avatar = html.unescape(m_og_img.group(1).strip())
-          break
-  except Exception:
-    pass
-
-  source_badge = f"🎯 {page_official_name or disp}"
+  source_badge = f"🎯 {page_official_name or handle or disp}"
 
   # 2) لصفحات فيسبوك: جلب المنشورات الحية غير المؤرشفة عبر أداة الخط الزمني (BigPipe) وعبر كود Comet Relay JSON المباشر
-  if platform == "فيسبوك":
+  if platform == "فيسبوك" and not is_name_target:
     fb_plugin_posts = _scrape_facebook_plugin_timeline(
         canonical_url,
         t_info,
@@ -4530,7 +4993,6 @@ def _scrape_social_custom_target(
         seen_target_urls.add(u_p)
         all_target_posts.append(p)
 
-    # جلب نسخة المتصفح الكاملة (Comet Relay JSON) لاستخراج المنشورات الحديثة غير المؤرشفة
     chrome_doc_headers = dict(DEFAULT_HEADERS)
     chrome_doc_headers.update({
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -4553,7 +5015,12 @@ def _scrape_social_custom_target(
       for cand_hdr in (applebot_headers, chrome_doc_headers):
         try:
           rc = requests.get(canonical_url, headers=cand_hdr, timeout=8)
-          if rc.status_code == 200 and rc.text and ("story_fbid" in rc.text or "post_id" in rc.text or "UzpfS" in rc.text or "/posts/" in rc.text):
+          if rc.status_code == 200 and rc.text and (
+              "story_fbid" in rc.text
+              or "post_id" in rc.text
+              or "UzpfS" in rc.text
+              or "/posts/" in rc.text
+          ):
             raw_html_candidates.append(rc.text)
             break
         except Exception:
@@ -4580,7 +5047,7 @@ def _scrape_social_custom_target(
           all_target_posts.append(p)
 
   # 3) لمنصة إكس (X/Twitter): فحص نقطة Syndication الرسمية الخاصة بالحساب نفسه (تعمل بالوقت الفعلي دون انتظار الأرشفة)
-  if platform == "إكس" and handle:
+  if platform == "إكس" and handle and not is_name_target:
     synd_url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{urllib.parse.quote(handle)}"
     try:
       rs = requests.get(synd_url, headers=DEFAULT_HEADERS, timeout=9)
@@ -4637,26 +5104,34 @@ def _scrape_social_custom_target(
     except Exception:
       pass
 
-  # 4) مسح تكميلي مقيد بصرامة بملكية الصفحة للرابط (يرفض أي منشور صادر عن صفحة أخرى حتى لو ذكر اسم الصفحة)
+  # 4) مسح شامل بالمعرف والاسم الرسمي معاً (يضمن عدم إرجاع 0 حتى لو كان الرابط بصيغة share/ أو profile.php)
   target_queries = []
   if platform == "فيسبوك":
-    if handle and not handle.startswith("fb_"):
+    if handle and not handle.startswith("fb_") and not handle.isdigit():
+      target_queries.append(f'site:facebook.com "{handle}" {t_kw}'.strip())
       target_queries.append(f'site:facebook.com "{handle}" posts {t_kw}'.strip())
       target_queries.append(f'site:facebook.com "{handle}" videos {t_kw}'.strip())
-      target_queries.append(f'site:facebook.com "{handle}" {t_kw}'.strip())
-    if cid:
-      target_queries.append(f'site:facebook.com "{cid}" {t_kw}'.strip())
-    if page_official_name and (not handle or handle.startswith("fb_")):
+    if page_official_name:
       target_queries.append(
           f'site:facebook.com "{page_official_name}" posts {t_kw}'.strip()
       )
+      target_queries.append(
+          f'site:facebook.com "{page_official_name}" videos {t_kw}'.strip()
+      )
+      target_queries.append(
+          f'site:facebook.com "{page_official_name}" {t_kw}'.strip()
+      )
+    if cid:
+      target_queries.append(f'site:facebook.com "{cid}" {t_kw}'.strip())
   else:
     if handle and not handle.startswith("fb_"):
       target_queries.append(f'site:{domain} "{handle}" {t_kw}'.strip())
       if platform == "إكس":
         target_queries.append(f'site:twitter.com "{handle}" {t_kw}'.strip())
+    if page_official_name:
+      target_queries.append(f'site:{domain} "{page_official_name}" {t_kw}'.strip())
 
-  for tq in target_queries[:4]:
+  for tq in target_queries[:5]:
     if is_stop_requested():
       break
     for entry in _multi_engine_web_search(
@@ -4682,21 +5157,32 @@ def _scrape_social_custom_target(
         else:
           continue
 
-      # فلتر الملكية الصارم: رفض أي منشور صادر عن صفحة أخرى غير الصفحة المخصصة المطلوبة
       if platform == "فيسبوك" and not _is_fb_post_owned_by_target(
           raw_entry_u,
           handle=handle,
           page_id=cid,
           page_official_name=page_official_name,
+          og_title=f"{entry.get('title', '')} {entry.get('raw_snippet', '')}",
       ):
-        continue
-      if platform == "إكس" and handle and f"/{handle.lower()}/status/" not in raw_entry_u.lower():
+        # نسمح للروابط المختصرة (watch/reel/permalink) بالمرور إلى فحص _verify_and_enrich_fb_post_url لاستخراج og:url و og:title الحقيقيين
+        parsed_cand_fb = urllib.parse.urlparse(raw_entry_u)
+        p_segs = [s.lower() for s in parsed_cand_fb.path.strip("/").split("/") if s]
+        if len(p_segs) >= 2 and p_segs[1] in ("posts", "videos", "photos", "reels") and clean_handle if (clean_handle := (handle or "").strip().lower().lstrip("@")) else False:
+          continue
+      if (
+          platform == "إكس"
+          and handle
+          and not is_name_target
+          and f"/{handle.lower()}/status/" not in raw_entry_u.lower()
+      ):
         continue
 
       if raw_entry_u in seen_target_urls:
         continue
 
-      if platform == "فيسبوك" and len(all_target_posts) < 12:
+      if platform == "فيسبوك":
+        entry["raw_snippet"] = _strip_fb_sidebar_noise(entry.get("raw_snippet", ""))
+        entry["title"] = _strip_fb_sidebar_noise(entry.get("title", ""))
         is_ok, og_body, og_img, final_u = _verify_and_enrich_fb_post_url(
             raw_entry_u,
             page_avatar=page_avatar,
@@ -4706,11 +5192,14 @@ def _scrape_social_custom_target(
         )
         if not is_ok:
           continue
-        if og_body and len(og_body) > len(entry.get("raw_snippet", "")):
+        if og_body and len(og_body) >= 12:
           entry["raw_snippet"] = og_body
-          if len(entry.get("title", "")) < 25 or "facebook" in entry.get("title", "").lower():
-            entry["title"] = og_body[:110] + ("..." if len(og_body) > 110 else "")
-        if og_img and not entry.get("image_url"):
+          entry["title"] = og_body[:115] + (
+              "..." if len(og_body) > 115 else ""
+          )
+        elif not entry["raw_snippet"] or len(entry["raw_snippet"]) < 12:
+          continue
+        if og_img:
           entry["image_url"] = og_img
         raw_entry_u = final_u
 
@@ -4758,6 +5247,39 @@ def _scrape_social_custom_target(
   return results
 
 
+def _scrape_name_based_custom_target(
+    t_info: dict,
+    t_kw: str,
+    when_tag: str,
+    ddg_tl: str,
+    max_age_sec: int,
+    seen_urls: set,
+) -> list:
+  """رصد مخصص دقيق عند إدخال اسم القناة أو الصفحة (يجلب حصرياً فيديوهات القناة على يوتيوب ومنشورات الصفحة على فيسبوك الموثقة الملكية)."""
+  results = []
+  name_q = t_info.get("official_name_hint") or t_info.get("display_label", "")
+  if not name_q:
+    return results
+
+  yt_t_info = dict(t_info)
+  yt_t_info["platform"] = "يوتيوب"
+  yt_items = _scrape_youtube_custom_channel(
+      yt_t_info, t_kw, max_age_sec, seen_urls
+  )
+  results.extend(yt_items)
+
+  fb_t_info = dict(t_info)
+  fb_t_info["platform"] = "فيسبوك"
+  fb_t_info["domain"] = "facebook.com"
+  fb_items = _scrape_social_custom_target(
+      fb_t_info, t_kw, when_tag, ddg_tl, max_age_sec, seen_urls
+  )
+  results.extend(fb_items)
+
+  results.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
+  return results
+
+
 def scrape_custom_targets(
     targets: list,
     global_kw: str = "",
@@ -4791,7 +5313,13 @@ def scrape_custom_targets(
       )
 
     platform = t_info["platform"]
-    if platform == "يوتيوب":
+    if t_info.get("is_name_target") and platform == "شامل":
+      items.extend(
+          _scrape_name_based_custom_target(
+              t_info, t_kw, when_tag, ddg_tl, max_age, seen_urls
+          )
+      )
+    elif platform == "يوتيوب":
       items.extend(
           _scrape_youtube_custom_channel(t_info, t_kw, max_age, seen_urls)
       )
@@ -4926,11 +5454,23 @@ def analyze_with_gemini(item: dict, api_key: str):
   return default_result
 
 
-def send_telegram_alert(item: dict, cfg: dict):
+def send_telegram_alert(item: dict, cfg: dict) -> bool:
+  """إرسال إشعار تلغرام مرة واحدة فقط لكل خبر جديد بعد التحقق الصارم من سجل الإرسال الدائم."""
   token = (cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN).strip()
   chat_id = (cfg.get("telegram_chat_id") or DEFAULT_TG_CHAT_ID).strip()
   if not token or not chat_id:
-    return
+    return False
+
+  item_keys = compute_article_dedup_keys(item.get("title", ""), item.get("url", ""))
+  lock = get_db_lock()
+  with lock:
+    ledger = load_telegram_sent_ledger()
+    if int(item.get("telegram_sent", 0)) == 1 or (item_keys & ledger):
+      return False
+    # نحجز بصمة الخبر فوراً في السجل قبل الإرسال لمنع أي خيط متزامن من إرساله مرة ثانية
+    ledger.update(item_keys)
+    save_telegram_sent_ledger(ledger)
+
   platform_icons = {
       "الصحف": "📰",
       "فيسبوك": "🟦",
@@ -4943,7 +5483,7 @@ def send_telegram_alert(item: dict, cfg: dict):
   monitored_dt = datetime.fromtimestamp(
       float(item.get("created_at") or time.time()), tz=timezone.utc
   ).strftime("%Y-%m-%d %H:%M")
-  clean_u = strip_internal_url_fragments(item.get("url", ""))
+  clean_u = clean_social_post_url(item.get("url", ""))
   msg = (
       f"⚖️ *المرصد الوطني للعدالة والقضاء*\n"
       f"{target_badge}"
@@ -4956,7 +5496,7 @@ def send_telegram_alert(item: dict, cfg: dict):
       f"🔗 [فتح المصدر الأصلي]({clean_u})"
   )
   try:
-    requests.post(
+    resp = requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
         json={
             "chat_id": chat_id,
@@ -4966,8 +5506,9 @@ def send_telegram_alert(item: dict, cfg: dict):
         },
         timeout=8,
     )
+    return resp.status_code == 200
   except Exception:
-    pass
+    return False
 
 
 def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
@@ -5040,38 +5581,48 @@ def quick_process_and_save(
     upgrade_incomplete_existing_articles(cfg, max_upgrades=6)
     return 0
 
-  existing_urls = set()
-  existing_plat_titles = set()
+  existing_dedup_keys = set()
   current_targets = load_custom_targets()
   lock = get_db_lock()
   with lock:
+    existing_dedup_keys.update(load_telegram_sent_ledger())
     try:
       conn = _open_sqlite_conn()
       _ensure_schema_on_conn(conn)
       c = conn.cursor()
-      c.execute("SELECT url, platform, title, is_custom_target FROM articles")
-      for r_url, r_plat, r_title, r_tgt in c.fetchall():
-        if r_url:
-          existing_urls.add(r_url.strip())
-        if r_title:
-          existing_plat_titles.add(
-              f"{r_plat or ''}::{int(r_tgt or 0)}::{r_title.strip()}"
-          )
+      c.execute("SELECT url, title FROM articles")
+      for r_url, r_title in c.fetchall():
+        existing_dedup_keys.update(
+            compute_article_dedup_keys(r_title or "", r_url or "")
+        )
       conn.close()
     except Exception:
       pass
 
+    if os.path.exists(ARCHIVE_JSON_FILE):
+      try:
+        with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
+          arch_items = json.load(f)
+        if isinstance(arch_items, list):
+          for a_it in arch_items:
+            if isinstance(a_it, dict):
+              existing_dedup_keys.update(
+                  compute_article_dedup_keys(
+                      a_it.get("title", ""), a_it.get("url", "")
+                  )
+              )
+      except Exception:
+        pass
+
   kw_filter = cfg.get("keywords_input", "")
   candidates = []
-  seen_batch_urls = set()
-  seen_batch_plat_titles = set()
+  seen_batch_keys = set()
   for it in sorted(
       items, key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
   ):
     u = (it.get("url") or "").strip()
     t = clean_display_text(it.get("title") or "")
     s_raw = clean_display_text(it.get("raw_snippet") or "")
-    p = it.get("platform", "الصحف")
     is_tgt = bool(is_target_run or it.get("is_custom_target"))
     if not u or not t:
       continue
@@ -5081,13 +5632,13 @@ def quick_process_and_save(
       continue
     if is_tgt and not belongs_to_any_custom_target(it, current_targets):
       continue
-    pt_key = f"{p}::{1 if is_tgt else 0}::{t}"
-    if u in existing_urls or pt_key in existing_plat_titles:
+
+    pre_keys = compute_article_dedup_keys(t, u)
+    # الفحص الأول قبل فك الروابط: إذا كان الخبر مرصوداً سابقاً نتخطاه فوراً ليبقى في الموقع 24 ساعة من وقت رصده الأول ثم يحال للأرشيف
+    if (pre_keys & existing_dedup_keys) or (pre_keys & seen_batch_keys):
       continue
-    if u in seen_batch_urls or pt_key in seen_batch_plat_titles:
-      continue
-    seen_batch_urls.add(u)
-    seen_batch_plat_titles.add(pt_key)
+
+    seen_batch_keys.update(pre_keys)
     it["title"] = t
     candidates.append(it)
 
@@ -5097,6 +5648,7 @@ def quick_process_and_save(
 
   api_key = (cfg.get("gemini_api_key") or "").strip()
   prepared_rows = []
+  post_enrich_seen_keys = set()
   ai_calls = 0
   enrichment_calls = 0
 
@@ -5109,6 +5661,12 @@ def quick_process_and_save(
     if enrichment_calls < 14:
       enrichment_calls += 1
       enrich_item_content_and_image(it)
+
+    # الفحص الثاني بعد فك روابط Google News وتحديث العنوان والرابط النهائي: يمنع دخول أي خبر مكرر بعد فك التوجيه
+    post_keys = compute_article_dedup_keys(it.get("title", ""), it.get("url", ""))
+    if (post_keys & existing_dedup_keys) or (post_keys & post_enrich_seen_keys):
+      continue
+    post_enrich_seen_keys.update(post_keys)
 
     raw_snip = clean_display_text(it.get("raw_snippet") or "")
     img_url = (it.get("image_url") or "").strip()
@@ -5150,6 +5708,7 @@ def quick_process_and_save(
         "raw_snippet": raw_snip[:1200],
         "image_url": img_url,
         "created_at": time.time(),
+        "telegram_sent": 0,
     }
     prepared_rows.append(record)
 
@@ -5168,14 +5727,17 @@ def quick_process_and_save(
           _rebuild_articles_table_safely(conn)
         c = conn.cursor()
         for rec in prepared_rows:
+          rec_keys = compute_article_dedup_keys(rec["title"], rec["url"])
+          if rec_keys & existing_dedup_keys:
+            continue
           c.execute(
               """
                         INSERT OR IGNORE INTO articles (
                             title, summary, source_name, platform, url,
                             pub_date, pub_timestamp, sentiment, category,
                             relevance_score, is_custom_target, raw_snippet,
-                            image_url, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            image_url, created_at, telegram_sent
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
               (
                   rec["title"],
@@ -5192,9 +5754,11 @@ def quick_process_and_save(
                   rec["raw_snippet"],
                   rec["image_url"],
                   rec["created_at"],
+                  0,
               ),
           )
           if c.rowcount and c.rowcount > 0:
+            existing_dedup_keys.update(rec_keys)
             added_items.append(rec)
         conn.commit()
         conn.close()
@@ -5206,15 +5770,32 @@ def quick_process_and_save(
           except Exception:
             pass
         time.sleep(0.25)
-        if attempt == 2:
-          added_items = list(prepared_rows)
 
   upgrade_incomplete_existing_articles(cfg, max_upgrades=4)
 
   if added_items:
-    sync_db_to_json(extra_items=added_items)
     for rec in added_items[:10]:
-      send_telegram_alert(rec, cfg)
+      sent_ok = send_telegram_alert(rec, cfg)
+      rec["telegram_sent"] = 1
+      # حتى لو تجاوز العدد 10 في دفعة واحدة، نسجل البقية في السجل حتى لا ترسل في الدورات التلقائية اللاحقة كأخبار قديمة
+    with lock:
+      ledger_now = load_telegram_sent_ledger()
+      for rec in added_items:
+        rec["telegram_sent"] = 1
+        ledger_now.update(compute_article_dedup_keys(rec["title"], rec["url"]))
+      save_telegram_sent_ledger(ledger_now)
+      try:
+        conn = _open_sqlite_conn()
+        c = conn.cursor()
+        c.executemany(
+            "UPDATE articles SET telegram_sent = 1 WHERE url = ?",
+            [(r["url"],) for r in added_items],
+        )
+        conn.commit()
+        conn.close()
+      except Exception:
+        pass
+    sync_db_to_json(extra_items=added_items)
 
   return len(added_items)
 
@@ -5464,40 +6045,140 @@ div[data-testid="stFormSubmitButton"] > button:hover {
     box-shadow: 0 8px 22px rgba(56, 189, 248, 0.28) !important;
 }
 
-div[data-testid="stVerticalBlock"]:has(.btn-marker-all) div.stButton > button {
-    background: linear-gradient(135deg, #0284c7 0%, #1d4ed8 100%) !important;
-    border: 1px solid rgba(125, 211, 252, 0.55) !important;
+/* إطارات الرصد الملونة الاحترافية (لكل نوع رصد إطار ملون خاص يضم اسم المنصة وزر تشغيل ▶ وزر إيقاف ⏹) */
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-marker) {
+    border-radius: 16px !important;
+    padding: 10px 14px !important;
+    margin-bottom: 6px !important;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    transition: transform 0.2s ease, box-shadow 0.2s ease !important;
 }
-div[data-testid="stVerticalBlock"]:has(.btn-marker-press) div.stButton > button {
-    background: linear-gradient(135deg, #059669 0%, #065f46 100%) !important;
-    border: 1px solid rgba(110, 231, 183, 0.5) !important;
+
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-marker):hover {
+    transform: translateY(-2px) !important;
 }
-div[data-testid="stVerticalBlock"]:has(.btn-marker-fb) div.stButton > button {
-    background: linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%) !important;
-    border: 1px solid rgba(147, 197, 253, 0.5) !important;
+
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-all) {
+    background: linear-gradient(135deg, rgba(2, 132, 199, 0.36) 0%, rgba(30, 58, 138, 0.52) 100%) !important;
+    border: 1.5px solid rgba(56, 189, 248, 0.65) !important;
 }
-div[data-testid="stVerticalBlock"]:has(.btn-marker-x) div.stButton > button {
-    background: linear-gradient(135deg, #334155 0%, #0f172a 100%) !important;
-    border: 1px solid rgba(203, 213, 225, 0.45) !important;
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-press) {
+    background: linear-gradient(135deg, rgba(5, 150, 105, 0.36) 0%, rgba(6, 78, 59, 0.54) 100%) !important;
+    border: 1.5px solid rgba(52, 211, 153, 0.65) !important;
 }
-div[data-testid="stVerticalBlock"]:has(.btn-marker-yt) div.stButton > button {
-    background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%) !important;
-    border: 1px solid rgba(252, 165, 165, 0.5) !important;
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-fb) {
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.38) 0%, rgba(30, 58, 138, 0.56) 100%) !important;
+    border: 1.5px solid rgba(96, 165, 250, 0.65) !important;
 }
-div[data-testid="stVerticalBlock"]:has(.btn-marker-other) div.stButton > button {
-    background: linear-gradient(135deg, #7c3aed 0%, #4c1d95 100%) !important;
-    border: 1px solid rgba(196, 181, 253, 0.5) !important;
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-x) {
+    background: linear-gradient(135deg, rgba(71, 85, 105, 0.44) 0%, rgba(15, 23, 42, 0.72) 100%) !important;
+    border: 1.5px solid rgba(203, 213, 225, 0.55) !important;
 }
-div[data-testid="stVerticalBlock"]:has(.btn-marker-target) div.stButton > button {
-    background: linear-gradient(135deg, #d97706 0%, #78350f 100%) !important;
-    border: 1px solid rgba(253, 230, 138, 0.5) !important;
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-yt) {
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.38) 0%, rgba(127, 29, 29, 0.56) 100%) !important;
+    border: 1.5px solid rgba(248, 113, 113, 0.65) !important;
 }
-div[data-testid="stVerticalBlock"]:has(.btn-marker-stop) div.stButton > button {
-    background: linear-gradient(135deg, #991b1b 0%, #450a0a 100%) !important;
-    border: 1px solid rgba(248, 113, 113, 0.5) !important;
-    min-height: 34px !important;
-    padding: 0.25rem 0.5rem !important;
-    font-size: 0.76rem !important;
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-other) {
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.38) 0%, rgba(76, 29, 149, 0.56) 100%) !important;
+    border: 1.5px solid rgba(192, 132, 252, 0.65) !important;
+}
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-target) {
+    background: linear-gradient(135deg, rgba(217, 119, 6, 0.40) 0%, rgba(120, 53, 15, 0.58) 100%) !important;
+    border: 1.5px solid rgba(251, 191, 36, 0.7) !important;
+}
+
+/* تنسيق الصف الداخلي داخل كل إطار رصد ملون ليكون اسم المنصة وبجانبه زر التشغيل وزر الإيقاف جنباً إلى جنب */
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-marker) div[data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 6px !important;
+}
+
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-marker) div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+div[data-testid="stVerticalBlock"]:has(> div .scan-frame-marker) div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+    min-width: 0 !important;
+}
+
+.scan-platform-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    direction: rtl !important;
+    text-align: right !important;
+    padding: 2px 0;
+}
+
+.scan-platform-icon {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.05rem;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.scan-platform-title {
+    font-size: 0.92rem;
+    font-weight: 900;
+    color: #f8fafc;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.scan-platform-sub {
+    font-size: 0.71rem;
+    font-weight: 700;
+    color: #cbd5e1;
+    opacity: 0.9;
+    white-space: nowrap;
+}
+
+/* أزرار التشغيل (▶) والإيقاف (⏹) بأيقونات مشغلات الفيديو الاحترافية */
+div[data-testid="stVerticalBlock"]:has(> div .media-play-marker) div.stButton > button {
+    background: linear-gradient(135deg, #10b981 0%, #047857 100%) !important;
+    border: 1.5px solid rgba(110, 231, 183, 0.75) !important;
+    color: #ffffff !important;
+    min-height: 40px !important;
+    height: 40px !important;
+    padding: 0 10px !important;
+    border-radius: 11px !important;
+    font-size: 1.02rem !important;
+    font-weight: 900 !important;
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.38) !important;
+}
+
+div[data-testid="stVerticalBlock"]:has(> div .media-play-marker) div.stButton > button:hover {
+    background: linear-gradient(135deg, #34d399 0%, #059669 100%) !important;
+    border-color: #ffffff !important;
+    box-shadow: 0 6px 18px rgba(16, 185, 129, 0.6) !important;
+    transform: scale(1.04) !important;
+}
+
+div[data-testid="stVerticalBlock"]:has(> div .media-stop-marker) div.stButton > button {
+    background: linear-gradient(135deg, #ef4444 0%, #991b1b 100%) !important;
+    border: 1.5px solid rgba(252, 165, 165, 0.7) !important;
+    color: #ffffff !important;
+    min-height: 40px !important;
+    height: 40px !important;
+    padding: 0 10px !important;
+    border-radius: 11px !important;
+    font-size: 1.02rem !important;
+    font-weight: 900 !important;
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35) !important;
+}
+
+div[data-testid="stVerticalBlock"]:has(> div .media-stop-marker) div.stButton > button:hover {
+    background: linear-gradient(135deg, #f87171 0%, #b91c1c 100%) !important;
+    border-color: #ffffff !important;
+    box-shadow: 0 6px 18px rgba(239, 68, 68, 0.58) !important;
+    transform: scale(1.04) !important;
 }
 
 .radar-panel {
@@ -5966,7 +6647,7 @@ with st.expander(
     with c_u:
       new_t_url = st.text_input(
           "الرابط",
-          placeholder="https://www.youtube.com/@... أو رابط صفحة فيسبوك/إكس/موقع",
+          placeholder="رابط قناة/صفحة (يوتيوب/فيسبوك/إكس) أو اكتب اسم القناة أو الصفحة أو صاحبها مباشرة...",
           label_visibility="collapsed",
       )
     with c_k:
@@ -5998,30 +6679,52 @@ with st.expander(
         st.rerun()
 
 # =====================================================================
-# 15. لوحة أزرار الرصد المتجاوبة (تلتف تلقائياً حسب عرض الشاشة)
+# 15. لوحة إطارات الرصد الملونة الاحترافية (المنصة + زر التشغيل ▶ + زر الإيقاف ⏹)
 # =====================================================================
 SCAN_MODES = [
-    ("all", "🚀 رصد الشامل", "btn-marker-all"),
-    ("press", "📰 رصد الصحف", "btn-marker-press"),
-    ("fb", "🟦 رصد فيسبوك", "btn-marker-fb"),
-    ("x", "⬛ رصد إكس", "btn-marker-x"),
-    ("yt", "🟥 رصد يوتيوب", "btn-marker-yt"),
-    ("other", "🟪 رصد أخرى", "btn-marker-other"),
-    ("target", "🎯 رصد المخصص", "btn-marker-target"),
+    ("all", "الرصد الشامل", "جميع المنصات والمصادر", "🚀", "scan-frame-all"),
+    ("press", "الصحف المغربية", "المواقع والجرائد الوطنية", "📰", "scan-frame-press"),
+    ("fb", "منصة فيسبوك", "الصفحات والمنشورات العامة", "🟦", "scan-frame-fb"),
+    ("x", "منصة إكس (X)", "التغريدات والحسابات", "⬛", "scan-frame-x"),
+    ("yt", "منصة يوتيوب", "القنوات والفيديوهات", "🟥", "scan-frame-yt"),
+    ("other", "منصات أخرى", "تيك توك • إنستغرام • لينكدإن", "🟪", "scan-frame-other"),
+    ("target", "الرصد المخصص", f"القنوات والصفحات المحددة ({len(custom_targets)})", "🎯", "scan-frame-target"),
 ]
 
-btn_cols = st.columns(len(SCAN_MODES))
 triggered_mode = None
 
-for col_idx, (mode_key, mode_label, marker_cls) in enumerate(SCAN_MODES):
-  with btn_cols[col_idx]:
-    render_html(f'<span class="{marker_cls}"></span>')
-    if st.button(mode_label, key=f"start_scan_{mode_key}"):
-      clear_stop_scan()
-      triggered_mode = mode_key
-    render_html('<span class="btn-marker-stop"></span>')
-    if st.button("🛑 إيقاف", key=f"stop_scan_{mode_key}"):
-      request_stop_scan()
+# توزيع إطارات الرصد الملونة في شبكتين متناسقتين (4 في الصف الأول و3 في الصف الثاني)
+row1_modes = SCAN_MODES[:4]
+row2_modes = SCAN_MODES[4:]
+
+for row_modes in (row1_modes, row2_modes):
+  row_cols = st.columns(len(row_modes))
+  for col_idx, (mode_key, mode_title, mode_sub, mode_icon, frame_cls) in enumerate(row_modes):
+    with row_cols[col_idx]:
+      with st.container():
+        render_html(f'<span class="scan-frame-marker {frame_cls}" style="display:none;"></span>')
+        c_info, c_play, c_stop = st.columns([2.35, 0.85, 0.85])
+        with c_info:
+          render_html(
+              f"""
+              <div class="scan-platform-info" dir="rtl">
+                  <span class="scan-platform-icon">{mode_icon}</span>
+                  <div style="min-width:0;overflow:hidden;">
+                      <div class="scan-platform-title">{html.escape(mode_title)}</div>
+                      <div class="scan-platform-sub">{html.escape(mode_sub)}</div>
+                  </div>
+              </div>
+              """
+          )
+        with c_play:
+          render_html('<span class="media-play-marker" style="display:none;"></span>')
+          if st.button("▶", key=f"start_scan_{mode_key}", help=f"تشغيل {mode_title}"):
+            clear_stop_scan()
+            triggered_mode = mode_key
+        with c_stop:
+          render_html('<span class="media-stop-marker" style="display:none;"></span>')
+          if st.button("⏹", key=f"stop_scan_{mode_key}", help=f"إيقاف {mode_title}"):
+            request_stop_scan()
 
 # =====================================================================
 # 16. منطقة الرادار الدوار 360° وشريط التقدم ومؤشر DONE
@@ -6164,14 +6867,9 @@ archive_articles = []
 for a in all_articles:
   pub_t = float(a.get("pub_timestamp", 0))
   mon_t = float(a.get("created_at") or pub_t)
+  # يبقى الخبر المرصود في الواجهة النشطة لمدة 24 ساعة من وقت رصده الأول (created_at)، وبمجرد مرور 24 ساعة يُحال تلقائياً إلى الأرشيف ولا يُعاد رصده مرة أخرى
   is_monitored_within_24h = (now_ts - mon_t) < 86400
-  is_within_search_period = (now_ts - pub_t) <= max(selected_period_sec, 86400)
-  is_tgt_item = int(a.get("is_custom_target", 0)) == 1
-  if (
-      (is_monitored_within_24h and is_within_search_period)
-      or ((now_ts - pub_t) < 86400)
-      or (is_tgt_item and is_monitored_within_24h)
-  ):
+  if is_monitored_within_24h:
     live_articles.append(a)
   else:
     archive_articles.append(a)
@@ -6188,7 +6886,7 @@ yt_live = [a for a in live_articles if a.get("platform") == "يوتيوب"]
 other_live = [a for a in live_articles if a.get("platform") == "أخرى"]
 target_live = [
     a
-    for a in all_articles
+    for a in live_articles
     if int(a.get("is_custom_target", 0)) == 1
     and belongs_to_any_custom_target(a, custom_targets)
 ]
