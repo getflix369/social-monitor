@@ -667,8 +667,7 @@ def is_direct_social_post_url(
     ):
       return False
 
-    if (qs.get("post_ref") or [""])[0].strip():
-      return True
+
 
     if (qs.get("story_fbid") or [""])[0].strip() or (qs.get("fbid") or [""])[0].strip() or (qs.get("post_id") or [""])[0].strip():
       return True
@@ -3398,32 +3397,119 @@ def _extract_fb_page_label_from_entry(url: str, title: str) -> str:
   return "فيسبوك"
 
 
+MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES = [
+    ("pmpmaroc", "فيسبوك • رئاسة النيابة العامة"),
+    ("Hespress", "فيسبوك • هسبريس"),
+    ("al3omk", "فيسبوك • العمق المغربي"),
+    ("alyaoum24", "فيسبوك • اليوم 24"),
+    ("madar21com", "فيسبوك • مدار 21"),
+    ("alayam24", "فيسبوك • الأيام 24"),
+    ("goudmag", "فيسبوك • كود"),
+    ("akhbarona.page", "فيسبوك • أخبارنا"),
+    ("rue20.ma", "فيسبوك • زنقة 20"),
+]
+
+
 def scrape_facebook_platform(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ):
-  """محرك رصد متخصص لمنصة فيسبوك يجمع بين البحث العميق في منشورات وفيديوهات فيسبوك القضائية بالمغرب وصفحات المؤسسات القضائية والصحافة الوطنية."""
+  """محرك رصد شامل لمنصة فيسبوك يجمع بين الفحص المباشر للخط الزمني لصفحات القضاء والصحافة المغربية على فيسبوك والبحث المتعدد المحركات."""
   items = []
   seen_urls = set()
   p_cfg = get_period_config(search_period)
   max_age = p_cfg["sec"]
   now_ts = time.time()
 
+  chrome_doc_headers = dict(DEFAULT_HEADERS)
+  chrome_doc_headers.update({
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Site": "none",
+      "Upgrade-Insecure-Requests": "1",
+  })
+
+  # 1) الفحص المباشر للخط الزمني لصفحات المؤسسات القضائية والصحف المغربية الكبرى على فيسبوك (يعمل حتى لو حجبت محركات البحث site:facebook.com)
+  for p_idx, (fb_handle, fb_badge) in enumerate(MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES):
+    if is_stop_requested():
+      break
+    if progress_cb:
+      progress_cb(
+          min(0.55, (p_idx + 1) / max(1, len(MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES) * 2)),
+          f"فحص منشورات {fb_badge} الحية...",
+      )
+    page_u = f"https://www.facebook.com/{fb_handle}"
+    is_pure_judicial_page = fb_handle == "pmpmaroc"
+
+    # أ) فحص أداة الخط الزمني لفيسبوك (BigPipe plugin)
+    plugin_posts = _scrape_facebook_plugin_timeline(
+        page_u,
+        {},
+        fb_badge,
+        "",
+        keywords_input,
+        handle=fb_handle,
+        page_id="",
+    )
+    # ب) فحص كود Comet SSR JSON المباشر للصفحة
+    try:
+      rc = requests.get(
+          page_u,
+          headers=chrome_doc_headers,
+          cookies={"locale": "ar_AR"},
+          timeout=7,
+      )
+      if rc.status_code == 200 and rc.text and len(rc.text) > 15000:
+        plugin_posts.extend(
+            _extract_facebook_posts_from_raw_html(
+                rc.text,
+                page_u,
+                fb_handle,
+                "",
+                {},
+                fb_badge,
+                "",
+                keywords_input,
+                page_official_name=fb_badge.replace("فيسبوك • ", ""),
+            )
+        )
+    except Exception:
+      pass
+
+    for p in plugin_posts:
+      u_p = clean_social_post_url(p.get("url", ""))
+      if not u_p or u_p in seen_urls or not is_direct_social_post_url(u_p, "فيسبوك"):
+        continue
+      # إذا كانت صفحة صحفية عامة، نشترط أن يكون المنشور قضائياً؛ أما صفحة رئاسة النيابة العامة فجميع منشوراتها قضائية
+      if not is_strictly_judicial_and_clean(
+          p.get("title", ""),
+          p.get("raw_snippet", ""),
+          u_p,
+          keywords_input,
+          is_target=is_pure_judicial_page and not bool(keywords_input.strip()),
+      ):
+        continue
+      seen_urls.add(u_p)
+      p["url"] = f"{u_p}#plat=fb"
+      p["platform"] = "فيسبوك"
+      p["source_name"] = fb_badge
+      items.append(p)
+
+  # 2) البحث العميق في منشورات وفيديوهات فيسبوك عبر محركات البحث المتوازية
   if keywords_input and keywords_input.strip():
     custom_kws = [k.strip() for k in re.split(r"[,،\n]+", keywords_input) if k.strip()]
     fb_queries = []
     for kw in custom_kws[:4]:
       fb_queries.append(f'site:facebook.com "{kw}" القضاء المغرب')
-      fb_queries.append(f'site:facebook.com "{kw}" المحكمة OR النيابة العامة المغرب')
-      fb_queries.append(f'facebook.com/posts "{kw}" المغرب')
+      fb_queries.append(f'facebook.com "{kw}" المحكمة OR النيابة العامة المغرب')
   else:
     fb_queries = [
         'site:facebook.com "المجلس الأعلى للسلطة القضائية"',
         'site:facebook.com "رئاسة النيابة العامة" المغرب',
         'site:facebook.com "محكمة النقض" المغرب',
         'site:facebook.com "الوكيل العام للملك" OR "وكيل الملك" المغرب',
-        'site:facebook.com "المحاكم المغربية" OR "القضاء بالمغرب"',
-        'site:facebook.com "وزارة العدل" القضاء المغرب',
-        'site:facebook.com/pmpmaroc',
+        'facebook.com/posts "القضاء" OR "النيابة العامة" المغرب',
+        'facebook.com/videos "القضاء" OR "المجلس الأعلى للسلطة القضائية" المغرب',
     ]
 
   total_q = len(fb_queries)
@@ -3432,7 +3518,7 @@ def scrape_facebook_platform(
       break
     if progress_cb:
       progress_cb(
-          min(0.92, (idx + 1) / max(1, total_q + 1)),
+          min(0.92, 0.55 + 0.37 * ((idx + 1) / max(1, total_q))),
           f"مسح منشورات وفيديوهات فيسبوك القضائية ({idx + 1}/{total_q})...",
       )
 
@@ -3443,37 +3529,23 @@ def scrape_facebook_platform(
       if is_stop_requested():
         break
       raw_u = clean_social_post_url(entry.get("url", ""))
-      if not raw_u or "facebook.com" not in raw_u.lower() and "fb.watch" not in raw_u.lower():
+      if not raw_u or ("facebook.com" not in raw_u.lower() and "fb.watch" not in raw_u.lower()):
         continue
 
       raw_snip = _strip_fb_sidebar_noise(entry.get("raw_snippet", ""))
       raw_title = _strip_fb_sidebar_noise(entry.get("title", ""))
 
-      # إزالة ديباجة الإعجابات والمتابعين من بداية المقتطف إن وجدت
-      raw_snip = re.sub(
-          r"^.*?(?:talking about this|يتحدث عن هذا|تسجيل إعجاب|likes?\s*·)[^.]*[.·•-]?\s*",
-          "",
-          raw_snip,
-          flags=re.IGNORECASE,
-      ).strip()
-
       if not is_direct_social_post_url(raw_u, "فيسبوك"):
-        # إذا كان الرابط رابط صفحة فيسبوك العامة والمقتطف يحتوي على نص منشور قضائي حقيقي، نولّد له مرجع post_ref لفتحه وعدم إضاعته
-        if len(raw_snip) >= 35 and is_strictly_judicial_and_clean(
-            raw_title, raw_snip, "", keywords_input, is_target=False
-        ):
-          ref_h = abs(hash(normalize_arabic_for_dedup(raw_snip)[:50])) % 100000000
-          base_u = raw_u.rstrip("/")
-          sep = "&" if "?" in base_u else "?"
-          raw_u = clean_social_post_url(f"{base_u}{sep}post_ref={ref_h}")
+        resolved_u = resolve_direct_facebook_post_url(raw_snip, raw_title)
+        if resolved_u and is_direct_social_post_url(resolved_u, "فيسبوك"):
+          raw_u = resolved_u
         else:
           continue
 
       if raw_u in seen_urls:
         continue
 
-      # محاولة إثراء سريعة للمنشور عبر ترويسات المعاينة لاستخراج الصورة والنص الكامل
-      if len(items) < 12 and "post_ref=" not in raw_u:
+      if len(items) < 14:
         is_ok, og_body, og_img, final_u = _verify_and_enrich_fb_post_url(raw_u)
         if not is_ok:
           continue
@@ -3511,8 +3583,8 @@ def scrape_facebook_platform(
           "image_url": entry.get("image_url", ""),
       })
 
-  # استكمال الرصد من التغطيات القضائية المرتبطة بفيسبوك إذا كان العدد قليلاً
-  if len(items) < 6 and not is_stop_requested():
+  # 3) استكمال الرصد من التغطيات القضائية الموثوقة لمنشورات فيسبوك
+  if len(items) < 8 and not is_stop_requested():
     extra_social = _multi_engine_social_search(
         "فيسبوك", ["facebook.com"], keywords_input, search_period, progress_cb=None
     )
@@ -4777,6 +4849,106 @@ def _verify_and_enrich_fb_post_url(
     return is_owned, "", page_avatar, post_u
 
 
+def _walk_comet_json_for_stories(node, collected_stories: list, depth: int = 0):
+  """تجول عودي ذكي داخل شجرة JSON الخاصة بـ Facebook Comet SSR لاستخراج كائنات المنشورات والفيديوهات الحية بدقة 100%."""
+  if depth > 28 or node is None:
+    return
+  if isinstance(node, list):
+    for item in node:
+      _walk_comet_json_for_stories(item, collected_stories, depth + 1)
+    return
+  if not isinstance(node, dict):
+    return
+
+  # التحقق مما إذا كانت العقدة الحالية تمثل منشوراً أو قصة (Story) في فيسبوك
+  has_msg = isinstance(node.get("message"), dict) and bool(node["message"].get("text"))
+  has_comet_sec = isinstance(node.get("comet_sections"), dict)
+  has_story_urls = any(k in node for k in ("permalink_url", "wwwURL", "shareable_url"))
+  if has_msg or has_comet_sec or has_story_urls:
+    collected_stories.append(node)
+
+  for k, val in node.items():
+    if isinstance(val, (dict, list)):
+      _walk_comet_json_for_stories(val, collected_stories, depth + 1)
+
+
+def _extract_fields_from_story_dict(story_node: dict, handle: str = "", page_id: str = "") -> dict:
+  """استخراج نص المنشور، الرابط المباشر، وقت النشر، والصورة المصغرة من عقدة Story في Comet JSON."""
+  texts = []
+  urls = []
+  timestamps = []
+  images = []
+  post_ids = []
+
+  def _scan_story(sub, d=0):
+    if d > 14 or sub is None:
+      return
+    if isinstance(sub, list):
+      for x in sub:
+        _scan_story(x, d + 1)
+      return
+    if not isinstance(sub, dict):
+      return
+
+    for k, v in sub.items():
+      if k in ("message", "savable_description", "title") and isinstance(v, dict):
+        t_val = v.get("text")
+        if isinstance(t_val, str) and len(t_val.strip()) >= 12:
+          texts.append(clean_display_text(t_val))
+      elif k in ("permalink_url", "wwwURL", "url", "shareable_url") and isinstance(v, str):
+        u_cand = clean_social_post_url(v)
+        if is_direct_social_post_url(u_cand, "فيسبوك"):
+          urls.append(u_cand)
+      elif k in ("creation_time", "publish_time") and isinstance(v, (int, float)):
+        if 1500000000 < v < 2100000000:
+          timestamps.append(int(v))
+      elif k in ("post_id", "story_fbid", "top_level_post_id") and isinstance(v, (str, int)):
+        s_v = str(v).strip()
+        if s_v.startswith("pfbid") or (s_v.isdigit() and len(s_v) >= 8):
+          post_ids.append(s_v)
+      elif k == "id" and isinstance(v, str) and v.startswith("UzpfS"):
+        try:
+          dec = base64.b64decode(v + "===").decode("utf-8", errors="ignore")
+          m_sp = re.search(r"S:_I(\d{6,}):(\d{8,}|pfbid[A-Za-z0-9]+)", dec)
+          if m_sp:
+            post_ids.append(m_sp.group(2))
+        except Exception:
+          pass
+      elif k == "uri" and isinstance(v, str) and "scontent" in v:
+        if not any(sz in v for sz in ("p50x50", "s50x50", "p32x32", "s32x32", "p40x40")):
+          images.append(v)
+
+      if isinstance(v, (dict, list)):
+        _scan_story(v, d + 1)
+
+  _scan_story(story_node)
+
+  best_text = ""
+  for t_cand in texts:
+    if len(t_cand) > len(best_text):
+      best_text = t_cand
+
+  best_url = ""
+  for u_cand in urls:
+    if _is_fb_post_owned_by_target(u_cand, handle=handle, page_id=page_id):
+      best_url = u_cand
+      break
+
+  if not best_url and post_ids:
+    pid = post_ids[0]
+    if handle and not handle.startswith("fb_") and not handle.isdigit():
+      best_url = f"https://www.facebook.com/{handle}/posts/{pid}"
+    elif page_id:
+      best_url = f"https://www.facebook.com/permalink.php?story_fbid={pid}&id={page_id}"
+
+  return {
+      "text": best_text,
+      "url": best_url,
+      "timestamp": timestamps[0] if timestamps else 0,
+      "image": images[0] if images else "",
+  }
+
+
 def _extract_comet_relay_posts_from_html(
     raw_html: str,
     handle: str,
@@ -4787,73 +4959,110 @@ def _extract_comet_relay_posts_from_html(
     page_avatar: str,
     t_kw: str,
 ) -> list:
-  """تحليل بيانات Comet Relay JSON المضمنة في كود صفحة فيسبوك الحديث لاستخراج المنشورات الحية غير المؤرشفة."""
+  """تحليل بيانات Comet Relay JSON المضمنة في كود صفحة فيسبوك الحديث (عبر تحليل شجرة JSON + التعبير النمطي المرن) لاستخراج المنشورات الحية."""
   if not raw_html:
     return []
 
   posts = []
   seen_u = set()
-  unescaped = raw_html.replace("\\/", "/")
 
-  # فك معرفات القصص المشفرة بصيغة Base64 (UzpfSTE... -> S:_I{page_id}:{post_id})
-  for m_b64 in re.finditer(r'"id"\s*:\s*"(UzpfS[A-Za-z0-9+/=]{16,})"', raw_html):
+  # 1) التحليل الشجري الكامل لجميع كتل <script type="application/json"> في الصفحة
+  for m_script in re.finditer(
+      r'<script[^>]*type=["\']application/json["\'][^>]*>(.*?)</script>',
+      raw_html,
+      re.DOTALL | re.IGNORECASE,
+  ):
+    s_txt = m_script.group(1).strip()
+    if len(s_txt) < 100 or not any(
+        k in s_txt for k in ("message", "comet_sections", "pfbid", "story_fbid", "creation_time", "UzpfS")
+    ):
+      continue
     try:
-      dec = base64.b64decode(m_b64.group(1)).decode("utf-8", errors="ignore")
-      m_sp = re.search(r"S:_I(\d{6,}):(\d{10,}|pfbid[A-Za-z0-9]+)", dec)
-      if m_sp:
-        owner_id, story_id = m_sp.group(1), m_sp.group(2)
-        if page_id and owner_id != page_id:
+      data_json = json.loads(s_txt)
+      story_nodes = []
+      _walk_comet_json_for_stories(data_json, story_nodes)
+      for s_node in story_nodes:
+        info = _extract_fields_from_story_dict(s_node, handle=handle, page_id=page_id)
+        p_txt = _strip_fb_sidebar_noise(info["text"])
+        p_url = clean_social_post_url(info["url"])
+        if not p_txt or len(p_txt) < 14 or not p_url or p_url in seen_u:
           continue
-        if handle and not handle.startswith("fb_") and not handle.isdigit():
-          u_cand = f"https://www.facebook.com/{handle}/posts/{story_id}"
-        else:
-          u_cand = f"https://www.facebook.com/permalink.php?story_fbid={story_id}&id={owner_id}"
-        seen_u.add(u_cand)
+        if not is_direct_social_post_url(p_url, "فيسبوك"):
+          continue
+        if not _is_fb_post_owned_by_target(
+            p_url, handle=handle, page_id=page_id, page_official_name=page_official_name
+        ):
+          continue
+        if not is_strictly_judicial_and_clean(
+            p_txt, p_txt, p_url, t_kw, is_target=bool(t_info)
+        ):
+          continue
+        raw_ts = str(info["timestamp"]) if info["timestamp"] else ""
+        pub_str, pub_ts = extract_date_from_url_or_text(
+            p_url, p_txt, raw_ts, fallback_offset_sec=1800
+        )
+        entry = {
+            "title": p_txt[:115] + ("..." if len(p_txt) > 115 else ""),
+            "url": p_url,
+            "raw_snippet": p_txt,
+            "source_name": source_badge,
+            "platform": "فيسبوك",
+            "pub_date": pub_str,
+            "pub_timestamp": pub_ts,
+            "image_url": info["image"] or page_avatar,
+        }
+        if t_info:
+          _tag_custom_target_item(entry, t_info, source_badge)
+        seen_u.add(p_url)
+        posts.append(entry)
     except Exception:
       pass
 
-  # استخراج الكتل التي تجمع بين نص المنشور ("message":{...,"text":"..."}) ورابط أو معرف المنشور في Comet JSON
+  # 2) مسح احتياطي مرن يدعم الكائنات المتداخلة داخل "message" (مثل ranges/entity) في النصوص الخام
+  unescaped = raw_html.replace("\\/", "/")
   for m_msg in re.finditer(
-      r'"(?:message|savable_description)"\s*:\s*\{[^{}]{0,1200}?"text"\s*:\s*"((?:[^"\\]|\\.){15,})"',
+      r'"(?:message|savable_description)"\s*:\s*\{[\s\S]{0,2500}?"text"\s*:\s*"((?:[^"\\]|\\.){15,})"',
       raw_html,
   ):
-    msg_txt = decode_js_escaped_text(m_msg.group(1))
+    msg_txt = _strip_fb_sidebar_noise(decode_js_escaped_text(m_msg.group(1)))
     if not msg_txt or len(msg_txt) < 15:
       continue
-    start_pos = max(0, m_msg.start() - 3500)
-    end_pos = min(len(raw_html), m_msg.end() + 4500)
+    start_pos = max(0, m_msg.start() - 4000)
+    end_pos = min(len(raw_html), m_msg.end() + 5000)
     window = raw_html[start_pos:end_pos].replace("\\/", "/")
 
     post_u = ""
     for u_pat in [
-        r'"(?:permalink_url|wwwURL|url)"\s*:\s*"(https://www\.facebook\.com/[^"]+?/(?:posts|videos|photos)/[^"]+)"',
+        r'"(?:permalink_url|wwwURL|url)"\s*:\s*"(https://www\.facebook\.com/[^"]+?/(?:posts|videos|photos|reel)/[^"]+)"',
         r'"(?:permalink_url|wwwURL|url)"\s*:\s*"(https://www\.facebook\.com/(?:permalink\.php|story\.php|reel/|watch/\?v=)[^"]+)"',
+        r'(https://www\.facebook\.com/[^"\s<>\\]+/posts/pfbid[A-Za-z0-9]+)',
     ]:
       m_u = re.search(u_pat, window)
       if m_u:
         cand_u = clean_social_post_url(decode_js_escaped_text(m_u.group(1)))
         if is_direct_social_post_url(cand_u, "فيسبوك") and _is_fb_post_owned_by_target(
-            cand_u, handle=handle, page_id=page_id
+            cand_u, handle=handle, page_id=page_id, page_official_name=page_official_name
         ):
           post_u = cand_u
           break
 
     if not post_u:
       m_fid = re.search(
-          r'"(?:post_id|top_level_post_id|story_fbid)"\s*:\s*"(pfbid[A-Za-z0-9]+|\d{11,})"',
+          r'(?:"(?:post_id|top_level_post_id|story_fbid)"\s*:\s*"|(pfbid[A-Za-z0-9]{16,}))(pfbid[A-Za-z0-9]+|\d{11,})?',
           window,
       )
       if m_fid:
-        fid = m_fid.group(1)
-        if handle and not handle.startswith("fb_") and not handle.isdigit():
-          post_u = f"https://www.facebook.com/{handle}/posts/{fid}"
-        elif page_id:
-          post_u = f"https://www.facebook.com/permalink.php?story_fbid={fid}&id={page_id}"
+        fid = (m_fid.group(1) or m_fid.group(2) or "").strip()
+        if fid and len(fid) >= 10:
+          if handle and not handle.startswith("fb_") and not handle.isdigit():
+            post_u = f"https://www.facebook.com/{handle}/posts/{fid}"
+          elif page_id:
+            post_u = f"https://www.facebook.com/permalink.php?story_fbid={fid}&id={page_id}"
 
     if not post_u or post_u in seen_u:
       continue
     if not is_strictly_judicial_and_clean(
-        msg_txt, msg_txt, post_u, t_kw, is_target=True
+        msg_txt, msg_txt, post_u, t_kw, is_target=bool(t_info)
     ):
       continue
 
@@ -4871,7 +5080,7 @@ def _extract_comet_relay_posts_from_html(
         post_u, msg_txt, raw_ts_str, fallback_offset_sec=1800
     )
     entry = {
-        "title": msg_txt[:110] + ("..." if len(msg_txt) > 110 else ""),
+        "title": msg_txt[:115] + ("..." if len(msg_txt) > 115 else ""),
         "url": post_u,
         "raw_snippet": msg_txt,
         "source_name": source_badge,
@@ -4880,7 +5089,8 @@ def _extract_comet_relay_posts_from_html(
         "pub_timestamp": pub_ts,
         "image_url": post_img,
     }
-    _tag_custom_target_item(entry, t_info, source_badge)
+    if t_info:
+      _tag_custom_target_item(entry, t_info, source_badge)
     seen_u.add(post_u)
     posts.append(entry)
 
@@ -4930,10 +5140,24 @@ def _extract_facebook_posts_from_raw_html(
           clean_u
           and clean_u not in seen_cand
           and is_direct_social_post_url(clean_u, "فيسبوك")
-          and _is_fb_post_owned_by_target(clean_u, handle=handle, page_id=page_id)
+          and _is_fb_post_owned_by_target(clean_u, handle=handle, page_id=page_id, page_official_name=page_official_name)
       ):
         seen_cand.add(clean_u)
         discovered_links.append(clean_u)
+
+  # استخراج أي معرف pfbid0 مباشر داخل الصفحة وبناء رابط المنشور منه
+  for m_pfb in re.finditer(r"\b(pfbid0[A-Za-z0-9]{15,})\b", unescaped_html):
+    pfb_id = m_pfb.group(1)
+    if handle and not handle.startswith("fb_") and not handle.isdigit():
+      cand_u = f"https://www.facebook.com/{handle}/posts/{pfb_id}"
+    elif page_id:
+      cand_u = f"https://www.facebook.com/permalink.php?story_fbid={pfb_id}&id={page_id}"
+    else:
+      continue
+    clean_u = clean_social_post_url(cand_u)
+    if clean_u not in seen_cand:
+      seen_cand.add(clean_u)
+      discovered_links.append(clean_u)
 
   for m_fbid in re.finditer(
       r'"(?:story_fbid|top_level_post_id|post_id)"\s*:\s*"(pfbid[A-Za-z0-9]+|\d{11,})"',
@@ -4951,7 +5175,7 @@ def _extract_facebook_posts_from_raw_html(
       seen_cand.add(clean_u)
       discovered_links.append(clean_u)
 
-  for idx, post_u in enumerate(discovered_links[:8]):
+  for idx, post_u in enumerate(discovered_links[:10]):
     if is_stop_requested():
       break
     is_valid, final_text, post_img, resolved_u = _verify_and_enrich_fb_post_url(
@@ -4964,7 +5188,7 @@ def _extract_facebook_posts_from_raw_html(
     if not is_valid or not final_text or len(final_text) < 15:
       continue
     if not is_strictly_judicial_and_clean(
-        final_text, final_text, resolved_u, t_kw, is_target=True
+        final_text, final_text, resolved_u, t_kw, is_target=bool(t_info)
     ):
       continue
 
@@ -4972,7 +5196,7 @@ def _extract_facebook_posts_from_raw_html(
         resolved_u, final_text, "", fallback_offset_sec=1800 + (idx * 600)
     )
     entry = {
-        "title": final_text[:110] + ("..." if len(final_text) > 110 else ""),
+        "title": final_text[:115] + ("..." if len(final_text) > 115 else ""),
         "url": resolved_u,
         "raw_snippet": final_text,
         "source_name": source_badge,
@@ -4981,7 +5205,8 @@ def _extract_facebook_posts_from_raw_html(
         "pub_timestamp": pub_ts,
         "image_url": post_img,
     }
-    _tag_custom_target_item(entry, t_info, source_badge)
+    if t_info:
+      _tag_custom_target_item(entry, t_info, source_badge)
     extracted_posts.append(entry)
 
   return extracted_posts
@@ -5256,18 +5481,34 @@ def _scrape_social_custom_target(
         "Accept-Language": "ar-MA,ar;q=0.9,fr;q=0.8,en;q=0.7",
     }
     raw_html_candidates = [page_raw_html] if page_raw_html else []
-    if len(all_target_posts) < 4:
-      for cand_hdr in (applebot_headers, chrome_doc_headers):
+    fb_candidate_urls = [canonical_url]
+    if handle and not handle.startswith("fb_") and not handle.isdigit():
+      for u_var in [
+          f"https://www.facebook.com/{handle}",
+          f"https://web.facebook.com/{handle}?_rdc=1&_rdr",
+      ]:
+        if u_var not in fb_candidate_urls:
+          fb_candidate_urls.append(u_var)
+    elif cid:
+      u_cid_var = f"https://www.facebook.com/profile.php?id={cid}"
+      if u_cid_var not in fb_candidate_urls:
+        fb_candidate_urls.append(u_cid_var)
+
+    for target_fb_u in fb_candidate_urls[:2]:
+      if len(raw_html_candidates) >= 3:
+        break
+      for cand_hdr in (chrome_doc_headers, applebot_headers):
         try:
-          rc = requests.get(canonical_url, headers=cand_hdr, timeout=8)
-          if rc.status_code == 200 and rc.text and (
-              "story_fbid" in rc.text
-              or "post_id" in rc.text
-              or "UzpfS" in rc.text
-              or "/posts/" in rc.text
-          ):
+          rc = requests.get(
+              target_fb_u,
+              headers=cand_hdr,
+              cookies={"locale": "ar_AR"},
+              timeout=9,
+          )
+          if rc.status_code == 200 and rc.text and len(rc.text) > 18000:
             raw_html_candidates.append(rc.text)
-            break
+            if "comet_sections" in rc.text or "pfbid" in rc.text or "creation_time" in rc.text:
+              break
         except Exception:
           pass
 
@@ -5503,73 +5744,6 @@ def _scrape_social_custom_target(
       seen_target_urls.add(raw_entry_u)
       _tag_custom_target_item(entry, t_info, source_badge)
       all_target_posts.append(entry)
-
-  # 5) إذا كانت الصفحة تقيد فهرسة الروابط الفرعية (/posts/pfbid) في محركات البحث، نستخرج المنشورات الحقيقية المرصودة في مقتطفات الخط الزمني للصفحة
-  if platform == "فيسبوك" and not all_target_posts and page_level_fallback_candidates:
-    base_fb_posts_u = (
-        f"https://www.facebook.com/{handle}/posts"
-        if (handle and not handle.startswith("fb_") and not handle.isdigit())
-        else (
-            f"https://www.facebook.com/profile.php?id={cid}"
-            if cid
-            else canonical_url
-        )
-    )
-    for idx_fb, (cand_ent, clean_snip_txt) in enumerate(page_level_fallback_candidates[:8]):
-      ref_hash = abs(hash(normalize_arabic_for_dedup(clean_snip_txt)[:50])) % 100000000
-      sep = "&" if "?" in base_fb_posts_u else "?"
-      synth_u = clean_social_post_url(f"{base_fb_posts_u}{sep}post_ref={ref_hash}")
-      if synth_u in seen_target_urls:
-        continue
-      cand_ent["url"] = synth_u
-      cand_ent["raw_snippet"] = clean_snip_txt
-      cand_ent["title"] = clean_snip_txt[:115] + ("..." if len(clean_snip_txt) > 115 else "")
-      if not is_strictly_judicial_and_clean(
-          cand_ent["title"], cand_ent["raw_snippet"], synth_u, t_kw, is_target=True
-      ):
-        continue
-      if not cand_ent.get("image_url") and page_avatar:
-        cand_ent["image_url"] = page_avatar
-      pub_str, pub_ts = extract_date_from_url_or_text(
-          synth_u, clean_snip_txt, cand_ent.get("pub_date", ""), fallback_offset_sec=1800 + idx_fb * 600
-      )
-      cand_ent["pub_date"] = pub_str
-      cand_ent["pub_timestamp"] = pub_ts
-      seen_target_urls.add(synth_u)
-      _tag_custom_target_item(cand_ent, t_info, source_badge)
-      all_target_posts.append(cand_ent)
-
-  # 6) استخلاص آخر تحديث من وصف الصفحة العامة (og:description) إذا كانت الصفحة جديدة أو غير مفهرسة في محركات البحث بعد
-  if platform == "فيسبوك" and not all_target_posts and page_description and len(page_description) >= 30:
-    clean_p_desc = re.sub(
-        r"^.*?(?:talking about this|يتحدث عن هذا|تسجيل إعجاب|likes?\s*·)[^.]*[.·•-]?\s*",
-        "",
-        page_description,
-        flags=re.IGNORECASE,
-    ).strip()
-    if len(clean_p_desc) >= 20:
-      base_fb_u = (
-          f"https://www.facebook.com/{handle}/posts"
-          if (handle and not handle.startswith("fb_") and not handle.isdigit())
-          else canonical_url
-      )
-      ref_h = abs(hash(normalize_arabic_for_dedup(clean_p_desc)[:40])) % 100000000
-      sep = "&" if "?" in base_fb_u else "?"
-      fallback_u = clean_social_post_url(f"{base_fb_u}{sep}post_ref={ref_h}")
-      if is_strictly_judicial_and_clean(clean_p_desc, clean_p_desc, fallback_u, t_kw, is_target=True):
-        pub_str, pub_ts = extract_date_from_url_or_text(fallback_u, clean_p_desc, "", fallback_offset_sec=1800)
-        fb_entry = {
-            "title": clean_p_desc[:115] + ("..." if len(clean_p_desc) > 115 else ""),
-            "url": fallback_u,
-            "raw_snippet": clean_p_desc,
-            "source_name": source_badge,
-            "platform": "فيسبوك",
-            "pub_date": pub_str,
-            "pub_timestamp": pub_ts,
-            "image_url": page_avatar,
-        }
-        _tag_custom_target_item(fb_entry, t_info, source_badge)
-        all_target_posts.append(fb_entry)
 
   all_target_posts.sort(
       key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
@@ -5925,37 +6099,28 @@ def quick_process_and_save(
     return 0
 
   existing_dedup_keys = set()
+  non_target_url_map = {}
   current_targets = load_custom_targets()
   lock = get_db_lock()
   with lock:
-    existing_dedup_keys.update(load_telegram_sent_ledger())
     try:
       conn = _open_sqlite_conn()
       _ensure_schema_on_conn(conn)
       c = conn.cursor()
-      c.execute("SELECT url, title FROM articles")
-      for r_url, r_title in c.fetchall():
-        existing_dedup_keys.update(
-            compute_article_dedup_keys(r_title or "", r_url or "")
-        )
+      c.execute("SELECT id, url, title, platform, is_custom_target FROM articles")
+      for r_id, r_url, r_title, r_plat, r_tgt in c.fetchall():
+        base_keys = compute_article_dedup_keys(r_title or "", r_url or "")
+        plat_scope = r_plat or "الصحف"
+        tgt_scope = int(r_tgt or 0)
+        for bk in base_keys:
+          existing_dedup_keys.add(f"{plat_scope}::{tgt_scope}::{bk}")
+          if bk.startswith("raw_u:") or bk.startswith("pid:"):
+            existing_dedup_keys.add(f"global::{tgt_scope}::{bk}")
+            if tgt_scope == 0:
+              non_target_url_map[bk] = r_id
       conn.close()
     except Exception:
       pass
-
-    if os.path.exists(ARCHIVE_JSON_FILE):
-      try:
-        with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
-          arch_items = json.load(f)
-        if isinstance(arch_items, list):
-          for a_it in arch_items:
-            if isinstance(a_it, dict):
-              existing_dedup_keys.update(
-                  compute_article_dedup_keys(
-                      a_it.get("title", ""), a_it.get("url", "")
-                  )
-              )
-      except Exception:
-        pass
 
   kw_filter = cfg.get("keywords_input", "")
   candidates = []
@@ -5976,8 +6141,28 @@ def quick_process_and_save(
     if is_tgt and not belongs_to_any_custom_target(it, current_targets):
       continue
 
-    pre_keys = compute_article_dedup_keys(t, u)
-    # الفحص الأول قبل فك الروابط: إذا كان الخبر مرصوداً سابقاً نتخطاه فوراً ليبقى في الموقع 24 ساعة من وقت رصده الأول ثم يحال للأرشيف
+    p_scope = it.get("platform", "الصحف")
+    t_scope = 1 if is_tgt else 0
+    base_pre_keys = compute_article_dedup_keys(t, u)
+    # إذا كان الرصد مخصصاً وكان المنشور موجوداً مسبقاً كمنشور عام غير مخصص، نقوم بترقيته ليظهر في تبويب المخصص أيضاً
+    if is_tgt:
+      for bpk in base_pre_keys:
+        if bpk in non_target_url_map:
+          with lock:
+            try:
+              conn_up = _open_sqlite_conn()
+              conn_up.execute(
+                  "UPDATE articles SET is_custom_target = 1, url = ?, source_name = ? WHERE id = ?",
+                  (u, clean_display_text(it.get("source_name") or p_scope), non_target_url_map[bpk]),
+              )
+              conn_up.commit()
+              conn_up.close()
+            except Exception:
+              pass
+    pre_keys = {f"{p_scope}::{t_scope}::{k}" for k in base_pre_keys} | {
+        f"global::{t_scope}::{k}" for k in base_pre_keys if k.startswith("raw_u:") or k.startswith("pid:")
+    }
+    # الفحص الأول قبل فك الروابط: إذا كان الخبر مرصوداً سابقاً في نفس القسم نتخطاه فوراً ليبقى 24 ساعة من وقت رصده الأول ثم يحال للأرشيف
     if (pre_keys & existing_dedup_keys) or (pre_keys & seen_batch_keys):
       continue
 
@@ -6006,7 +6191,11 @@ def quick_process_and_save(
       enrich_item_content_and_image(it)
 
     # الفحص الثاني بعد فك روابط Google News وتحديث العنوان والرابط النهائي: يمنع دخول أي خبر مكرر بعد فك التوجيه
-    post_keys = compute_article_dedup_keys(it.get("title", ""), it.get("url", ""))
+    t_scope_post = 1 if (is_target_run or it.get("is_custom_target")) else 0
+    base_post_keys = compute_article_dedup_keys(it.get("title", ""), it.get("url", ""))
+    post_keys = {f"{plat}::{t_scope_post}::{k}" for k in base_post_keys} | {
+        f"global::{t_scope_post}::{k}" for k in base_post_keys if k.startswith("raw_u:") or k.startswith("pid:")
+    }
     if (post_keys & existing_dedup_keys) or (post_keys & post_enrich_seen_keys):
       continue
     post_enrich_seen_keys.update(post_keys)
@@ -6070,7 +6259,8 @@ def quick_process_and_save(
           _rebuild_articles_table_safely(conn)
         c = conn.cursor()
         for rec in prepared_rows:
-          rec_keys = compute_article_dedup_keys(rec["title"], rec["url"])
+          base_rec_keys = compute_article_dedup_keys(rec["title"], rec["url"])
+          rec_keys = {f"{rec['platform']}::{rec['is_custom_target']}::{k}" for k in base_rec_keys}
           if rec_keys & existing_dedup_keys:
             continue
           c.execute(
