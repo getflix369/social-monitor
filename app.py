@@ -412,6 +412,55 @@ def render_html(raw_html: str, target=None):
     st.markdown(cleaned, unsafe_allow_html=True)
 
 
+def clean_full_article_text(val: str) -> str:
+  """تنظيف النص الكامل للمقال مع الحفاظ على تقسيم الفقرات (\n\n) لعرضه بشكل مريح في نافذة المعاينة الكاملة."""
+  if not val:
+    return ""
+  txt = str(val).strip()
+  txt = html.unescape(txt)
+  txt = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]", "", txt)
+  txt = re.sub(r"<\s*br\s*/?\s*>", "\n", txt, flags=re.IGNORECASE)
+  txt = re.sub(r"</\s*(?:p|div|li|h[1-6]|blockquote|tr)\s*>", "\n\n", txt, flags=re.IGNORECASE)
+  txt = re.sub(r"<[^>]+>", " ", txt)
+  paragraphs = []
+  for raw_line in re.split(r"\n+", txt):
+    line = re.sub(r"[ \t\r]+", " ", raw_line).strip()
+    if len(line) >= 3:
+      if not paragraphs or paragraphs[-1] != line:
+        paragraphs.append(line)
+  return "\n\n".join(paragraphs).strip()
+
+
+def matches_custom_keywords(title: str, snippet: str, keywords_input: str) -> bool:
+  """التحقق الدقيق من تطابق الخبر مع الكلمات أو العبارات المفتاحية التي أدخلها المستخدم (بعد تطبيع الهمزات والتاء المربوطة واللواصق العربية)."""
+  if not keywords_input or not str(keywords_input).strip():
+    return True
+  raw_kws = [
+      k.strip()
+      for k in re.split(r"[,،\n]+", str(keywords_input))
+      if k.strip()
+  ]
+  if not raw_kws:
+    return True
+
+  norm_combined = normalize_arabic_for_dedup(f"{title or ''} {snippet or ''}")
+  raw_combined_low = f"{clean_display_text(title)} {clean_display_text(snippet)}".lower()
+
+  for kw in raw_kws:
+    norm_kw = normalize_arabic_for_dedup(kw)
+    if not norm_kw:
+      continue
+    # مطابقة العبارة المطبّعة كاملة أو مطابقة جميع كلماتها الجوهرية داخل النص
+    if norm_kw in norm_combined or kw.lower() in raw_combined_low:
+      return True
+    kw_tokens = [w for w in norm_kw.split() if len(w) >= 2]
+    if len(kw_tokens) >= 2:
+      # السماح بوجود لواصق عربية مثل (الـ / بـ / لـ / و) أمام مفردات العبارة المفتاحية
+      if all(re.search(rf"(?:^|\s)(?:ال|وال|بال|لل|فال|كال|و|ف|ب|ل)?{re.escape(tok.lstrip('ال'))}\b", norm_combined) or (tok in norm_combined) for tok in kw_tokens):
+        return True
+  return False
+
+
 def clean_display_text(val: str) -> str:
   if not val:
     return ""
@@ -906,18 +955,19 @@ def is_strictly_judicial_and_clean(
       if not is_direct_social_post_url(u_unwrapped):
         return False
 
-  custom_kws = [
-      k.strip().lower()
-      for k in re.split(r"[,،\n]+", str(keywords_input or ""))
-      if k.strip()
-  ]
-  if custom_kws:
-    if not any(k in combined for k in custom_kws):
+  has_explicit_kw = bool(keywords_input and str(keywords_input).strip())
+  if has_explicit_kw:
+    if not matches_custom_keywords(t_clean, s_clean, keywords_input):
       return False
 
-  # بالنسبة للرصد المخصص لصفحة أو قناة اختارها المستخدم بنفسه، نكتفي بسلامة المحتوى والفلتر المخصص للرابط
+  # بالنسبة للرصد المخصص أو عند تحديد كلمة مفتاحية صريحة من طرف المستخدم، نعتمد مطابقة الكلمة المفتاحية وسلامة المحتوى
   if is_target:
     return True
+
+  if has_explicit_kw:
+    arabic_chars_kw = re.findall(r"[\u0600-\u06FF]", f"{t_clean} {s_clean}")
+    if len(arabic_chars_kw) >= 5:
+      return True
 
   arabic_chars = re.findall(r"[\u0600-\u06FF]", f"{t_clean} {s_clean}")
   if len(arabic_chars) < 6:
@@ -1271,6 +1321,7 @@ def resolve_google_news_url(url: str) -> str:
 
 
 def scrape_article_page_content_and_image(url: str):
+  """جلب الصورة الأصلية والنص الكامل للموضوع (مقسماً إلى فقرات واضحة) من صفحة الخبر أو الفيديو أو المنشور."""
   real_url = resolve_google_news_url(url)
   if not real_url or "news.google.com" in real_url:
     return "", "", real_url
@@ -1288,26 +1339,31 @@ def scrape_article_page_content_and_image(url: str):
           f"https://www.youtube.com/watch?v={vid_id}",
           headers=DEFAULT_HEADERS,
           cookies=YT_BYPASS_COOKIES,
-          timeout=4.0,
+          timeout=5.0,
       )
       if ryt.status_code == 200 and ryt.text:
         m_sd = re.search(
-            r'"shortDescription"\s*:\s*"((?:[^"\\]|\\.){15,800})"',
+            r'"shortDescription"\s*:\s*"((?:[^"\\]|\\.){15,6000})"',
             ryt.text,
         )
         if m_sd:
-          yt_desc = decode_js_escaped_text(m_sd.group(1))
+          yt_desc = clean_full_article_text(decode_js_escaped_text(m_sd.group(1)))
         if not yt_desc:
           m_ogd = re.search(
               r'<meta[^>]+(?:property|name)=["\'](?:og:description|description)["\'][^>]+content=["\']([^"\']+)["\']',
-              ryt.text[:35000],
+              ryt.text[:45000],
               re.IGNORECASE,
           )
           if m_ogd:
-            yt_desc = clean_display_text(m_ogd.group(1))
+            yt_desc = clean_full_article_text(m_ogd.group(1))
     except Exception:
       pass
     return yt_thumb, yt_desc, real_url
+
+  if "facebook.com" in real_url.lower() or "fb.watch" in real_url.lower():
+    emb_body, emb_img, _ = _fetch_fb_embed_plugin_content(real_url)
+    if emb_body and len(emb_body) >= 20:
+      return emb_img, emb_body, real_url
 
   img_url = ""
   body_text = ""
@@ -1317,7 +1373,7 @@ def scrape_article_page_content_and_image(url: str):
       else DEFAULT_HEADERS
   )
   try:
-    r = requests.get(real_url, headers=req_headers, timeout=4.0)
+    r = requests.get(real_url, headers=req_headers, timeout=5.5)
     if r.status_code != 200 or not r.text:
       return "", "", real_url
 
@@ -1327,7 +1383,7 @@ def scrape_article_page_content_and_image(url: str):
         r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:image|og:image:secure_url|twitter:image|twitter:image:src)["\']',
         r'<link[^>]+rel=["\']image_src["\'][^>]+href=["\']([^"\']+)["\']',
     ]:
-      m_img = re.search(meta_pattern, html_doc[:25000], re.IGNORECASE)
+      m_img = re.search(meta_pattern, html_doc[:35000], re.IGNORECASE)
       if m_img:
         candidate_img = html.unescape(m_img.group(1).strip())
         if candidate_img.startswith("//"):
@@ -1353,7 +1409,7 @@ def scrape_article_page_content_and_image(url: str):
         r'<meta[^>]+(?:property|name)=["\'](?:og:description|description|twitter:description)["\'][^>]+content=["\']([^"\']+)["\']',
         r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:description|description|twitter:description)["\']',
     ]:
-      m_d = re.search(desc_pattern, html_doc[:25000], re.IGNORECASE)
+      m_d = re.search(desc_pattern, html_doc[:35000], re.IGNORECASE)
       if m_d:
         cand_d = _strip_fb_sidebar_noise(m_d.group(1))
         if any(bp in cand_d.lower() for bp in bad_login_phrases):
@@ -1361,6 +1417,20 @@ def scrape_article_page_content_and_image(url: str):
         if len(cand_d) > 25:
           meta_desc = cand_d
           break
+
+    # 1) محاولة استخراج النص الكامل للمقال من JSON-LD (articleBody) المعتمد في كبريات الصحف المغربية
+    ld_article_body = ""
+    for m_ld in re.finditer(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html_doc,
+        re.DOTALL | re.IGNORECASE,
+    ):
+      ld_raw = m_ld.group(1).strip()
+      m_ab = re.search(r'"articleBody"\s*:\s*"((?:[^"\\]|\\.){80,})"', ld_raw)
+      if m_ab:
+        cand_ab = clean_full_article_text(decode_js_escaped_text(m_ab.group(1)))
+        if len(cand_ab) > len(ld_article_body):
+          ld_article_body = cand_ab
 
     paragraphs = []
     if BeautifulSoup is not None:
@@ -1386,21 +1456,41 @@ def scrape_article_page_content_and_image(url: str):
               img_url = src_cand
               break
 
-      for tag in soup.select("script, style, nav, footer, header, aside"):
+      for tag in soup.select("script, style, nav, footer, header, aside, form, .related-posts, .comments, .share-buttons"):
         tag.decompose()
 
-      p_elements = soup.select(
-          "article p, .entry-content p, .post-content p, .article-content p, .td-post-content p, main p, p"
+      # البحث في حاوية المقال الرئيسية أولاً لجلب جميع فقرات الموضوع كاملاً بالترتيب
+      main_containers = soup.select(
+          "[itemprop='articleBody'], .article-content, .entry-content, .post-content, .td-post-content, .single-content, .details-content, .article-body, article, main"
       )
+      p_elements = []
+      for mc in main_containers:
+        cand_ps = mc.select("p, h2, h3, blockquote")
+        if len(cand_ps) >= 2:
+          p_elements = cand_ps
+          break
+      if not p_elements:
+        p_elements = soup.select("p")
+
       for p_el in p_elements:
         p_txt = clean_display_text(p_el.get_text(" ", strip=True))
         if (
-            len(p_txt) >= 50
-            and len(re.findall(r"[\u0600-\u06FF]", p_txt)) >= 15
+            len(p_txt) >= 28
+            and len(re.findall(r"[\u0600-\u06FF]", p_txt)) >= 8
+            and not any(
+                noise in p_txt
+                for noise in [
+                    "جميع الحقوق محفوظة",
+                    "اشترك في النشرة",
+                    "تابعونا على",
+                    "اتصل بنا",
+                    "سياسة الخصوصية",
+                ]
+            )
         ):
           if p_txt not in paragraphs:
             paragraphs.append(p_txt)
-          if len(" ".join(paragraphs)) > 1600:
+          if len("\n\n".join(paragraphs)) > 11000:
             break
     else:
       for raw_p in re.findall(
@@ -1408,21 +1498,25 @@ def scrape_article_page_content_and_image(url: str):
       ):
         p_txt = clean_display_text(raw_p)
         if (
-            len(p_txt) >= 50
-            and len(re.findall(r"[\u0600-\u06FF]", p_txt)) >= 15
+            len(p_txt) >= 28
+            and len(re.findall(r"[\u0600-\u06FF]", p_txt)) >= 8
         ):
           if p_txt not in paragraphs:
             paragraphs.append(p_txt)
-          if len(" ".join(paragraphs)) > 1600:
+          if len("\n\n".join(paragraphs)) > 11000:
             break
 
     combined_parts = []
     if meta_desc and len(meta_desc) > 35:
       combined_parts.append(meta_desc)
-    for p in paragraphs[:6]:
-      if p not in combined_parts:
+    for p in paragraphs:
+      if p not in combined_parts and (not meta_desc or p[:40] not in meta_desc):
         combined_parts.append(p)
-    body_text = " ".join(combined_parts)[:2200]
+    dom_body = "\n\n".join(combined_parts)
+    if len(ld_article_body) > len(dom_body) + 120:
+      body_text = ld_article_body[:12000]
+    else:
+      body_text = dom_body[:12000]
   except Exception:
     pass
 
@@ -1483,9 +1577,10 @@ def enrich_item_content_and_image(item: dict) -> dict:
   if not img_url:
     img_url = extract_thumbnail_for_item(url, "", plat)
 
+  raw_snip_full = clean_full_article_text(item.get("raw_snippet") or "")
   need_body = (
       not raw_snip
-      or len(raw_snip) < 85
+      or len(raw_snip) < 420
       or raw_snip.lower() == title.lower()
       or raw_snip.startswith(title[:30])
   )
@@ -1495,8 +1590,9 @@ def enrich_item_content_and_image(item: dict) -> dict:
     page_img, page_body, resolved_u = scrape_article_page_content_and_image(url)
     if page_img and not img_url:
       img_url = page_img
-    if page_body and len(page_body) > len(raw_snip):
-      raw_snip = page_body
+    if page_body and len(page_body) > len(raw_snip_full):
+      raw_snip_full = page_body
+      raw_snip = clean_display_text(page_body)
     if (
         resolved_u
         and "news.google.com" not in resolved_u
@@ -1528,7 +1624,8 @@ def enrich_item_content_and_image(item: dict) -> dict:
         raw_snip = p_body2
 
   item["image_url"] = img_url
-  item["raw_snippet"] = raw_snip[:2000]
+  final_full_text = raw_snip_full if len(raw_snip_full) >= len(raw_snip) else raw_snip
+  item["raw_snippet"] = final_full_text[:12000]
   return item
 
 
@@ -2075,7 +2172,7 @@ def _merge_external_sqlite_into_runtime(src_db_path: str):
               r.get("category", "شؤون قضائية"),
               int(r.get("relevance_score") or 85),
               int(r.get("is_custom_target") or 0),
-              clean_display_text(r.get("raw_snippet", "")),
+              clean_full_article_text(r.get("raw_snippet", "")),
               r.get("image_url", ""),
               c_at,
               1,
@@ -2227,7 +2324,7 @@ def restore_db_from_json_if_needed():
           s_clean = clean_display_text(item.get("summary", ""))
           plat = item.get("platform", "الصحف")
           src = clean_display_text(item.get("source_name", "") or plat)
-          raw_s = clean_display_text(item.get("raw_snippet", ""))
+          raw_s = clean_full_article_text(item.get("raw_snippet", ""))
           u_str = item.get("url", "")
           is_tgt = int(item.get("is_custom_target", 0))
           if not t_clean or not u_str:
@@ -2773,10 +2870,14 @@ def build_search_queries(keywords_input: str):
   if custom_kws:
     queries = []
     for kw in custom_kws:
-      if "المغرب" not in kw:
-        queries.append(f"{kw} القضاء المغرب")
+      kw_clean = kw.strip('"\' ')
+      # البحث الدقيق بالعبارة المفتاحية أولاً ثم البحث المقترن بالسياق المغربي والقضائي
+      if "المغرب" not in kw_clean:
+        queries.append(f'"{kw_clean}" المغرب')
+        queries.append(f'"{kw_clean}" القضاء المغرب')
       else:
-        queries.append(kw)
+        queries.append(f'"{kw_clean}"')
+        queries.append(kw_clean)
     return queries
   return list(DEFAULT_JUDICIAL_QUERIES)
 
@@ -6160,7 +6261,7 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
   ).strftime("%Y-%m-%d %H:%M")
   clean_u = clean_social_post_url(item.get("url", ""))
   msg = (
-      f"⚖️ *المرصد الوطني للعدالة والقضاء*\n"
+      f"⚖️ *االمرصد القضائي*\n"
       f"{target_badge}"
       f"{icon} *المنصة:* {item.get('platform', 'الصحف')} | *المصدر:* {item.get('source_name', '')}\n"
       f"📅 *تاريخ النشر:* {item.get('pub_date', '')}\n"
@@ -6205,7 +6306,8 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
         bad_sum = is_summary_just_title(
             d.get("title", ""), d.get("summary", "")
         )
-        if missing_img or bad_sum:
+        short_body = len(clean_display_text(d.get("raw_snippet") or "")) < 320 and d.get("platform") == "الصحف"
+        if missing_img or bad_sum or short_body:
           to_upgrade.append(d)
           if len(to_upgrade) >= max_upgrades:
             break
@@ -6344,7 +6446,7 @@ def quick_process_and_save(
     plat = it.get("platform", "الصحف")
     src = clean_display_text(it.get("source_name") or plat)
 
-    if enrichment_calls < 14:
+    if enrichment_calls < 28:
       enrichment_calls += 1
       enrich_item_content_and_image(it)
 
@@ -6395,7 +6497,7 @@ def quick_process_and_save(
         "is_custom_target": (
             1 if (is_target_run or it.get("is_custom_target")) else 0
         ),
-        "raw_snippet": raw_snip[:1200],
+        "raw_snippet": clean_full_article_text(it.get("raw_snippet") or "")[:12000],
         "image_url": img_url,
         "created_at": time.time(),
         "telegram_sent": 0,
@@ -7213,6 +7315,198 @@ div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseB
     background: rgba(56, 189, 248, 0.3);
 }
 
+.news-actions-bar {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 10px !important;
+    margin-top: 8px !important;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+.tts-listen-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.22) 0%, rgba(5, 150, 105, 0.34) 100%);
+    border: 1px solid rgba(52, 211, 153, 0.55);
+    color: #6ee7b7 !important;
+    padding: 5px 14px;
+    border-radius: 10px;
+    font-family: 'Cairo', sans-serif !important;
+    font-size: 0.83rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    direction: rtl !important;
+    user-select: none;
+}
+
+.tts-listen-btn:hover {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.38) 0%, rgba(5, 150, 105, 0.52) 100%);
+    border-color: #a7f3d0;
+    color: #ffffff !important;
+    transform: translateY(-1px);
+}
+
+.tts-listen-btn.playing {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.35) 0%, rgba(185, 28, 28, 0.55) 100%) !important;
+    border-color: #fca5a5 !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 14px rgba(239, 68, 68, 0.45);
+}
+
+details.article-preview-drawer {
+    width: 100%;
+    margin-top: 8px;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+details.article-preview-drawer > summary {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.24) 0%, rgba(109, 40, 217, 0.36) 100%);
+    border: 1px solid rgba(167, 139, 250, 0.55);
+    color: #ddd6fe !important;
+    padding: 5px 15px;
+    border-radius: 10px;
+    font-size: 0.83rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+details.article-preview-drawer > summary::-webkit-details-marker {
+    display: none;
+}
+
+details.article-preview-drawer > summary:hover {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.42) 0%, rgba(109, 40, 217, 0.55) 100%);
+    border-color: #ede9fe;
+    color: #ffffff !important;
+    transform: translateY(-1px);
+}
+
+details.article-preview-drawer[open] > summary {
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.65) 0%, rgba(91, 33, 182, 0.8) 100%);
+    border-color: #ddd6fe;
+    color: #ffffff !important;
+    margin-bottom: 10px;
+}
+
+.full-article-modal-box {
+    background: linear-gradient(145deg, rgba(9, 13, 22, 0.94) 0%, rgba(15, 23, 42, 0.92) 100%);
+    border: 1px solid rgba(167, 139, 250, 0.42);
+    border-right: 4px solid #8b5cf6;
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin-top: 6px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+.full-article-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.full-article-body {
+    font-size: clamp(0.92rem, 1.5vw, 1.02rem);
+    color: #f1f5f9;
+    line-height: 1.9;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+.full-article-body p {
+    margin: 0 0 12px 0;
+    text-align: justify;
+    direction: rtl !important;
+}
+
+/* ترويسة احترافية موحدة لقسم الرصد المخصص وإدارة القنوات والصفحات */
+.custom-targets-header-card {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.22) 0%, rgba(15, 23, 42, 0.78) 65%, rgba(30, 41, 59, 0.85) 100%);
+    backdrop-filter: blur(22px) saturate(170%);
+    -webkit-backdrop-filter: blur(22px) saturate(170%);
+    border: 1px solid rgba(251, 191, 36, 0.52);
+    border-right: 5px solid #f59e0b;
+    border-radius: 18px;
+    padding: 14px 20px;
+    margin: 10px 0 6px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+.custom-targets-header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+.custom-targets-icon-box {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    border-radius: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.35rem;
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid rgba(251, 191, 36, 0.55);
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.25);
+}
+
+.custom-targets-main-title {
+    font-size: clamp(1.05rem, 1.9vw, 1.22rem);
+    font-weight: 900;
+    color: #fef3c7;
+    margin: 0;
+    line-height: 1.3;
+}
+
+.custom-targets-subtitle {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #cbd5e1;
+    margin-top: 2px;
+}
+
+.custom-targets-count-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(245, 158, 11, 0.24);
+    border: 1px solid rgba(251, 191, 36, 0.6);
+    color: #fde68a;
+    padding: 5px 14px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
 /* تصميم زجاجي فاخر لقسم وشريط 🎯 الروابط والقنوات المخصصة (Expander) */
 div[data-testid="stExpander"],
 details[data-testid="stExpander"] {
@@ -7529,8 +7823,21 @@ with col_period:
     cfg["search_period"] = selected_period
     save_credentials(cfg)
 
+render_html(f"""
+<div class="custom-targets-header-card" dir="rtl">
+    <div class="custom-targets-header-right" dir="rtl">
+        <span class="custom-targets-icon-box">🎯</span>
+        <div>
+            <div class="custom-targets-main-title">الرصد المخصص وإدارة القنوات والصفحات</div>
+            <div class="custom-targets-subtitle">رصد مخصص ودقيق لصفحات فيسبوك وقنوات يوتيوب وحسابات إكس والمواقع الإخبارية المحددة</div>
+        </div>
+    </div>
+    <span class="custom-targets-count-pill">📌 المصادر المفعلة: {len(custom_targets)}</span>
+</div>
+""")
+
 with st.expander(
-    f"🎯 إدارة الروابط والقنوات والصفحات المخصصة ({len(custom_targets)} مصدر مضاف)", expanded=False
+    f"⚙️ فتح لوحة التحكم في الروابط والقنوات والصفحات المخصصة ({len(custom_targets)} مصدر)", expanded=False
 ):
   render_html(
       "<div style='font-size:0.84rem;color:#cbd5e1;margin-bottom:8px;direction:rtl;text-align:right;'>"
@@ -7825,6 +8132,35 @@ for a in all_articles:
   else:
     archive_articles.append(a)
 
+active_kw_query = cfg.get("keywords_input", "").strip()
+if active_kw_query:
+  live_articles = [
+      a
+      for a in live_articles
+      if matches_custom_keywords(
+          a.get("title", ""),
+          f"{a.get('summary', '')} {a.get('raw_snippet', '')} {a.get('source_name', '')}",
+          active_kw_query,
+      )
+  ]
+  archive_articles = [
+      a
+      for a in archive_articles
+      if matches_custom_keywords(
+          a.get("title", ""),
+          f"{a.get('summary', '')} {a.get('raw_snippet', '')} {a.get('source_name', '')}",
+          active_kw_query,
+      )
+  ]
+  render_html(
+      f"""
+      <div style="background:linear-gradient(90deg, rgba(2,132,199,0.25) 0%, rgba(15,23,42,0.85) 100%);border:1px solid rgba(56,189,248,0.5);border-right:4px solid #38bdf8;border-radius:12px;padding:9px 16px;margin:6px 0 12px 0;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;direction:rtl;text-align:right;">
+          <span style="color:#e0f2fe;font-weight:800;font-size:0.88rem;">🔍 الفلترة الدقيقة بالكلمات المفتاحية نشطة: <strong style="color:#38bdf8;">«{html.escape(active_kw_query)}»</strong> — يتم عرض الأخبار والمنشورات المطابقة فقط ({len(live_articles)} نشط • {len(archive_articles)} في الأرشيف)</span>
+          <span style="color:#94a3b8;font-size:0.78rem;font-weight:700;">امسح حقل الكلمات المفتاحية أعلاه لعرض كافة الأخبار</span>
+      </div>
+      """
+  )
+
 live_articles.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
 archive_articles.sort(
     key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
@@ -7856,6 +8192,29 @@ metrics_cards_html = "".join(
     for m_label, m_val in metrics_data
 )
 render_html(f'<div class="metrics-grid" dir="rtl">{metrics_cards_html}</div>')
+
+
+def _format_full_text_paragraphs_html(full_text: str, summary_text: str, title_text: str) -> str:
+  """تحويل النص الكامل للمقال إلى فقرات HTML منسقة وواضحة للعرض داخل نافذة المعاينة الكاملة."""
+  cleaned_full = clean_full_article_text(full_text)
+  if not cleaned_full or len(cleaned_full) < len(summary_text):
+    cleaned_full = summary_text or title_text
+  paras = [p.strip() for p in re.split(r"\n\n+", cleaned_full) if p.strip()]
+  if len(paras) == 1 and len(paras[0]) > 420:
+    # إذا كان النص متصلاً بدون فواصل أسطر، نقسمه إلى فقرات مريحة كل جملتين أو ثلاث جمل
+    sents = [s.strip() for s in re.split(r"(?<=[.!؟])\s+", paras[0]) if s.strip()]
+    grouped = []
+    buf = []
+    for s in sents:
+      buf.append(s)
+      if len(" ".join(buf)) >= 260:
+        grouped.append(" ".join(buf))
+        buf = []
+    if buf:
+      grouped.append(" ".join(buf))
+    paras = grouped if grouped else paras
+
+  return "".join(f"<p>{html.escape(p)}</p>" for p in paras)
 
 
 def render_article_cards(
@@ -7892,12 +8251,13 @@ def render_article_cards(
 
     raw_title = clean_display_text(item.get("title") or "")
     raw_summary = clean_display_text(item.get("summary") or "")
-    raw_snip = clean_display_text(item.get("raw_snippet") or "")
+    raw_full_text = clean_full_article_text(item.get("raw_snippet") or "")
+    raw_snip_flat = clean_display_text(raw_full_text)
     raw_src = clean_display_text(item.get("source_name") or plat)
 
     if is_summary_just_title(raw_title, raw_summary):
       raw_summary = build_extractive_arabic_summary(
-          raw_title, raw_snip, plat, raw_src
+          raw_title, raw_snip_flat, plat, raw_src
       )
 
     pub_ts = float(item.get("pub_timestamp") or (time.time() - 3600))
@@ -7940,6 +8300,19 @@ def render_article_cards(
         else ""
     )
 
+    # تجهيز النص الكامل للمعاينة وللاستماع الصوتي
+    full_body_for_display = raw_full_text if len(raw_full_text) >= len(raw_summary) else raw_summary
+    full_paragraphs_html = _format_full_text_paragraphs_html(
+        full_body_for_display, raw_summary, raw_title
+    )
+    tts_summary_payload = html.escape(
+        f"{raw_title}. الملخص: {raw_summary}", quote=True
+    )
+    tts_full_payload = html.escape(
+        f"{raw_title}. التفاصيل الكاملة: {clean_display_text(full_body_for_display)[:2800]}",
+        quote=True,
+    )
+
     card_html = (
         f'<div class="news-card {css_cls}" dir="rtl" style="direction:rtl !important;text-align:right !important;">'
         '<div class="news-card-layout" dir="rtl" style="display:flex;flex-direction:row;direction:rtl !important;text-align:right !important;">'
@@ -7961,9 +8334,23 @@ def render_article_cards(
         f'<div class="news-summary-box" dir="rtl" style="direction:rtl !important;text-align:right !important;">'
         f'<strong style="color:#38bdf8;">📝 ملخص الخبر: </strong>{summary_safe}'
         "</div>"
-        '<div dir="rtl" style="direction:rtl !important;text-align:right !important;">'
+        '<div class="news-actions-bar" dir="rtl">'
+        f'<button type="button" class="tts-listen-btn" data-tts-text="{tts_summary_payload}" data-default-label="🔊 استماع صوتي للخبر">🔊 استماع صوتي للخبر</button>'
         f'<a class="news-link" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 فتح المصدر الأصلي</a>'
         "</div>"
+        '<details class="article-preview-drawer" dir="rtl">'
+        "<summary>👁️ معاينة نص الموضوع كاملاً (دون مغادرة الموقع)</summary>"
+        '<div class="full-article-modal-box" dir="rtl">'
+        '<div class="full-article-header" dir="rtl">'
+        f'<div style="font-weight:900;color:#c4b5fd;font-size:0.92rem;">📖 المعاينة الكاملة للموضوع • {source_safe}</div>'
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+        f'<button type="button" class="tts-listen-btn" data-tts-text="{tts_full_payload}" data-default-label="🔊 قراءة صوتية للنص الكامل">🔊 قراءة صوتية للنص الكامل</button>'
+        f'<a class="news-link" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 التحقق من المصدر الأصلي</a>'
+        "</div>"
+        "</div>"
+        f'<div class="full-article-body" dir="rtl">{full_paragraphs_html}</div>'
+        "</div>"
+        "</details>"
         "</div>"
         "</div>"
         "</div>"
@@ -8060,3 +8447,145 @@ if cfg.get("auto_monitor", True):
     }, 60000);
     </script>
     """)
+
+# =====================================================================
+# 20. محرك القراءة الصوتية العربية التفاعلي (Web Speech API + Google Arabic TTS Audio Fallback)
+# =====================================================================
+if st is not None and hasattr(st, "components") and hasattr(st.components, "v1"):
+  st.components.v1.html(
+      """
+      <script>
+      (function() {
+        const parentDoc = window.parent ? window.parent.document : document;
+        const parentWin = window.parent || window;
+        if (parentWin.__justiceTtsInitialized) return;
+        parentWin.__justiceTtsInitialized = true;
+
+        let activeBtn = null;
+        let activeAudio = null;
+        let isSpeaking = false;
+        let speechQueue = [];
+        let queueIdx = 0;
+
+        function resetActiveButton() {
+          isSpeaking = false;
+          speechQueue = [];
+          queueIdx = 0;
+          if (parentWin.speechSynthesis) {
+            try { parentWin.speechSynthesis.cancel(); } catch (e) {}
+          }
+          if (activeAudio) {
+            try { activeAudio.pause(); activeAudio.src = ""; } catch (e) {}
+            activeAudio = null;
+          }
+          if (activeBtn) {
+            activeBtn.classList.remove("playing");
+            activeBtn.innerText = activeBtn.getAttribute("data-default-label") || "🔊 استماع صوتي للخبر";
+            activeBtn = null;
+          }
+        }
+
+        function splitArabicTextIntoChunks(text, maxLen) {
+          const clean = (text || "").replace(/\s+/g, " ").trim();
+          if (!clean) return [];
+          const sentences = clean.split(/(?<=[.!؟،؛\n])\s+/);
+          const chunks = [];
+          let current = "";
+          for (const s of sentences) {
+            if ((current + " " + s).trim().length <= maxLen) {
+              current = (current + " " + s).trim();
+            } else {
+              if (current) chunks.push(current);
+              if (s.length <= maxLen) {
+                current = s;
+              } else {
+                for (let i = 0; i < s.length; i += maxLen) {
+                  chunks.push(s.slice(i, i + maxLen));
+                }
+                current = "";
+              }
+            }
+          }
+          if (current) chunks.push(current);
+          return chunks;
+        }
+
+        function playViaAudioStreamFallback(chunks, idx) {
+          if (!isSpeaking || idx >= chunks.length) {
+            resetActiveButton();
+            return;
+          }
+          const chunk = chunks[idx];
+          const url = "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=ar&q=" + encodeURIComponent(chunk);
+          const audio = new Audio(url);
+          activeAudio = audio;
+          audio.onended = function() {
+            if (isSpeaking) playViaAudioStreamFallback(chunks, idx + 1);
+          };
+          audio.onerror = function() {
+            resetActiveButton();
+          };
+          audio.play().catch(function() {
+            resetActiveButton();
+          });
+        }
+
+        function speakTextAloud(text, btnEl) {
+          if (activeBtn === btnEl && isSpeaking) {
+            resetActiveButton();
+            return;
+          }
+          resetActiveButton();
+          activeBtn = btnEl;
+          isSpeaking = true;
+          btnEl.classList.add("playing");
+          btnEl.innerText = "⏹ إيقاف القراءة الصوتية...";
+
+          const synth = parentWin.speechSynthesis;
+          if (synth) {
+            const voices = synth.getVoices() || [];
+            const arVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith("ar"));
+            const chunks = splitArabicTextIntoChunks(text, 220);
+            if (arVoice || voices.length > 0) {
+              queueIdx = 0;
+              speechQueue = chunks;
+              function speakNextChunk() {
+                if (!isSpeaking || queueIdx >= speechQueue.length) {
+                  resetActiveButton();
+                  return;
+                }
+                const utter = new parentWin.SpeechSynthesisUtterance(speechQueue[queueIdx]);
+                utter.lang = arVoice ? arVoice.lang : "ar-MA";
+                if (arVoice) utter.voice = arVoice;
+                utter.rate = 1.0;
+                utter.onend = function() {
+                  if (isSpeaking) {
+                    queueIdx += 1;
+                    speakNextChunk();
+                  }
+                };
+                utter.onerror = function() {
+                  playViaAudioStreamFallback( splitArabicTextIntoChunks(text, 160), 0 );
+                };
+                synth.speak(utter);
+              }
+              speakNextChunk();
+              return;
+            }
+          }
+          playViaAudioStreamFallback(splitArabicTextIntoChunks(text, 160), 0);
+        }
+
+        parentDoc.addEventListener("click", function(ev) {
+          const btn = ev.target.closest ? ev.target.closest(".tts-listen-btn") : null;
+          if (!btn) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          const txt = btn.getAttribute("data-tts-text") || "";
+          if (txt) speakTextAloud(txt, btn);
+        }, true);
+      })();
+      </script>
+      """,
+      height=0,
+  )
