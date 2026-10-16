@@ -592,6 +592,7 @@ def clean_social_post_url(url: str) -> str:
           "set",
           "multi_permalinks",
           "post_id",
+          "post_ref",
       }
       filtered_qs = [
           (k, val)
@@ -650,15 +651,21 @@ def is_direct_social_post_url(
     ):
       return False
 
+    if (qs.get("post_ref") or [""])[0].strip():
+      return True
+
+    if (qs.get("story_fbid") or [""])[0].strip() or (qs.get("fbid") or [""])[0].strip() or (qs.get("post_id") or [""])[0].strip():
+      return True
+
     if path_low in ("permalink.php", "story.php"):
-      s_fbid = (qs.get("story_fbid") or [""])[0].strip()
-      return bool(s_fbid and len(s_fbid) >= 6)
+      s_fbid = (qs.get("story_fbid") or qs.get("id") or [""])[0].strip()
+      return bool(s_fbid and len(s_fbid) >= 5)
 
-    if path_low in ("photo.php", "photo"):
+    if path_low in ("photo.php", "photo", "photos"):
       fbid = (qs.get("fbid") or [""])[0].strip()
-      return bool(fbid and len(fbid) >= 6)
+      return bool(fbid and len(fbid) >= 5)
 
-    if path_low in ("watch", "video.php"):
+    if path_low in ("watch", "watch/live", "video.php"):
       v_id = (qs.get("v") or [""])[0].strip()
       return bool(v_id and len(v_id) >= 5)
 
@@ -689,56 +696,21 @@ def is_direct_social_post_url(
         "photos_albums",
     }
 
-    if "posts" in parts_low:
-      idx = parts_low.index("posts")
-      tail_segs = parts[idx + 1 :]
-      if not tail_segs:
+    for post_kind in ("posts", "permalink", "videos", "reel", "reels", "photos"):
+      if post_kind in parts_low:
+        idx = parts_low.index(post_kind)
+        tail_segs = [s.strip() for s in parts[idx + 1 :] if s.strip() and s.strip().lower() not in tab_words]
+        if not tail_segs:
+          return False
+        for seg_cand in tail_segs:
+          if (
+              seg_cand.startswith("pfbid")
+              or (seg_cand.isdigit() and len(seg_cand) >= 6)
+              or ":" in seg_cand
+              or len(seg_cand) >= 5
+          ):
+            return True
         return False
-      last_s = tail_segs[-1].strip()
-      if last_s.lower() in tab_words or re.match(r"^1[678]\d{8}$", last_s):
-        return False
-      if (
-          last_s.startswith("pfbid")
-          or (last_s.isdigit() and len(last_s) >= 8)
-          or ":" in last_s
-      ):
-        return True
-      return False
-
-    if "permalink" in parts_low:
-      idx = parts_low.index("permalink")
-      tail_segs = parts[idx + 1 :]
-      if not tail_segs:
-        return False
-      last_s = tail_segs[-1].strip()
-      return bool(last_s.startswith("pfbid") or (last_s.isdigit() and len(last_s) >= 8))
-
-    if "videos" in parts_low:
-      idx = parts_low.index("videos")
-      tail_segs = parts[idx + 1 :]
-      if not tail_segs:
-        return False
-      last_s = tail_segs[-1].strip()
-      if last_s.lower() in tab_words:
-        return False
-      return bool((last_s.isdigit() and len(last_s) >= 7) or last_s.startswith("pfbid"))
-
-    if "reel" in parts_low or "reels" in parts_low:
-      key_r = "reel" if "reel" in parts_low else "reels"
-      idx = parts_low.index(key_r)
-      tail_segs = parts[idx + 1 :]
-      if not tail_segs:
-        return False
-      last_s = tail_segs[-1].strip()
-      return bool(last_s.lower() not in tab_words and len(last_s) >= 6)
-
-    if "photos" in parts_low:
-      idx = parts_low.index("photos")
-      tail_segs = parts[idx + 1 :]
-      if not tail_segs:
-        return False
-      last_s = tail_segs[-1].strip()
-      return bool(last_s.startswith("pfbid") or (last_s.isdigit() and len(last_s) >= 8))
 
     if "events" in parts_low:
       idx = parts_low.index("events")
@@ -773,7 +745,7 @@ def _is_fb_post_owned_by_target(
     page_official_name: str = "",
     og_title: str = "",
 ) -> bool:
-  """التحقق الصارم من أن المنشور صادر فعلياً عن الصفحة المخصصة نفسها وليس عن صفحة أو مجموعة أخرى."""
+  """التحقق من ملكية الصفحة للمنشور مع رفض المنشورات التابعة لصفحات أخرى وعدم حجب منشورات الصفحة بسبب جدار تسجيل الدخول."""
   u = clean_social_post_url(post_url)
   if not u or not is_direct_social_post_url(u, "فيسبوك"):
     return False
@@ -794,10 +766,12 @@ def _is_fb_post_owned_by_target(
       return False
     t_norm = normalize_arabic_for_dedup(text_to_check)
     n_norm = normalize_arabic_for_dedup(page_official_name)
-    if n_norm and len(n_norm) >= 4 and n_norm in t_norm:
+    if n_norm and len(n_norm) >= 3 and n_norm in t_norm:
       return True
     n_words = [w for w in n_norm.split() if len(w) >= 3]
     if len(n_words) >= 2 and all(w in t_norm for w in n_words[:2]):
+      return True
+    if len(n_words) == 1 and n_words[0] in t_norm:
       return True
     return False
 
@@ -813,23 +787,31 @@ def _is_fb_post_owned_by_target(
     p_name = parts_low[1].replace("-", " ")
     p_id = parts_low[2]
     if valid_owners:
-      return (p_id in valid_owners) or (parts_low[1] in valid_owners) or (p_name in valid_owners)
-    return _matches_official_name(p_name) or _matches_official_name(og_title)
+      if (p_id in valid_owners) or (parts_low[1] in valid_owners) or (p_name in valid_owners):
+        return True
+      if clean_cid and p_id.isdigit() and p_id != clean_cid:
+        return False
+    if page_official_name and (_matches_official_name(p_name) or _matches_official_name(og_title)):
+      return True
+    return not bool(clean_handle)
 
   # 3) إذا كان الرابط يحتوي على اسم الصفحة الناشرة في المسار: facebook.com/{owner}/(posts|videos|photos|reels)/...
   if len(parts_low) >= 2 and parts_low[1] in ("posts", "videos", "photos", "reels", "permalink"):
     url_owner = parts_low[0]
     if url_owner in valid_owners:
       return True
+    # إذا كان لدينا معرف نصي للصفحة (مثل hespress) وكان صاحب الرابط معرفاً نصياً مختلفاً، نرفضه فوراً
     if clean_handle and not url_owner.isdigit() and url_owner != clean_handle:
       return False
+    # إذا كان لدينا معرف رقمي للصفحة وكان صاحب الرابط معرفاً رقمياً مختلفاً، نرفضه فوراً
     if clean_cid and clean_cid.isdigit() and url_owner.isdigit() and url_owner != clean_cid:
       return False
-    # إذا لم يكن لدينا handle نصي بعد، نشترط تطابق اسم الصفحة الرسمي مع عنوان المنشور أو اسم المسار
-    if not clean_handle:
-      if _matches_official_name(url_owner.replace(".", " ").replace("-", " ")) or _matches_official_name(og_title):
-        return True
-      return False
+    if page_official_name and (_matches_official_name(url_owner.replace(".", " ").replace("-", " ")) or _matches_official_name(og_title)):
+      return True
+    # إذا كان صاحب الرابط رقمياً ولدينا handle نصي فقط (حيث يحول فيسبوك اسم الصفحة إلى رقمها في بعض الروابط)، نقبله ما لم يتعارض
+    if url_owner.isdigit() and clean_handle:
+      return True
+    return bool(valid_owners or not page_official_name)
 
   # 4) إذا كان الرابط بصيغة permalink.php?story_fbid=...&id={page_id}
   if parts_low and parts_low[0] in ("permalink.php", "story.php"):
@@ -838,7 +820,7 @@ def _is_fb_post_owned_by_target(
       return url_id == clean_cid
     if _matches_official_name(og_title):
       return True
-    return bool(url_id and url_id in valid_owners)
+    return True
 
   # 5) الروابط المختصرة مثل watch/?v= أو reel/ أو photo.php?fbid= أو share/
   if og_title:
@@ -846,10 +828,8 @@ def _is_fb_post_owned_by_target(
       return True
     if _matches_official_name(og_title):
       return True
-    if page_official_name:
-      return False
 
-  return bool(valid_owners)
+  return True
 
 
 def is_summary_just_title(title: str, summary: str) -> bool:
@@ -4456,7 +4436,7 @@ def _verify_and_enrich_fb_post_url(
     page_id: str = "",
     page_official_name: str = "",
 ) -> tuple:
-  """فحص رابط المنشور عبر ترويسة facebookexternalhit للتأكد من أنه يعمل ويتبع للصفحة المطلوبة حصراً واستخراج النص الأصلي النقي."""
+  """فحص رابط المنشور عبر ترويسة facebookexternalhit مع التعامل الذكي مع جدار تسجيل الدخول على السحابة دون إسقاط المنشور."""
   try:
     rp = requests.get(post_u, headers=FB_CRAWLER_HEADERS, timeout=6)
     if rp.status_code != 200 or not rp.text:
@@ -4477,22 +4457,37 @@ def _verify_and_enrich_fb_post_url(
         post_title_og = _strip_fb_sidebar_noise(m_t.group(1))
         break
 
-    bad_titles = [
+    # نرفض فقط الروابط المعطوبة فعلياً (Page Not Found)، أما جدار تسجيل الدخول فيعني أن الرابط سليم ولكن فيسبوك يطلب الدخول من السيرفر
+    not_found_titles = [
         "page not found",
-        "content isn't available",
-        "this content isn't available",
-        "المحتوى غير متوفر",
         "الصفحة غير موجودة",
-        "غير متوفر حاليا",
-        "log in or sign up",
     ]
-    if post_title_og and any(bt in post_title_og.lower() for bt in bad_titles):
+    if post_title_og and any(bt in post_title_og.lower() for bt in not_found_titles):
       return False, "", "", post_u
 
-    if rp.url:
-      rp_clean_u = clean_social_post_url(rp.url)
-      if rp_clean_u and "login" not in rp.url.lower() and not is_direct_social_post_url(rp_clean_u, "فيسبوك"):
-        return False, "", "", post_u
+    is_login_wall = bool(
+        (rp.url and "login" in rp.url.lower())
+        or (
+            post_title_og
+            and any(
+                lw in post_title_og.lower()
+                for lw in [
+                    "log in",
+                    "login",
+                    "تسجيل الدخول",
+                    "قم بتسجيل الدخول",
+                    "content isn't available",
+                    "this content isn't available",
+                    "المحتوى غير متوفر",
+                ]
+            )
+        )
+    )
+    if is_login_wall:
+      is_owned = _is_fb_post_owned_by_target(
+          post_u, handle=handle, page_id=page_id, page_official_name=page_official_name
+      )
+      return is_owned, "", page_avatar, post_u
 
     m_og_u = re.search(
         r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
@@ -4502,12 +4497,9 @@ def _verify_and_enrich_fb_post_url(
     resolved_u = post_u
     if m_og_u:
       cand_og_u = clean_social_post_url(m_og_u.group(1))
-      if cand_og_u and "login" not in cand_og_u.lower():
-        if not is_direct_social_post_url(cand_og_u, "فيسبوك"):
-          return False, "", "", post_u
+      if cand_og_u and "login" not in cand_og_u.lower() and is_direct_social_post_url(cand_og_u, "فيسبوك"):
         resolved_u = cand_og_u
 
-    # التحقق الصارم من ملكية الصفحة للمنشور عبر الرابط القانوني og:url وعنوان og:title
     if not _is_fb_post_owned_by_target(
         resolved_u,
         handle=handle,
@@ -4543,7 +4535,12 @@ def _verify_and_enrich_fb_post_url(
     final_body = post_desc or post_title_og
     if final_body and any(
         lw in final_body.lower()
-        for lw in ["قم بتسجيل الدخول", "log in to facebook", "تسجيل الدخول إلى فيسبوك"]
+        for lw in [
+            "قم بتسجيل الدخول",
+            "log in to facebook",
+            "تسجيل الدخول إلى فيسبوك",
+            "log in or sign up",
+        ]
     ):
       final_body = ""
 
@@ -5104,22 +5101,33 @@ def _scrape_social_custom_target(
     except Exception:
       pass
 
-  # 4) مسح شامل بالمعرف والاسم الرسمي معاً (يضمن عدم إرجاع 0 حتى لو كان الرابط بصيغة share/ أو profile.php)
+  # 3-ب) إذا حجب فيسبوك صفحة الهدف على خادم السحابة ولم نستخرج الاسم الرسمي للصفحة بعد، نستخرجه من نتائج البحث عن الرابط
+  if platform == "فيسبوك" and not page_official_name and (handle or cid):
+    probe_ident = handle if (handle and not handle.startswith("fb_")) else cid
+    for p_res in _multi_engine_web_search(f'site:facebook.com "{probe_ident}"', platform="فيسبوك", max_results=5):
+      cand_t = _clean_social_page_title(p_res.get("title", ""))
+      if (
+          cand_t
+          and len(cand_t) >= 3
+          and cand_t.lower() not in {"facebook", "فيسبوك", "فايسبوك", "log in", "login"}
+      ):
+        page_official_name = cand_t
+        source_badge = f"🎯 {page_official_name}"
+        break
+
+  # 4) مسح شامل بالمعرف والاسم الرسمي معاً عبر عدة صيغ استعلام لضمان جلب جميع منشورات وفيديوهات الصفحة
   target_queries = []
   if platform == "فيسبوك":
     if handle and not handle.startswith("fb_") and not handle.isdigit():
+      target_queries.append(f'site:facebook.com/{handle} {t_kw}'.strip())
       target_queries.append(f'site:facebook.com "{handle}" {t_kw}'.strip())
-      target_queries.append(f'site:facebook.com "{handle}" posts {t_kw}'.strip())
-      target_queries.append(f'site:facebook.com "{handle}" videos {t_kw}'.strip())
+      target_queries.append(f'site:facebook.com/{handle}/posts OR site:facebook.com/{handle}/videos {t_kw}'.strip())
     if page_official_name:
       target_queries.append(
-          f'site:facebook.com "{page_official_name}" posts {t_kw}'.strip()
-      )
-      target_queries.append(
-          f'site:facebook.com "{page_official_name}" videos {t_kw}'.strip()
-      )
-      target_queries.append(
           f'site:facebook.com "{page_official_name}" {t_kw}'.strip()
+      )
+      target_queries.append(
+          f'"{page_official_name}" site:facebook.com/posts OR site:facebook.com/videos OR site:facebook.com/reel {t_kw}'.strip()
       )
     if cid:
       target_queries.append(f'site:facebook.com "{cid}" {t_kw}'.strip())
@@ -5131,15 +5139,20 @@ def _scrape_social_custom_target(
     if page_official_name:
       target_queries.append(f'site:{domain} "{page_official_name}" {t_kw}'.strip())
 
-  for tq in target_queries[:5]:
+  page_level_fallback_candidates = []
+
+  for tq in target_queries[:6]:
     if is_stop_requested():
       break
     for entry in _multi_engine_web_search(
-        tq, platform=platform, default_source=source_badge, max_results=15
+        tq, platform=platform, default_source=source_badge, max_results=18
     ):
       raw_entry_u = clean_social_post_url(entry.get("url", ""))
       if not raw_entry_u or raw_entry_u in seen_target_urls:
         continue
+
+      entry["raw_snippet"] = _strip_fb_sidebar_noise(entry.get("raw_snippet", ""))
+      entry["title"] = _strip_fb_sidebar_noise(entry.get("title", ""))
 
       if not is_direct_social_post_url(raw_entry_u, platform):
         if platform == "فيسبوك":
@@ -5153,22 +5166,27 @@ def _scrape_social_custom_target(
           if resolved_u and is_direct_social_post_url(resolved_u, "فيسبوك"):
             raw_entry_u = resolved_u
           else:
+            # نحتفظ بالمنشورات المقتطفة من الخط الزمني للصفحة نفسها كخيار احتياطي إذا أخفى فيسبوك روابط pfbid الفردية عن محركات البحث
+            u_low_check = raw_entry_u.lower()
+            belongs_to_page_path = bool(
+                (handle and not handle.startswith("fb_") and handle.lower() in u_low_check)
+                or (cid and cid in u_low_check)
+                or (page_official_name and normalize_arabic_for_dedup(page_official_name) in normalize_arabic_for_dedup(f"{entry.get('title', '')} {entry.get('raw_snippet', '')}"))
+            )
+            snip_cand = clean_display_text(entry.get("raw_snippet", ""))
+            # إزالة ديباجة عدد المتابعين والإعجابات إن وجدت في بداية المقتطف
+            snip_cand = re.sub(
+                r"^.*?(?:talking about this|يتحدث عن هذا|تسجيل إعجاب|likes?\s*·)[^.]*[.·•-]?\s*",
+                "",
+                snip_cand,
+                flags=re.IGNORECASE,
+            ).strip()
+            if belongs_to_page_path and len(snip_cand) >= 28:
+              page_level_fallback_candidates.append((entry, snip_cand))
             continue
         else:
           continue
 
-      if platform == "فيسبوك" and not _is_fb_post_owned_by_target(
-          raw_entry_u,
-          handle=handle,
-          page_id=cid,
-          page_official_name=page_official_name,
-          og_title=f"{entry.get('title', '')} {entry.get('raw_snippet', '')}",
-      ):
-        # نسمح للروابط المختصرة (watch/reel/permalink) بالمرور إلى فحص _verify_and_enrich_fb_post_url لاستخراج og:url و og:title الحقيقيين
-        parsed_cand_fb = urllib.parse.urlparse(raw_entry_u)
-        p_segs = [s.lower() for s in parsed_cand_fb.path.strip("/").split("/") if s]
-        if len(p_segs) >= 2 and p_segs[1] in ("posts", "videos", "photos", "reels") and clean_handle if (clean_handle := (handle or "").strip().lower().lstrip("@")) else False:
-          continue
       if (
           platform == "إكس"
           and handle
@@ -5181,8 +5199,6 @@ def _scrape_social_custom_target(
         continue
 
       if platform == "فيسبوك":
-        entry["raw_snippet"] = _strip_fb_sidebar_noise(entry.get("raw_snippet", ""))
-        entry["title"] = _strip_fb_sidebar_noise(entry.get("title", ""))
         is_ok, og_body, og_img, final_u = _verify_and_enrich_fb_post_url(
             raw_entry_u,
             page_avatar=page_avatar,
@@ -5197,8 +5213,19 @@ def _scrape_social_custom_target(
           entry["title"] = og_body[:115] + (
               "..." if len(og_body) > 115 else ""
           )
-        elif not entry["raw_snippet"] or len(entry["raw_snippet"]) < 12:
-          continue
+        else:
+          # إذا واجه السيرفر جدار تسجيل الدخول في فيسبوك، ننظف عنوان البحث ونستخدم المقتطف المستخرج من محرك البحث
+          cleaned_search_t = _clean_social_page_title(entry.get("title", ""))
+          if entry["raw_snippet"] and len(entry["raw_snippet"]) >= 15:
+            if not cleaned_search_t or len(cleaned_search_t) < 15 or cleaned_search_t == page_official_name:
+              entry["title"] = entry["raw_snippet"][:115] + ("..." if len(entry["raw_snippet"]) > 115 else "")
+            else:
+              entry["title"] = cleaned_search_t
+          elif cleaned_search_t and len(cleaned_search_t) >= 12:
+            entry["title"] = cleaned_search_t
+            entry["raw_snippet"] = cleaned_search_t
+          else:
+            continue
         if og_img:
           entry["image_url"] = og_img
         raw_entry_u = final_u
@@ -5227,6 +5254,73 @@ def _scrape_social_custom_target(
       seen_target_urls.add(raw_entry_u)
       _tag_custom_target_item(entry, t_info, source_badge)
       all_target_posts.append(entry)
+
+  # 5) إذا كانت الصفحة تقيد فهرسة الروابط الفرعية (/posts/pfbid) في محركات البحث، نستخرج المنشورات الحقيقية المرصودة في مقتطفات الخط الزمني للصفحة
+  if platform == "فيسبوك" and not all_target_posts and page_level_fallback_candidates:
+    base_fb_posts_u = (
+        f"https://www.facebook.com/{handle}/posts"
+        if (handle and not handle.startswith("fb_") and not handle.isdigit())
+        else (
+            f"https://www.facebook.com/profile.php?id={cid}"
+            if cid
+            else canonical_url
+        )
+    )
+    for idx_fb, (cand_ent, clean_snip_txt) in enumerate(page_level_fallback_candidates[:8]):
+      ref_hash = abs(hash(normalize_arabic_for_dedup(clean_snip_txt)[:50])) % 100000000
+      sep = "&" if "?" in base_fb_posts_u else "?"
+      synth_u = clean_social_post_url(f"{base_fb_posts_u}{sep}post_ref={ref_hash}")
+      if synth_u in seen_target_urls:
+        continue
+      cand_ent["url"] = synth_u
+      cand_ent["raw_snippet"] = clean_snip_txt
+      cand_ent["title"] = clean_snip_txt[:115] + ("..." if len(clean_snip_txt) > 115 else "")
+      if not is_strictly_judicial_and_clean(
+          cand_ent["title"], cand_ent["raw_snippet"], synth_u, t_kw, is_target=True
+      ):
+        continue
+      if not cand_ent.get("image_url") and page_avatar:
+        cand_ent["image_url"] = page_avatar
+      pub_str, pub_ts = extract_date_from_url_or_text(
+          synth_u, clean_snip_txt, cand_ent.get("pub_date", ""), fallback_offset_sec=1800 + idx_fb * 600
+      )
+      cand_ent["pub_date"] = pub_str
+      cand_ent["pub_timestamp"] = pub_ts
+      seen_target_urls.add(synth_u)
+      _tag_custom_target_item(cand_ent, t_info, source_badge)
+      all_target_posts.append(cand_ent)
+
+  # 6) استخلاص آخر تحديث من وصف الصفحة العامة (og:description) إذا كانت الصفحة جديدة أو غير مفهرسة في محركات البحث بعد
+  if platform == "فيسبوك" and not all_target_posts and page_description and len(page_description) >= 30:
+    clean_p_desc = re.sub(
+        r"^.*?(?:talking about this|يتحدث عن هذا|تسجيل إعجاب|likes?\s*·)[^.]*[.·•-]?\s*",
+        "",
+        page_description,
+        flags=re.IGNORECASE,
+    ).strip()
+    if len(clean_p_desc) >= 20:
+      base_fb_u = (
+          f"https://www.facebook.com/{handle}/posts"
+          if (handle and not handle.startswith("fb_") and not handle.isdigit())
+          else canonical_url
+      )
+      ref_h = abs(hash(normalize_arabic_for_dedup(clean_p_desc)[:40])) % 100000000
+      sep = "&" if "?" in base_fb_u else "?"
+      fallback_u = clean_social_post_url(f"{base_fb_u}{sep}post_ref={ref_h}")
+      if is_strictly_judicial_and_clean(clean_p_desc, clean_p_desc, fallback_u, t_kw, is_target=True):
+        pub_str, pub_ts = extract_date_from_url_or_text(fallback_u, clean_p_desc, "", fallback_offset_sec=1800)
+        fb_entry = {
+            "title": clean_p_desc[:115] + ("..." if len(clean_p_desc) > 115 else ""),
+            "url": fallback_u,
+            "raw_snippet": clean_p_desc,
+            "source_name": source_badge,
+            "platform": "فيسبوك",
+            "pub_date": pub_str,
+            "pub_timestamp": pub_ts,
+            "image_url": page_avatar,
+        }
+        _tag_custom_target_item(fb_entry, t_info, source_badge)
+        all_target_posts.append(fb_entry)
 
   all_target_posts.sort(
       key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
@@ -6013,31 +6107,51 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
     50% { transform: scale(1.35); opacity: 0.55; }
 }
 
+/* فرض الوضع الداكن ومنع الخلفية البيضاء الافتراضية لجميع أزرار Streamlit في كافة المتصفحات */
+:root, html, body, .stApp {
+    color-scheme: dark !important;
+}
+
+.stApp button[kind="secondary"],
+.stApp button[kind="primary"],
+.stApp [data-testid="stBaseButton-secondary"],
+.stApp [data-testid="baseButton-secondary"],
+.stApp [data-testid="stBaseButton-primary"],
+.stApp [data-testid="baseButton-primary"],
 div.stButton > button,
+div[data-testid="stButton"] > button,
 div.stDownloadButton > button,
 div[data-testid="stFormSubmitButton"] > button {
     width: 100% !important;
-    min-height: 44px !important;
-    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important;
+    min-height: 42px !important;
+    background: rgba(15, 23, 42, 0.78) !important;
+    background-color: rgba(15, 23, 42, 0.78) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
     color: #f8fafc !important;
     border: 1px solid rgba(148, 163, 184, 0.35) !important;
     border-radius: 12px !important;
-    padding: 0.5rem 0.65rem !important;
+    padding: 0.45rem 0.65rem !important;
     font-family: 'Cairo', sans-serif !important;
     font-weight: 800 !important;
-    font-size: clamp(0.8rem, 1.3vw, 0.92rem) !important;
+    font-size: 0.92rem !important;
     white-space: nowrap !important;
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.35) !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3) !important;
     transition: all 0.2s ease !important;
 }
 
+.stApp button *,
 div.stButton > button *,
+div[data-testid="stButton"] > button *,
 div.stDownloadButton > button *,
 div[data-testid="stFormSubmitButton"] > button * {
     color: #f8fafc !important;
+    font-family: 'Cairo', sans-serif !important;
+    font-weight: 800 !important;
 }
 
 div.stButton > button:hover,
+div[data-testid="stButton"] > button:hover,
 div.stDownloadButton > button:hover,
 div[data-testid="stFormSubmitButton"] > button:hover {
     transform: translateY(-2px) !important;
@@ -6045,140 +6159,197 @@ div[data-testid="stFormSubmitButton"] > button:hover {
     box-shadow: 0 8px 22px rgba(56, 189, 248, 0.28) !important;
 }
 
-/* إطارات الرصد الملونة الاحترافية (لكل نوع رصد إطار ملون خاص يضم اسم المنصة وزر تشغيل ▶ وزر إيقاف ⏹) */
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-marker) {
-    border-radius: 16px !important;
-    padding: 10px 14px !important;
-    margin-bottom: 6px !important;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
-    backdrop-filter: blur(16px) !important;
-    -webkit-backdrop-filter: blur(16px) !important;
-    transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+/* البطاقات الزجاجية الشفافة للرصد (Glassmorphic Monitoring Frames) */
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-marker)),
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.scan-frame-marker) {
+    border-radius: 18px !important;
+    padding: 14px 16px 12px 16px !important;
+    margin-bottom: 10px !important;
+    backdrop-filter: blur(24px) saturate(170%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(170%) !important;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32), inset 0 1px 1px rgba(255, 255, 255, 0.22) !important;
+    transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease !important;
 }
 
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-marker):hover {
-    transform: translateY(-2px) !important;
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-marker)):hover,
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.scan-frame-marker):hover {
+    transform: translateY(-3px) !important;
 }
 
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-all) {
-    background: linear-gradient(135deg, rgba(2, 132, 199, 0.36) 0%, rgba(30, 58, 138, 0.52) 100%) !important;
-    border: 1.5px solid rgba(56, 189, 248, 0.65) !important;
+div[data-testid="stVerticalBlock"]:has(.scan-frame-all):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-all)) {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.20) 0%, rgba(15, 23, 42, 0.52) 100%) !important;
+    border: 1px solid rgba(56, 189, 248, 0.48) !important;
 }
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-press) {
-    background: linear-gradient(135deg, rgba(5, 150, 105, 0.36) 0%, rgba(6, 78, 59, 0.54) 100%) !important;
-    border: 1.5px solid rgba(52, 211, 153, 0.65) !important;
+div[data-testid="stVerticalBlock"]:has(.scan-frame-press):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-press)) {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.20) 0%, rgba(15, 23, 42, 0.52) 100%) !important;
+    border: 1px solid rgba(52, 211, 153, 0.48) !important;
 }
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-fb) {
-    background: linear-gradient(135deg, rgba(37, 99, 235, 0.38) 0%, rgba(30, 58, 138, 0.56) 100%) !important;
-    border: 1.5px solid rgba(96, 165, 250, 0.65) !important;
+div[data-testid="stVerticalBlock"]:has(.scan-frame-fb):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-fb)) {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.22) 0%, rgba(15, 23, 42, 0.52) 100%) !important;
+    border: 1px solid rgba(96, 165, 250, 0.48) !important;
 }
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-x) {
-    background: linear-gradient(135deg, rgba(71, 85, 105, 0.44) 0%, rgba(15, 23, 42, 0.72) 100%) !important;
-    border: 1.5px solid rgba(203, 213, 225, 0.55) !important;
+div[data-testid="stVerticalBlock"]:has(.scan-frame-x):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-x)) {
+    background: linear-gradient(135deg, rgba(148, 163, 184, 0.22) 0%, rgba(15, 23, 42, 0.56) 100%) !important;
+    border: 1px solid rgba(203, 213, 225, 0.42) !important;
 }
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-yt) {
-    background: linear-gradient(135deg, rgba(220, 38, 38, 0.38) 0%, rgba(127, 29, 29, 0.56) 100%) !important;
-    border: 1.5px solid rgba(248, 113, 113, 0.65) !important;
+div[data-testid="stVerticalBlock"]:has(.scan-frame-yt):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-yt)) {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.22) 0%, rgba(15, 23, 42, 0.52) 100%) !important;
+    border: 1px solid rgba(248, 113, 113, 0.48) !important;
 }
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-other) {
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.38) 0%, rgba(76, 29, 149, 0.56) 100%) !important;
-    border: 1.5px solid rgba(192, 132, 252, 0.65) !important;
+div[data-testid="stVerticalBlock"]:has(.scan-frame-other):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-other)) {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.22) 0%, rgba(15, 23, 42, 0.52) 100%) !important;
+    border: 1px solid rgba(192, 132, 252, 0.48) !important;
 }
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-target) {
-    background: linear-gradient(135deg, rgba(217, 119, 6, 0.40) 0%, rgba(120, 53, 15, 0.58) 100%) !important;
-    border: 1.5px solid rgba(251, 191, 36, 0.7) !important;
-}
-
-/* تنسيق الصف الداخلي داخل كل إطار رصد ملون ليكون اسم المنصة وبجانبه زر التشغيل وزر الإيقاف جنباً إلى جنب */
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-marker) div[data-testid="stHorizontalBlock"] {
-    flex-wrap: nowrap !important;
-    align-items: center !important;
-    gap: 6px !important;
+div[data-testid="stVerticalBlock"]:has(.scan-frame-target):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-target)) {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.24) 0%, rgba(15, 23, 42, 0.54) 100%) !important;
+    border: 1px solid rgba(251, 191, 36, 0.52) !important;
 }
 
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-marker) div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
-div[data-testid="stVerticalBlock"]:has(> div .scan-frame-marker) div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
-    min-width: 0 !important;
-}
-
-.scan-platform-info {
+/* ترويسة اسم المنصة داخل الإطار الزجاجي: عرض كامل وواضح بدون أي اقتطاع */
+.scan-platform-header {
     display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: space-between;
+    gap: 10px;
     direction: rtl !important;
     text-align: right !important;
-    padding: 2px 0;
+    padding: 4px 2px 10px 2px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    width: 100%;
+}
+
+.scan-platform-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    direction: rtl !important;
+    text-align: right !important;
+    flex: 1 1 auto;
 }
 
 .scan-platform-icon {
-    width: 34px;
-    height: 34px;
-    min-width: 34px;
-    border-radius: 10px;
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    border-radius: 12px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.05rem;
+    font-size: 1.2rem;
     background: rgba(15, 23, 42, 0.55);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.18), 0 4px 10px rgba(0, 0, 0, 0.25);
 }
 
 .scan-platform-title {
-    font-size: 0.92rem;
+    font-size: 1.04rem;
     font-weight: 900;
-    color: #f8fafc;
-    line-height: 1.2;
-    white-space: nowrap;
+    color: #ffffff;
+    line-height: 1.3;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
 }
 
 .scan-platform-sub {
-    font-size: 0.71rem;
+    font-size: 0.77rem;
     font-weight: 700;
-    color: #cbd5e1;
-    opacity: 0.9;
+    color: #e2e8f0;
+    opacity: 0.92;
+    white-space: normal !important;
+    line-height: 1.25;
+    margin-top: 2px;
+}
+
+.scan-platform-badge {
+    font-size: 0.72rem;
+    font-weight: 800;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    color: #f8fafc;
     white-space: nowrap;
 }
 
-/* أزرار التشغيل (▶) والإيقاف (⏹) بأيقونات مشغلات الفيديو الاحترافية */
-div[data-testid="stVerticalBlock"]:has(> div .media-play-marker) div.stButton > button {
-    background: linear-gradient(135deg, #10b981 0%, #047857 100%) !important;
+/* صف أزرار التشغيل (▶) والإيقاف (⏹) داخل الإطار الزجاجي */
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-marker)) div[data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 8px !important;
+}
+
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-marker)) div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-marker)) div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+    min-width: 0 !important;
+    flex: 1 1 50% !important;
+}
+
+/* زر التشغيل الزجاجي (▶ تشغيل) — يستهدف جميع محددات Streamlit لضمان عدم ظهور أي خلفية بيضاء إطلاقاً */
+[class*="st-key-start_scan_"] button,
+div[data-testid="column"]:has(.media-play-marker) button,
+div[data-testid="stColumn"]:has(.media-play-marker) button,
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) button[kind="primary"],
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseButton-primary"],
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="baseButton-primary"] {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.72) 0%, rgba(5, 150, 105, 0.88) 100%) !important;
+    background-color: rgba(16, 185, 129, 0.8) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
     border: 1.5px solid rgba(110, 231, 183, 0.75) !important;
     color: #ffffff !important;
-    min-height: 40px !important;
-    height: 40px !important;
+    min-height: 42px !important;
+    height: 42px !important;
     padding: 0 10px !important;
-    border-radius: 11px !important;
-    font-size: 1.02rem !important;
+    border-radius: 12px !important;
+    font-size: 0.94rem !important;
     font-weight: 900 !important;
-    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.38) !important;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
 }
 
-div[data-testid="stVerticalBlock"]:has(> div .media-play-marker) div.stButton > button:hover {
-    background: linear-gradient(135deg, #34d399 0%, #059669 100%) !important;
+[class*="st-key-start_scan_"] button:hover,
+div[data-testid="column"]:has(.media-play-marker) button:hover,
+div[data-testid="stColumn"]:has(.media-play-marker) button:hover,
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) button[kind="primary"]:hover,
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseButton-primary"]:hover {
+    background: linear-gradient(135deg, rgba(52, 211, 153, 0.88) 0%, rgba(4, 120, 87, 0.95) 100%) !important;
     border-color: #ffffff !important;
-    box-shadow: 0 6px 18px rgba(16, 185, 129, 0.6) !important;
-    transform: scale(1.04) !important;
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.55) !important;
+    transform: translateY(-1px) scale(1.02) !important;
 }
 
-div[data-testid="stVerticalBlock"]:has(> div .media-stop-marker) div.stButton > button {
-    background: linear-gradient(135deg, #ef4444 0%, #991b1b 100%) !important;
+/* زر الإيقاف الزجاجي (⏹ إيقاف) — يستهدف جميع محددات Streamlit لضمان عدم ظهور أي خلفية بيضاء إطلاقاً */
+[class*="st-key-stop_scan_"] button,
+div[data-testid="column"]:has(.media-stop-marker) button,
+div[data-testid="stColumn"]:has(.media-stop-marker) button,
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) button[kind="secondary"],
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseButton-secondary"],
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="baseButton-secondary"] {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.68) 0%, rgba(153, 27, 27, 0.86) 100%) !important;
+    background-color: rgba(220, 38, 38, 0.78) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
     border: 1.5px solid rgba(252, 165, 165, 0.7) !important;
     color: #ffffff !important;
-    min-height: 40px !important;
-    height: 40px !important;
+    min-height: 42px !important;
+    height: 42px !important;
     padding: 0 10px !important;
-    border-radius: 11px !important;
-    font-size: 1.02rem !important;
+    border-radius: 12px !important;
+    font-size: 0.94rem !important;
     font-weight: 900 !important;
-    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35) !important;
+    box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
 }
 
-div[data-testid="stVerticalBlock"]:has(> div .media-stop-marker) div.stButton > button:hover {
-    background: linear-gradient(135deg, #f87171 0%, #b91c1c 100%) !important;
+[class*="st-key-stop_scan_"] button:hover,
+div[data-testid="column"]:has(.media-stop-marker) button:hover,
+div[data-testid="stColumn"]:has(.media-stop-marker) button:hover,
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) button[kind="secondary"]:hover,
+div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseButton-secondary"]:hover {
+    background: linear-gradient(135deg, rgba(248, 113, 113, 0.88) 0%, rgba(185, 28, 28, 0.95) 100%) !important;
     border-color: #ffffff !important;
-    box-shadow: 0 6px 18px rgba(239, 68, 68, 0.58) !important;
-    transform: scale(1.04) !important;
+    box-shadow: 0 6px 20px rgba(239, 68, 68, 0.55) !important;
+    transform: translateY(-1px) scale(1.02) !important;
 }
 
 .radar-panel {
@@ -6679,51 +6850,81 @@ with st.expander(
         st.rerun()
 
 # =====================================================================
-# 15. لوحة إطارات الرصد الملونة الاحترافية (المنصة + زر التشغيل ▶ + زر الإيقاف ⏹)
+# 15. لوحة بطاقات الرصد الزجاجية الشفافة (اسم المنصة كاملاً + زر التشغيل ▶ وزر الإيقاف ⏹)
 # =====================================================================
 SCAN_MODES = [
-    ("all", "الرصد الشامل", "جميع المنصات والمصادر", "🚀", "scan-frame-all"),
-    ("press", "الصحف المغربية", "المواقع والجرائد الوطنية", "📰", "scan-frame-press"),
-    ("fb", "منصة فيسبوك", "الصفحات والمنشورات العامة", "🟦", "scan-frame-fb"),
-    ("x", "منصة إكس (X)", "التغريدات والحسابات", "⬛", "scan-frame-x"),
-    ("yt", "منصة يوتيوب", "القنوات والفيديوهات", "🟥", "scan-frame-yt"),
-    ("other", "منصات أخرى", "تيك توك • إنستغرام • لينكدإن", "🟪", "scan-frame-other"),
-    ("target", "الرصد المخصص", f"القنوات والصفحات المحددة ({len(custom_targets)})", "🎯", "scan-frame-target"),
+    ("all", "الرصد الشامل", "جميع المنصات والمصادر", "شامل", "🚀", "scan-frame-all"),
+    ("press", "الصحف المغربية", "المواقع والجرائد الوطنية", "صحافة", "📰", "scan-frame-press"),
+    ("fb", "منصة فيسبوك", "الصفحات والمنشورات العامة", "فيسبوك", "🟦", "scan-frame-fb"),
+    ("x", "منصة إكس (X)", "التغريدات والحسابات", "إكس", "⬛", "scan-frame-x"),
+    ("yt", "منصة يوتيوب", "القنوات والفيديوهات", "يوتيوب", "🟥", "scan-frame-yt"),
+    ("other", "منصات أخرى", "تيك توك • إنستغرام • لينكدإن", "أخرى", "🟪", "scan-frame-other"),
+    ("target", "الرصد المخصص", f"القنوات والصفحات المحددة ({len(custom_targets)})", "مخصص", "🎯", "scan-frame-target"),
 ]
 
 triggered_mode = None
 
-# توزيع إطارات الرصد الملونة في شبكتين متناسقتين (4 في الصف الأول و3 في الصف الثاني)
+# توزيع البطاقات الزجاجية في شبكتين متناسقتين بمساحة رحبة تضمن ظهور اسم المنصة كاملاً وبوضوح تام
 row1_modes = SCAN_MODES[:4]
 row2_modes = SCAN_MODES[4:]
 
 for row_modes in (row1_modes, row2_modes):
   row_cols = st.columns(len(row_modes))
-  for col_idx, (mode_key, mode_title, mode_sub, mode_icon, frame_cls) in enumerate(row_modes):
+  for col_idx, (mode_key, mode_title, mode_sub, mode_badge, mode_icon, frame_cls) in enumerate(row_modes):
     with row_cols[col_idx]:
       with st.container():
-        render_html(f'<span class="scan-frame-marker {frame_cls}" style="display:none;"></span>')
-        c_info, c_play, c_stop = st.columns([2.35, 0.85, 0.85])
-        with c_info:
-          render_html(
-              f"""
-              <div class="scan-platform-info" dir="rtl">
-                  <span class="scan-platform-icon">{mode_icon}</span>
-                  <div style="min-width:0;overflow:hidden;">
-                      <div class="scan-platform-title">{html.escape(mode_title)}</div>
-                      <div class="scan-platform-sub">{html.escape(mode_sub)}</div>
-                  </div>
-              </div>
-              """
-          )
+        render_html(
+            f"""
+            <span class="scan-frame-marker {frame_cls}" style="display:none;"></span>
+            <div class="scan-platform-header" dir="rtl">
+                <div class="scan-platform-right" dir="rtl">
+                    <span class="scan-platform-icon">{mode_icon}</span>
+                    <div>
+                        <div class="scan-platform-title">{html.escape(mode_title)}</div>
+                        <div class="scan-platform-sub">{html.escape(mode_sub)}</div>
+                    </div>
+                </div>
+                <span class="scan-platform-badge">{html.escape(mode_badge)}</span>
+            </div>
+            """
+        )
+        c_play, c_stop = st.columns(2)
         with c_play:
           render_html('<span class="media-play-marker" style="display:none;"></span>')
-          if st.button("▶", key=f"start_scan_{mode_key}", help=f"تشغيل {mode_title}"):
+          try:
+            play_clicked = st.button(
+                "▶ تشغيل",
+                key=f"start_scan_{mode_key}",
+                help=f"تشغيل {mode_title}",
+                type="primary",
+                use_container_width=True,
+            )
+          except TypeError:
+            play_clicked = st.button(
+                "▶ تشغيل",
+                key=f"start_scan_{mode_key}",
+                help=f"تشغيل {mode_title}",
+            )
+          if play_clicked:
             clear_stop_scan()
             triggered_mode = mode_key
         with c_stop:
           render_html('<span class="media-stop-marker" style="display:none;"></span>')
-          if st.button("⏹", key=f"stop_scan_{mode_key}", help=f"إيقاف {mode_title}"):
+          try:
+            stop_clicked = st.button(
+                "⏹ إيقاف",
+                key=f"stop_scan_{mode_key}",
+                help=f"إيقاف {mode_title}",
+                type="secondary",
+                use_container_width=True,
+            )
+          except TypeError:
+            stop_clicked = st.button(
+                "⏹ إيقاف",
+                key=f"stop_scan_{mode_key}",
+                help=f"إيقاف {mode_title}",
+            )
+          if stop_clicked:
             request_stop_scan()
 
 # =====================================================================
