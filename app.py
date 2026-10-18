@@ -1,7 +1,11 @@
 import base64
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+import gzip
 import html
+import io
+import struct
+import wave
 import json
 import os
 import re
@@ -491,8 +495,22 @@ def strip_internal_url_fragments(url: str) -> str:
   return re.sub(r"#(?:plat|v4target|v3target|v2target|target)=[^\s#]*", "", str(url or "").strip())
 
 
+def strip_source_suffix_from_title(title: str) -> str:
+  """إزالة اسم الجريدة أو المنصة الملحق بنهاية العنوان (مثل: - هسبريس أو | العمق المغربي) لتوحيد بصمة العنوان عبر كافة المصادر."""
+  t = clean_display_text(title)
+  if not t:
+    return ""
+  # إزالة اللواحق القصيرة بعد الشرطة أو العمود الفاصل في نهاية العنوان
+  for sep in (" - ", " – ", " — ", " | ", " // "):
+    if sep in t:
+      parts = t.rsplit(sep, 1)
+      if len(parts[0].strip()) >= 18 and 2 <= len(parts[1].strip()) <= 32:
+        t = parts[0].strip()
+  return t
+
+
 def normalize_arabic_for_dedup(text: str) -> str:
-  """تطبيع النص العربي بدقة عالية لكشف الأخبار والمنشورات المكررة حتى مع اختلاف التشكيل أو علامات الترقيم."""
+  """تطبيع النص العربي بدقة عالية لكشف الأخبار والمنشورات المكررة حتى مع اختلاف التشكيل أو علامات الترقيم أو الهمزات."""
   if not text:
     return ""
   t = clean_display_text(text).lower()
@@ -547,6 +565,9 @@ def canonicalize_url_for_dedup(url: str) -> str:
   try:
     p = urllib.parse.urlparse(u)
     netloc = p.netloc.lower().replace("www.", "").replace("m.", "").replace("web.", "")
+    # روابط Google News تتغير رموزها باستمرار لنفس الخبر، لذلك لا نعتمد على مسارها كمعرف وحيد
+    if "news.google.com" in netloc:
+      return ""
     path = urllib.parse.unquote(p.path).rstrip("/")
     if netloc in ("youtube.com", "youtu.be", "facebook.com", "x.com", "twitter.com"):
       pid = extract_canonical_post_or_video_id(u)
@@ -558,10 +579,10 @@ def canonicalize_url_for_dedup(url: str) -> str:
 
 
 def compute_article_dedup_keys(title: str, url: str) -> set:
-  """توليد مفاتيح البصمة الفريدة للخبر (الرابط الموحد + معرف المنشور + البصمة النصية للعنوان)."""
+  """توليد مفاتيح البصمة الفريدة للخبر (الرابط الموحد + معرف المنشور + البصمة النصية الكاملة وبصمة صدر العنوان بدون اسم الجريدة)."""
   keys = set()
   raw_u = strip_internal_url_fragments(url)
-  if raw_u:
+  if raw_u and "news.google.com" not in raw_u.lower():
     keys.add(f"raw_u:{raw_u.lower().rstrip('/')}")
   canon_u = canonicalize_url_for_dedup(url)
   if canon_u and len(canon_u) >= 6:
@@ -569,9 +590,16 @@ def compute_article_dedup_keys(title: str, url: str) -> set:
   pid = extract_canonical_post_or_video_id(url)
   if pid:
     keys.add(f"pid:{pid}")
-  norm_t = normalize_arabic_for_dedup(title)
-  if len(norm_t) >= 20:
-    keys.add(f"title:{norm_t[:85]}")
+
+  core_title = strip_source_suffix_from_title(title)
+  for t_variant in (title, core_title):
+    norm_t = normalize_arabic_for_dedup(t_variant)
+    if len(norm_t) >= 14:
+      keys.add(f"title:{norm_t[:85]}")
+      keys.add(f"title_head:{norm_t[:46]}")
+      words = [w for w in norm_t.split() if len(w) >= 2]
+      if len(words) >= 5:
+        keys.add(f"title_words:{' '.join(words[:8])}")
   return keys
 
 
@@ -1257,9 +1285,144 @@ def belongs_to_any_custom_target(item: dict, targets_list: list) -> bool:
 
 
 # =====================================================================
-# 3. فك روابط Google News واستخراج متن الخبر الحقيقي والصورة المصغرة الأصلية
+# 3. فك روابط Google News واستخراج النص الأصلي الكامل للموضوع حرفياً (Verbatim Full Text) والصورة الأصلية
 # =====================================================================
-def resolve_google_news_url(url: str) -> str:
+def _find_press_domain_by_source_or_url(source_name: str, url: str) -> str:
+  """تحديد النطاق الرسمي للجريدة المغربية من اسم المصدر أو الرابط لاستخدامه في جلب النص الأصلي الكامل عبر WordPress API."""
+  u_low = str(url or "").lower()
+  s_clean = clean_display_text(source_name or "").lower()
+  for site in MOROCCAN_PRESS_SITES:
+    dom = site["domain"].lower()
+    name_low = site["name"].lower()
+    if dom in u_low or (name_low and name_low in s_clean):
+      return dom
+  # فحص إضافي للأسماء الشائعة
+  alias_map = {
+      "هسبريس": "hespress.com",
+      "hespress": "hespress.com",
+      "العمق": "al3omk.com",
+      "اليوم 24": "alyaoum24.com",
+      "alyaoum24": "alyaoum24.com",
+      "مدار 21": "madar21.com",
+      "الأيام 24": "alayam24.com",
+      "أخبارنا": "akhbarona.com",
+      "كش 24": "kech24.com",
+      "أكادير 24": "agadir24.info",
+      "صباح أكادير": "sabahagadir.com",
+      "كود": "goud.ma",
+      "الصباح": "assabah.ma",
+      "برلمان": "barlamane.com",
+      "زنقة 20": "rue20.com",
+      "طنجة 24": "tanja24.com",
+      "ذا فويس": "thevoice.ma",
+  }
+  for k_alias, dom_val in alias_map.items():
+    if k_alias in s_clean or k_alias in u_low:
+      return dom_val
+  return ""
+
+
+def _fetch_wordpress_verbatim_article(domain: str, title: str, article_url: str = "") -> tuple:
+  """جلب النص الأصلي الكامل للمقال حرفياً (فقرة بفقرة) والصورة والرابط المباشر عبر واجهة WordPress REST API الرسمية أو خلاصة البحث المباشرة للجريدة."""
+  if not domain and not article_url:
+    return "", "", ""
+
+  # أ) إذا كان لدينا رابط مباشر للمقال يحتوي على معرف رقمي (مثل hespress.com/...-123456.html أو al3omk.com/123456.html)، نفحص WP REST API بالمعرف أولاً
+  if article_url and "news.google.com" not in article_url:
+    parsed_a = urllib.parse.urlparse(article_url)
+    dom_a = parsed_a.netloc.lower().replace("www.", "")
+    m_post_id = re.search(r"(?:-|/|\?p=)(\d{5,8})(?:\.html|/|&|$)", article_url)
+    if m_post_id and dom_a:
+      pid = m_post_id.group(1)
+      wp_single_u = f"https://{dom_a}/wp-json/wp/v2/posts/{pid}"
+      try:
+        r_wp = requests.get(wp_single_u, headers=DEFAULT_HEADERS, timeout=4.5)
+        if r_wp.status_code == 200:
+          p_json = r_wp.json()
+          if isinstance(p_json, dict) and p_json.get("content", {}).get("rendered"):
+            full_txt = clean_full_article_text(p_json["content"]["rendered"])
+            img_u = str(p_json.get("jetpack_featured_media_url") or "").strip()
+            if not img_u:
+              og_imgs = p_json.get("yoast_head_json", {}).get("og_image", [])
+              if isinstance(og_imgs, list) and og_imgs and isinstance(og_imgs[0], dict):
+                img_u = str(og_imgs[0].get("url") or "").strip()
+            link_u = str(p_json.get("link") or article_url).strip()
+            if len(full_txt) >= 180:
+              return img_u, full_txt, link_u
+      except Exception:
+        pass
+
+  if not domain or not title:
+    return "", "", ""
+
+  # تنظيف العنوان من اسم الجريدة في آخره للبحث الدقيق
+  clean_t = re.sub(r"\s*[-|–—]\s*[^-|–—]{2,25}$", "", clean_display_text(title)).strip()
+  search_phrase = clean_t[:70].strip()
+  if len(search_phrase) < 8:
+    return "", "", ""
+
+  # ب) البحث في واجهة WordPress REST API الرسمية للجريدة (/wp-json/wp/v2/posts?search=...)
+  wp_api_u = f"https://{domain}/wp-json/wp/v2/posts?search={urllib.parse.quote(search_phrase)}&per_page=3"
+  try:
+    r_api = requests.get(wp_api_u, headers=DEFAULT_HEADERS, timeout=5.0)
+    if r_api.status_code == 200:
+      posts_list = r_api.json()
+      if isinstance(posts_list, list):
+        norm_target_t = normalize_arabic_for_dedup(clean_t)
+        target_words = [w for w in norm_target_t.split() if len(w) >= 3]
+        for p_obj in posts_list:
+          if not isinstance(p_obj, dict):
+            continue
+          cand_t = clean_display_text(p_obj.get("title", {}).get("rendered", ""))
+          norm_cand_t = normalize_arabic_for_dedup(cand_t)
+          # التحقق من تطابق العنوان مع المقال المطلوب
+          if target_words:
+            overlap = sum(1 for w in target_words[:6] if w in norm_cand_t)
+            if overlap < max(1, min(3, len(target_words) // 2)):
+              continue
+          rendered_html = p_obj.get("content", {}).get("rendered", "")
+          full_txt = clean_full_article_text(rendered_html)
+          if len(full_txt) >= 150:
+            img_u = str(p_obj.get("jetpack_featured_media_url") or "").strip()
+            if not img_u:
+              og_imgs = p_obj.get("yoast_head_json", {}).get("og_image", [])
+              if isinstance(og_imgs, list) and og_imgs and isinstance(og_imgs[0], dict):
+                img_u = str(og_imgs[0].get("url") or "").strip()
+            link_u = str(p_obj.get("link") or "").strip()
+            return img_u, full_txt, link_u
+  except Exception:
+    pass
+
+  # ج) البحث في خلاصة WordPress RSS المباشرة للجريدة (/?s=...&feed=rss2) التي تحتوي على <content:encoded> الكامل
+  wp_rss_u = f"https://{domain}/?s={urllib.parse.quote(search_phrase)}&feed=rss2"
+  try:
+    r_rss = requests.get(wp_rss_u, headers=DEFAULT_HEADERS, timeout=5.0)
+    if r_rss.status_code == 200 and b"<item>" in r_rss.content:
+      root = ET.fromstring(r_rss.content)
+      ns_c = {"content": "http://purl.org/rss/1.0/modules/content/", "media": "http://search.yahoo.com/mrss/"}
+      norm_target_t = normalize_arabic_for_dedup(clean_t)
+      target_words = [w for w in norm_target_t.split() if len(w) >= 3]
+      for it_el in root.findall(".//item")[:3]:
+        cand_t = clean_display_text(it_el.findtext("title") or "")
+        norm_cand_t = normalize_arabic_for_dedup(cand_t)
+        if target_words:
+          overlap = sum(1 for w in target_words[:6] if w in norm_cand_t)
+          if overlap < max(1, min(3, len(target_words) // 2)):
+            continue
+        raw_enc = it_el.findtext("content:encoded", default="", namespaces=ns_c) or it_el.findtext("description") or ""
+        full_txt = clean_full_article_text(raw_enc)
+        link_u = clean_social_post_url(it_el.findtext("link") or "")
+        img_u = extract_thumbnail_for_item(link_u, raw_enc, "الصحف")
+        if len(full_txt) >= 150:
+          return img_u, full_txt, link_u
+  except Exception:
+    pass
+
+  return "", "", ""
+
+
+def resolve_google_news_url(url: str, title_hint: str = "", source_hint: str = "") -> str:
+  """فك تشفير روابط Google News الحديثة (CBMi...) عبر الكوكيز التجاوزية + batchexecute + البحث المباشر بالعنوان عند الحاجة."""
   u = strip_internal_url_fragments(url)
   if "news.google.com" not in u:
     return u
@@ -1279,52 +1442,97 @@ def resolve_google_news_url(url: str) -> str:
     except Exception:
       pass
 
-    try:
-      art_page = f"https://news.google.com/articles/{token}"
-      r = requests.get(art_page, headers=DEFAULT_HEADERS, timeout=3.5)
-      if r.status_code == 200:
-        sg_m = re.search(r'data-n-a-sg="([^"]+)"', r.text)
-        ts_m = re.search(r'data-n-a-ts="([^"]+)"', r.text)
-        if sg_m and ts_m:
-          sg = sg_m.group(1)
-          ts = ts_m.group(1)
-          payload_inner = (
-              f'["garturlreq",[["X","X",["X","X"],null,null,1,1,"MA:ar",'
-              f'null,1,null,null,null,null,null,0,1],"X","X",1,[1,1,1],1,1,'
-              f'null,0,0,null,0],"{token}",{ts},"{sg}"]'
-          )
-          req_data = {
-              "f.req": json.dumps(
-                  [[["Fbv4je", payload_inner, None, "generic"]]]
-              )
-          }
-          headers_post = dict(DEFAULT_HEADERS)
-          headers_post["Content-Type"] = (
-              "application/x-www-form-urlencoded;charset=UTF-8"
-          )
-          rb = requests.post(
-              "https://news.google.com/_/DotsSplashUi/data/batchexecute",
-              data=req_data,
-              headers=headers_post,
-              timeout=3.5,
-          )
-          if rb.status_code == 200:
-            m_res = re.search(
-                r'\\"garturlres\\",\\"(https?://[^\\"]+)\\"', rb.text
+    gnews_cookies = {
+        "CONSENT": "YES+cb.20240115-07-p0.ar+FX+999",
+        "SOCS": "CAESHAgBEhJnd3NfMjAyNDAxMTUtMF9SQzIaAmFyIAEaBgiAo_CmBg",
+    }
+    for prefix_path in ("rss/articles", "articles"):
+      try:
+        art_page = f"https://news.google.com/{prefix_path}/{token}"
+        r = requests.get(
+            art_page,
+            headers=DEFAULT_HEADERS,
+            cookies=gnews_cookies,
+            timeout=4.0,
+            allow_redirects=True,
+        )
+        if r.status_code == 200 and r.text:
+          if r.url and "news.google.com" not in r.url and "consent.google" not in r.url:
+            return r.url
+          sg_m = re.search(r'data-n-a-sg=["\']([^"\']+)["\']', r.text)
+          ts_m = re.search(r'data-n-a-ts=["\']([^"\']+)["\']', r.text)
+          if sg_m and ts_m:
+            sg = sg_m.group(1)
+            ts = ts_m.group(1)
+            payload_inner = (
+                f'["garturlreq",[["X","X",["X","X"],null,null,1,1,"MA:ar",'
+                f'null,1,null,null,null,null,null,0,1],"X","X",1,[1,1,1],1,1,'
+                f'null,0,0,null,0],"{token}",{ts},"{sg}"]'
             )
-            if m_res:
-              return m_res.group(1)
-    except Exception:
-      pass
+            req_data = {
+                "f.req": json.dumps(
+                    [[["Fbv4je", payload_inner, None, "generic"]]]
+                )
+            }
+            headers_post = dict(DEFAULT_HEADERS)
+            headers_post["Content-Type"] = (
+                "application/x-www-form-urlencoded;charset=UTF-8"
+            )
+            rb = requests.post(
+                "https://news.google.com/_/DotsSplashUi/data/batchexecute",
+                data=req_data,
+                headers=headers_post,
+                cookies=gnews_cookies,
+                timeout=4.0,
+            )
+            if rb.status_code == 200 and rb.text:
+              unesc = rb.text.replace("\\/", "/").replace("\/", "/").replace("\u003d", "=").replace("\u0026", "&")
+              m_res = re.search(
+                  r'garturlres\*",\*"(https?://[^"\]+)', unesc
+              )
+              if m_res and "google.com" not in m_res.group(1):
+                return m_res.group(1)
+      except Exception:
+        pass
+
+  # إذا لم ينفك رابط Google News، نستخدم عنوان الخبر ومصدره لإيجاد الرابط الأصلي المباشر
+  if title_hint:
+    dom_hint = _find_press_domain_by_source_or_url(source_hint, u)
+    if dom_hint:
+      _, _, wp_link = _fetch_wordpress_verbatim_article(dom_hint, title_hint)
+      if wp_link and "news.google.com" not in wp_link:
+        return wp_link
 
   return u
 
 
-def scrape_article_page_content_and_image(url: str):
-  """جلب الصورة الأصلية والنص الكامل للموضوع (مقسماً إلى فقرات واضحة) من صفحة الخبر أو الفيديو أو المنشور."""
-  real_url = resolve_google_news_url(url)
+def scrape_article_page_content_and_image(url: str, title_hint: str = "", source_hint: str = ""):
+  """جلب الصورة الأصلية والنص الأصلي الكامل للموضوع حرفياً (فقرة بفقرة كما ورد في المصدر الأصلي دون اختصار)."""
+  real_url = resolve_google_news_url(url, title_hint=title_hint, source_hint=source_hint)
+
+  # 1) إذا كان الخبر من جريدة مغربية تدعم WordPress API، نحاول جلب النص الأصلي الكامل والرابط المباشر منها
+  press_dom = _find_press_domain_by_source_or_url(source_hint, real_url)
+  if press_dom and ("news.google.com" in real_url or title_hint):
+    wp_img, wp_full_text, wp_link = _fetch_wordpress_verbatim_article(
+        press_dom, title_hint, "" if "news.google.com" in real_url else real_url
+    )
+    if wp_link and "news.google.com" in real_url:
+      real_url = wp_link
+    if len(wp_full_text) >= 260 and wp_img:
+      return wp_img, wp_full_text, real_url
+
   if not real_url or "news.google.com" in real_url:
-    return "", "", real_url
+    # محاولة أخيرة عبر محركات البحث للعثور على الرابط الأصلي للمقال من عنوانه
+    if title_hint and len(title_hint) >= 15:
+      clean_t_q = re.sub(r"\s*[-|–—]\s*[^-|–—]{2,25}$", "", clean_display_text(title_hint)).strip()
+      q_find = f'"{clean_t_q[:65]}" {source_hint}'.strip()
+      for sr in _multi_engine_web_search(q_find, platform="الصحف", max_results=4):
+        cand_u = clean_social_post_url(sr.get("url", ""))
+        if cand_u and "news.google.com" not in cand_u and "facebook.com" not in cand_u:
+          real_url = cand_u
+          break
+    if not real_url or "news.google.com" in real_url:
+      return "", "", real_url
 
   m_yt = re.search(
       r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})",
@@ -1343,7 +1551,7 @@ def scrape_article_page_content_and_image(url: str):
       )
       if ryt.status_code == 200 and ryt.text:
         m_sd = re.search(
-            r'"shortDescription"\s*:\s*"((?:[^"\\]|\\.){15,6000})"',
+            r'"shortDescription"\s*:\s*"((?:[^"\]|\.){15,8000})"',
             ryt.text,
         )
         if m_sd:
@@ -1373,8 +1581,10 @@ def scrape_article_page_content_and_image(url: str):
       else DEFAULT_HEADERS
   )
   try:
-    r = requests.get(real_url, headers=req_headers, timeout=5.5)
+    r = requests.get(real_url, headers=req_headers, timeout=6.0)
     if r.status_code != 200 or not r.text:
+      if press_dom and title_hint:
+        return _fetch_wordpress_verbatim_article(press_dom, title_hint, real_url)
       return "", "", real_url
 
     html_doc = r.text
@@ -1383,7 +1593,7 @@ def scrape_article_page_content_and_image(url: str):
         r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:image|og:image:secure_url|twitter:image|twitter:image:src)["\']',
         r'<link[^>]+rel=["\']image_src["\'][^>]+href=["\']([^"\']+)["\']',
     ]:
-      m_img = re.search(meta_pattern, html_doc[:35000], re.IGNORECASE)
+      m_img = re.search(meta_pattern, html_doc[:45000], re.IGNORECASE)
       if m_img:
         candidate_img = html.unescape(m_img.group(1).strip())
         if candidate_img.startswith("//"):
@@ -1394,31 +1604,7 @@ def scrape_article_page_content_and_image(url: str):
           img_url = candidate_img
           break
 
-    meta_desc = ""
-    bad_login_phrases = [
-        "قم بتسجيل الدخول",
-        "تسجيل الدخول إلى فيسبوك",
-        "لبدء المشاركة والتواصل",
-        "log in to facebook",
-        "log in or sign up",
-        "connect with friends",
-        "page not found",
-        "الصفحة غير موجودة",
-    ]
-    for desc_pattern in [
-        r'<meta[^>]+(?:property|name)=["\'](?:og:description|description|twitter:description)["\'][^>]+content=["\']([^"\']+)["\']',
-        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:description|description|twitter:description)["\']',
-    ]:
-      m_d = re.search(desc_pattern, html_doc[:35000], re.IGNORECASE)
-      if m_d:
-        cand_d = _strip_fb_sidebar_noise(m_d.group(1))
-        if any(bp in cand_d.lower() for bp in bad_login_phrases):
-          continue
-        if len(cand_d) > 25:
-          meta_desc = cand_d
-          break
-
-    # 1) محاولة استخراج النص الكامل للمقال من JSON-LD (articleBody) المعتمد في كبريات الصحف المغربية
+    # 1) استخراج النص الأصلي الكامل من JSON-LD (articleBody) إن وجد
     ld_article_body = ""
     for m_ld in re.finditer(
         r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
@@ -1426,7 +1612,7 @@ def scrape_article_page_content_and_image(url: str):
         re.DOTALL | re.IGNORECASE,
     ):
       ld_raw = m_ld.group(1).strip()
-      m_ab = re.search(r'"articleBody"\s*:\s*"((?:[^"\\]|\\.){80,})"', ld_raw)
+      m_ab = re.search(r'"articleBody"\s*:\s*"((?:[^"\]|\.){80,})"', ld_raw)
       if m_ab:
         cand_ab = clean_full_article_text(decode_js_escaped_text(m_ab.group(1)))
         if len(cand_ab) > len(ld_article_body):
@@ -1456,12 +1642,13 @@ def scrape_article_page_content_and_image(url: str):
               img_url = src_cand
               break
 
-      for tag in soup.select("script, style, nav, footer, header, aside, form, .related-posts, .comments, .share-buttons"):
+      for tag in soup.select(
+          "script, style, nav, footer, header, aside, form, .related-posts, .comments, .share-buttons, .tags, .post-tags, .author-box, .breadcrumb"
+      ):
         tag.decompose()
 
-      # البحث في حاوية المقال الرئيسية أولاً لجلب جميع فقرات الموضوع كاملاً بالترتيب
       main_containers = soup.select(
-          "[itemprop='articleBody'], .article-content, .entry-content, .post-content, .td-post-content, .single-content, .details-content, .article-body, article, main"
+          "[itemprop='articleBody'], .article-content, .entry-content, .post-content, .td-post-content, .single-content, .details-content, .article-body, .post_content, .story-body, article, main"
       )
       p_elements = []
       for mc in main_containers:
@@ -1475,8 +1662,8 @@ def scrape_article_page_content_and_image(url: str):
       for p_el in p_elements:
         p_txt = clean_display_text(p_el.get_text(" ", strip=True))
         if (
-            len(p_txt) >= 28
-            and len(re.findall(r"[\u0600-\u06FF]", p_txt)) >= 8
+            len(p_txt) >= 20
+            and len(re.findall(r"[؀-ۿ]", p_txt)) >= 5
             and not any(
                 noise in p_txt
                 for noise in [
@@ -1490,7 +1677,7 @@ def scrape_article_page_content_and_image(url: str):
         ):
           if p_txt not in paragraphs:
             paragraphs.append(p_txt)
-          if len("\n\n".join(paragraphs)) > 11000:
+          if len("\n\n".join(paragraphs)) > 14000:
             break
     else:
       for raw_p in re.findall(
@@ -1498,25 +1685,29 @@ def scrape_article_page_content_and_image(url: str):
       ):
         p_txt = clean_display_text(raw_p)
         if (
-            len(p_txt) >= 28
-            and len(re.findall(r"[\u0600-\u06FF]", p_txt)) >= 8
+            len(p_txt) >= 20
+            and len(re.findall(r"[؀-ۿ]", p_txt)) >= 5
         ):
           if p_txt not in paragraphs:
             paragraphs.append(p_txt)
-          if len("\n\n".join(paragraphs)) > 11000:
+          if len("\n\n".join(paragraphs)) > 14000:
             break
 
-    combined_parts = []
-    if meta_desc and len(meta_desc) > 35:
-      combined_parts.append(meta_desc)
-    for p in paragraphs:
-      if p not in combined_parts and (not meta_desc or p[:40] not in meta_desc):
-        combined_parts.append(p)
-    dom_body = "\n\n".join(combined_parts)
-    if len(ld_article_body) > len(dom_body) + 120:
-      body_text = ld_article_body[:12000]
+    dom_body = "\n\n".join(paragraphs)
+    if len(ld_article_body) > len(dom_body) + 100:
+      body_text = ld_article_body[:15000]
     else:
-      body_text = dom_body[:12000]
+      body_text = dom_body[:15000]
+
+    # إذا كانت الصفحة محمية أو أعادت نصاً قصيراً جداً، نستعين بواجهة WordPress الخاصة بالجريدة
+    if len(body_text) < 220 and press_dom and title_hint:
+      wp_img2, wp_body2, wp_link2 = _fetch_wordpress_verbatim_article(press_dom, title_hint, real_url)
+      if len(wp_body2) > len(body_text):
+        body_text = wp_body2
+      if wp_img2 and not img_url:
+        img_url = wp_img2
+      if wp_link2 and "news.google.com" in real_url:
+        real_url = wp_link2
   except Exception:
     pass
 
@@ -1571,23 +1762,26 @@ def enrich_item_content_and_image(item: dict) -> dict:
   title = clean_display_text(item.get("title") or "")
   plat = item.get("platform", "الصحف")
   src = item.get("source_name", plat)
-  raw_snip = clean_display_text(item.get("raw_snippet") or "")
+  raw_snip_full = clean_full_article_text(item.get("raw_snippet") or "")
+  raw_snip = clean_display_text(raw_snip_full)
   img_url = (item.get("image_url") or "").strip()
 
   if not img_url:
     img_url = extract_thumbnail_for_item(url, "", plat)
 
-  raw_snip_full = clean_full_article_text(item.get("raw_snippet") or "")
   need_body = (
-      not raw_snip
-      or len(raw_snip) < 420
+      not raw_snip_full
+      or len(raw_snip_full) < 480
+      or "news.google.com" in url
       or raw_snip.lower() == title.lower()
       or raw_snip.startswith(title[:30])
   )
   need_img = not img_url
 
   if need_img or need_body:
-    page_img, page_body, resolved_u = scrape_article_page_content_and_image(url)
+    page_img, page_body, resolved_u = scrape_article_page_content_and_image(
+        url, title_hint=title, source_hint=src
+    )
     if page_img and not img_url:
       img_url = page_img
     if page_body and len(page_body) > len(raw_snip_full):
@@ -1601,31 +1795,29 @@ def enrich_item_content_and_image(item: dict) -> dict:
       m_tag = re.search(r"(#(?:plat|v4target|v3target|v2target|target)=[^\s#]*)$", url)
       item["url"] = f"{resolved_u}{m_tag.group(1) if m_tag else ''}"
 
-  # عدم استدعاء Bing News للأهداف المخصصة أو منصات الفيديو/التواصل حتى لا يُستبدل ملخص الفيديو أو المنشور بمقال صحفي آخر
+  # إذا بقي النص قصيراً في مقال صحفي، نفحص Bing News للحصول على رابط المقال المباشر ثم نسحب النص الكامل منه
   if (
       plat == "الصحف"
       and not int(item.get("is_custom_target", 0))
-      and (not img_url or len(raw_snip) < 70 or raw_snip.lower() == title.lower())
+      and (not img_url or len(raw_snip_full) < 350 or raw_snip.lower() == title.lower())
   ):
     b_img, b_desc, b_link = fetch_bing_news_enrichment(title, src)
     if b_img and not img_url:
       img_url = b_img
-    if (
-        b_desc
-        and len(b_desc) > len(raw_snip)
-        and b_desc.lower() != title.lower()
-    ):
-      raw_snip = b_desc
-    if b_link and (not img_url or len(raw_snip) < 80):
-      p_img2, p_body2, _ = scrape_article_page_content_and_image(b_link)
+    if b_link and len(raw_snip_full) < 350:
+      p_img2, p_body2, _ = scrape_article_page_content_and_image(
+          b_link, title_hint=title, source_hint=src
+      )
       if p_img2 and not img_url:
         img_url = p_img2
-      if p_body2 and len(p_body2) > len(raw_snip):
-        raw_snip = p_body2
+      if p_body2 and len(p_body2) > len(raw_snip_full):
+        raw_snip_full = p_body2
+    if len(raw_snip_full) < len(b_desc) and b_desc.lower() != title.lower():
+      raw_snip_full = b_desc
 
   item["image_url"] = img_url
   final_full_text = raw_snip_full if len(raw_snip_full) >= len(raw_snip) else raw_snip
-  item["raw_snippet"] = final_full_text[:12000]
+  item["raw_snippet"] = final_full_text[:15000]
   return item
 
 
@@ -1749,6 +1941,10 @@ def _create_shared_runtime():
       "last_done_mode": None,
       "last_done_count": 0,
       "last_done_ts": 0.0,
+      "cloud_restored": False,
+      "cloud_backup_msg_id": 0,
+      "cloud_backup_file_id": "",
+      "last_cloud_push_ts": 0.0,
   }
 
 
@@ -2184,6 +2380,339 @@ def _merge_external_sqlite_into_runtime(src_db_path: str):
     pass
 
 
+_CLOUD_SYNC_LOCK = threading.Lock()
+
+
+def _get_tg_credentials_fast() -> tuple:
+  """جلب بيانات بوت تلغرام بسرعة لاستخدامها في استعادة ومزامنة السحابة التلقائية."""
+  token = DEFAULT_TG_TOKEN
+  chat_id = DEFAULT_TG_CHAT_ID
+  if os.path.exists(CREDENTIALS_FILE):
+    try:
+      with open(CREDENTIALS_FILE, "r", encoding="utf-8") as f:
+        d = json.load(f)
+      if isinstance(d, dict):
+        token = (d.get("telegram_bot_token") or token).strip()
+        chat_id = (d.get("telegram_chat_id") or chat_id).strip()
+    except Exception:
+      pass
+  env_t = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+  env_c = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+  if env_t:
+    token = env_t
+  if env_c:
+    chat_id = env_c
+  return token, chat_id
+
+
+def restore_state_from_telegram_cloud(force: bool = False) -> bool:
+  """استعادة قاعدة البيانات الكاملة والأرشيف وسجل إشعارات تلغرام والروابط المخصصة من سحابة تلغرام تلقائياً عند إعادة تشغيل السيرفر أو فتح المنصة."""
+  rt = get_shared_runtime()
+  if rt.get("cloud_restored") and not force:
+    return False
+
+  token, chat_id = _get_tg_credentials_fast()
+  if not token or not chat_id:
+    rt["cloud_restored"] = True
+    return False
+
+  file_id_candidates = []
+  detected_msg_id = 0
+
+  # 1) فحص وصف البوت على خوادم تلغرام (يحفظ أحدث معرف ملف السحابة حتى لو ألغى المستخدم تثبيت الرسالة)
+  try:
+    r_desc = requests.get(
+        f"https://api.telegram.org/bot{token}/getMyDescription", timeout=5
+    )
+    if r_desc.status_code == 200:
+      desc_txt = r_desc.json().get("result", {}).get("description", "")
+      m_sync = re.search(r"\[CLOUD_STATE:(\d+):([A-Za-z0-9_-]+)\]", desc_txt)
+      if m_sync:
+        detected_msg_id = int(m_sync.group(1))
+        file_id_candidates.append(m_sync.group(2))
+  except Exception:
+    pass
+
+  # 2) فحص الرسالة المثبتة في المحادثة عبر getChat
+  try:
+    r_chat = requests.post(
+        f"https://api.telegram.org/bot{token}/getChat",
+        json={"chat_id": chat_id},
+        timeout=5,
+    )
+    if r_chat.status_code == 200:
+      pinned = r_chat.json().get("result", {}).get("pinned_message", {})
+      if isinstance(pinned, dict) and pinned.get("document"):
+        p_mid = int(pinned.get("message_id") or 0)
+        p_fid = str(pinned["document"].get("file_id") or "").strip()
+        if p_mid and not detected_msg_id:
+          detected_msg_id = p_mid
+        if p_fid and p_fid not in file_id_candidates:
+          file_id_candidates.append(p_fid)
+  except Exception:
+    pass
+
+  if detected_msg_id:
+    rt["cloud_backup_msg_id"] = detected_msg_id
+
+  if not file_id_candidates:
+    rt["cloud_restored"] = True
+    return False
+
+  payload = None
+  for fid in file_id_candidates:
+    try:
+      r_gf = requests.get(
+          f"https://api.telegram.org/bot{token}/getFile",
+          params={"file_id": fid},
+          timeout=5,
+      )
+      if r_gf.status_code != 200:
+        continue
+      f_path = r_gf.json().get("result", {}).get("file_path", "")
+      if not f_path:
+        continue
+      r_dl = requests.get(
+          f"https://api.telegram.org/file/bot{token}/{f_path}", timeout=10
+      )
+      if r_dl.status_code != 200 or not r_dl.content:
+        continue
+      try:
+        raw_json_bytes = gzip.decompress(r_dl.content)
+      except Exception:
+        raw_json_bytes = r_dl.content
+      payload = json.loads(raw_json_bytes.decode("utf-8"))
+      if isinstance(payload, dict):
+        rt["cloud_backup_file_id"] = fid
+        break
+    except Exception:
+      pass
+
+  rt["cloud_restored"] = True
+  if not isinstance(payload, dict):
+    return False
+
+  lock = get_db_lock()
+  with lock:
+    # أ) استعادة سجل تلغرام المرسل سابقاً لمنع إعادة إرسال أي خبر قديم نهائياً
+    cloud_ledger = payload.get("telegram_ledger", [])
+    local_ledger = load_telegram_sent_ledger()
+    if isinstance(cloud_ledger, list) and cloud_ledger:
+      local_ledger.update(str(k) for k in cloud_ledger if k)
+
+    # ب) استعادة الروابط المخصصة إن وجدت
+    cloud_targets = payload.get("custom_targets", [])
+    if isinstance(cloud_targets, list) and cloud_targets and not os.path.exists(CUSTOM_TARGETS_FILE):
+      try:
+        with open(CUSTOM_TARGETS_FILE, "w", encoding="utf-8") as f:
+          json.dump(cloud_targets, f, ensure_ascii=False, indent=2)
+      except Exception:
+        pass
+
+    # ج) استعادة جميع الأخبار والأرشيف ودمجها في ملفات الأرشيف المحلية
+    cloud_articles = payload.get("articles", [])
+    if isinstance(cloud_articles, list) and cloud_articles:
+      for a_it in cloud_articles:
+        if isinstance(a_it, dict):
+          local_ledger.update(
+              compute_article_dedup_keys(a_it.get("title", ""), a_it.get("url", ""))
+          )
+      merged_arch = {}
+      for arch_p in (PERSISTENT_HOME_ARCHIVE_JSON, ARCHIVE_JSON_FILE):
+        if os.path.exists(arch_p):
+          try:
+            with open(arch_p, "r", encoding="utf-8") as f:
+              loc_list = json.load(f)
+            if isinstance(loc_list, list):
+              for it_l in loc_list:
+                if isinstance(it_l, dict) and it_l.get("url"):
+                  merged_arch[it_l["url"]] = it_l
+          except Exception:
+            pass
+      for it_c in cloud_articles:
+        if isinstance(it_c, dict) and it_c.get("url"):
+          it_c["telegram_sent"] = 1
+          if it_c["url"] not in merged_arch:
+            merged_arch[it_c["url"]] = it_c
+      if merged_arch:
+        sorted_merged = sorted(
+            merged_arch.values(),
+            key=lambda x: float(x.get("pub_timestamp", 0)),
+            reverse=True,
+        )[:2500]
+        for arch_p in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
+          try:
+            with open(arch_p, "w", encoding="utf-8") as f:
+              json.dump(sorted_merged, f, ensure_ascii=False, indent=2)
+          except Exception:
+            pass
+
+    if local_ledger:
+      save_telegram_sent_ledger(local_ledger)
+
+  return True
+
+
+def _push_state_to_telegram_cloud_sync():
+  """رفع وتحديث نسخة الأرشيف وقاعدة البيانات وسجل تلغرام على سحابة تلغرام في نفس الرسالة المثبتة بصمت دون إرسال رسائل جديدة."""
+  if not _CLOUD_SYNC_LOCK.acquire(blocking=False):
+    return
+  try:
+    rt = get_shared_runtime()
+    token, chat_id = _get_tg_credentials_fast()
+    if not token or not chat_id:
+      return
+
+    lock = get_db_lock()
+    with lock:
+      articles_to_save = []
+      if os.path.exists(ARCHIVE_JSON_FILE):
+        try:
+          with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
+            data_a = json.load(f)
+          if isinstance(data_a, list):
+            articles_to_save = data_a[:2000]
+        except Exception:
+          pass
+      ledger_set = load_telegram_sent_ledger()
+      for a_it in articles_to_save:
+        if isinstance(a_it, dict):
+          ledger_set.update(
+              compute_article_dedup_keys(a_it.get("title", ""), a_it.get("url", ""))
+          )
+      targets_to_save = load_custom_targets()
+
+    if not articles_to_save and not ledger_set:
+      return
+
+    payload = {
+        "updated_at": time.time(),
+        "articles": articles_to_save,
+        "telegram_ledger": sorted(list(ledger_set))[-8000:],
+        "custom_targets": targets_to_save,
+    }
+    raw_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    gz_bytes = gzip.compress(raw_bytes)
+
+    msg_id = int(rt.get("cloud_backup_msg_id") or 0)
+    if not msg_id:
+      try:
+        r_desc = requests.get(
+            f"https://api.telegram.org/bot{token}/getMyDescription", timeout=5
+        )
+        if r_desc.status_code == 200:
+          desc_txt = r_desc.json().get("result", {}).get("description", "")
+          m_sync = re.search(r"\[CLOUD_STATE:(\d+):([A-Za-z0-9_-]+)\]", desc_txt)
+          if m_sync:
+            msg_id = int(m_sync.group(1))
+      except Exception:
+        pass
+
+    if not msg_id:
+      try:
+        r_chat = requests.post(
+            f"https://api.telegram.org/bot{token}/getChat",
+            json={"chat_id": chat_id},
+            timeout=5,
+        )
+        if r_chat.status_code == 200:
+          pinned = r_chat.json().get("result", {}).get("pinned_message", {})
+          if isinstance(pinned, dict) and pinned.get("document"):
+            msg_id = int(pinned.get("message_id") or 0)
+      except Exception:
+        pass
+
+    new_file_id = ""
+    caption_txt = f"🗄️ [CLOUD_SYNC_STATE] النسخة السحابية التلقائية للمرصد والأرشيف ({len(articles_to_save)} خبر محفوظ)"
+
+    # أ) إذا كانت رسالة السحابة المثبتة موجودة، نقوم بتحديث ملفها بصمت في مكانه عبر editMessageMedia دون إرسال أي رسالة جديدة
+    if msg_id > 0:
+      try:
+        media_spec = json.dumps({
+            "type": "document",
+            "media": "attach://state_file",
+            "caption": caption_txt,
+        })
+        r_edit = requests.post(
+            f"https://api.telegram.org/bot{token}/editMessageMedia",
+            data={"chat_id": chat_id, "message_id": msg_id, "media": media_spec},
+            files={"state_file": ("justice_hub_cloud_state.json.gz", gz_bytes, "application/gzip")},
+            timeout=12,
+        )
+        if r_edit.status_code == 200:
+          res_doc = r_edit.json().get("result", {}).get("document", {})
+          new_file_id = str(res_doc.get("file_id") or "").strip()
+      except Exception:
+        pass
+
+    # ب) إذا لم تكن هناك رسالة سحابية سابقة، ننشئها مرة واحدة فقط بصمت ونثبتها
+    if not new_file_id:
+      try:
+        r_send = requests.post(
+            f"https://api.telegram.org/bot{token}/sendDocument",
+            data={
+                "chat_id": chat_id,
+                "caption": caption_txt,
+                "disable_notification": True,
+            },
+            files={"document": ("justice_hub_cloud_state.json.gz", gz_bytes, "application/gzip")},
+            timeout=12,
+        )
+        if r_send.status_code == 200:
+          res_msg = r_send.json().get("result", {})
+          msg_id = int(res_msg.get("message_id") or 0)
+          new_file_id = str(res_msg.get("document", {}).get("file_id") or "").strip()
+          if msg_id > 0:
+            try:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/pinChatMessage",
+                  json={
+                      "chat_id": chat_id,
+                      "message_id": msg_id,
+                      "disable_notification": True,
+                  },
+                  timeout=5,
+              )
+            except Exception:
+              pass
+      except Exception:
+        pass
+
+    if msg_id > 0 and new_file_id:
+      rt["cloud_backup_msg_id"] = msg_id
+      rt["cloud_backup_file_id"] = new_file_id
+      rt["last_cloud_push_ts"] = time.time()
+      try:
+        desc_payload = (
+            "⚖️ المرصد الوطني للعدالة والقضاء بالمغرب — نظام الرصد القضائي والأرشيف السحابي الدائم\n"
+            f"[CLOUD_STATE:{msg_id}:{new_file_id}]"
+        )
+        requests.post(
+            f"https://api.telegram.org/bot{token}/setMyDescription",
+            json={"description": desc_payload[:510]},
+            timeout=5,
+        )
+      except Exception:
+        pass
+  finally:
+    try:
+      _CLOUD_SYNC_LOCK.release()
+    except Exception:
+      pass
+
+
+def trigger_cloud_state_backup(async_mode: bool = True):
+  """جدولة حفظ الحالة في سحابة تلغرام في الخلفية أو بشكل متزامن عند الإغلاق."""
+  if not async_mode or os.environ.get("CRON_MODE") == "1":
+    _push_state_to_telegram_cloud_sync()
+  else:
+    threading.Thread(
+        target=_push_state_to_telegram_cloud_sync,
+        daemon=True,
+        name="TelegramCloudStateSync",
+    ).start()
+
+
 def init_db():
   lock = get_db_lock()
   with lock:
@@ -2212,6 +2741,8 @@ def init_db():
     except Exception:
       pass
 
+    # استعادة الأرشيف وسجل تلغرام والبيانات من سحابة تلغرام أولاً في حال تم تصفير الحاوية على السيرفر السحابي
+    restore_state_from_telegram_cloud()
     # دمج جميع قواعد البيانات وملفات الأرشيف الدائمة في كل مرة يتم فيها تشغيل أو تحديث الكود لضمان عدم ضياع الأرشيف أبداً
     _merge_external_sqlite_into_runtime(REPO_DB_FILE)
     _merge_external_sqlite_into_runtime(PERSISTENT_HOME_DB)
@@ -2535,6 +3066,7 @@ def save_custom_targets(targets):
     with open(CUSTOM_TARGETS_FILE, "w", encoding="utf-8") as f:
       json.dump(cleaned, f, ensure_ascii=False, indent=2)
     purge_invalid_articles_from_db()
+    trigger_cloud_state_backup(async_mode=True)
   except Exception:
     pass
 
@@ -2925,7 +3457,7 @@ def parse_rss_xml(
         item.findtext("content:encoded", default="", namespaces=ns) or ""
     )
     full_raw_html = f"{raw_content_encoded} {raw_desc_html}"
-    desc = clean_html_text(full_raw_html)
+    desc = clean_full_article_text(raw_content_encoded) if len(clean_full_article_text(raw_content_encoded)) >= 120 else clean_full_article_text(raw_desc_html)
 
     pub_raw = (
         item.findtext("pubDate")
@@ -2938,10 +3470,12 @@ def parse_rss_xml(
         if source_el is not None and source_el.text
         else default_source
     )
-    if not source_name and " - " in title:
+    if " - " in title:
       parts = title.rsplit(" - ", 1)
-      if len(parts[1]) < 35:
-        title, source_name = parts[0].strip(), parts[1].strip()
+      if len(parts[0].strip()) >= 18 and len(parts[1].strip()) < 35:
+        if not source_name:
+          source_name = parts[1].strip()
+        title = parts[0].strip()
 
     if not title or not link:
       continue
@@ -2975,7 +3509,7 @@ def parse_rss_xml(
     results.append({
         "title": title,
         "url": link,
-        "raw_snippet": desc[:1800] if desc else title,
+        "raw_snippet": desc[:15000] if desc else title,
         "source_name": source_name or default_platform,
         "platform": default_platform,
         "pub_date": pub_str,
@@ -3016,7 +3550,7 @@ def parse_rss_xml(
     results.append({
         "title": title,
         "url": link,
-        "raw_snippet": snippet_txt[:1800],
+        "raw_snippet": clean_full_article_text(media_desc)[:15000] if media_desc else snippet_txt[:15000],
         "source_name": clean_html_text(
             author_name or default_source or default_platform
         ),
@@ -6168,6 +6702,167 @@ def _call_gemini_rest_or_sdk(prompt: str, api_key: str) -> str:
   return ""
 
 
+def _pcm16_to_wav_bytes(pcm_bytes: bytes, sample_rate: int = 24000, channels: int = 1) -> bytes:
+  """تحويل بيانات الصوت الخام PCM-16 الصادرة عن Gemini Native Audio API إلى ملف WAV قياسي جاهز للتشغيل في المتصفح."""
+  buf = io.BytesIO()
+  with wave.open(buf, "wb") as wf:
+    wf.setnchannels(channels)
+    wf.setsampwidth(2)
+    wf.setframerate(sample_rate)
+    wf.writeframes(pcm_bytes)
+  return buf.getvalue()
+
+
+def generate_gemini_or_server_tts_audio(text: str, api_key: str = "") -> tuple:
+  """توليد ملف صوتي عربي واضح (WAV / MP3) لقراءة الخبر عبر Gemini API المدمج (Native Audio TTS) مع بديل صوتي فوري على السيرفر."""
+  clean_txt = clean_display_text(text)
+  if not clean_txt:
+    return b"", ""
+
+  # تقليم النص الصوتي ليكون مناسباً للقراءة الإذاعية السريعة والواضحة
+  speech_script = clean_txt[:2200]
+  key = str(api_key or "").strip()
+
+  # 1) المحاولة الأولى: استخدام Gemini API المدمج لتوليد الصوت مباشرة (gemini-2.5-flash-preview-tts / gemini-2.0-flash)
+  if key:
+    tts_models = [
+        "gemini-2.5-flash-preview-tts",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-exp",
+    ]
+    tts_prompt = (
+        "اقرأ النص الإخباري القضائي التالي باللغة العربية الفصحى بصوت إذاعي واضح ومتزن:\n\n"
+        f"{speech_script}"
+    )
+    for m_id in tts_models:
+      try:
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{m_id}:generateContent?key={key}"
+        payload = {
+            "contents": [{"parts": [{"text": tts_prompt}]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {
+                    "voiceConfig": {
+                        "prebuiltVoiceConfig": {"voiceName": "Aoede"}
+                    }
+                },
+            },
+        }
+        resp = requests.post(endpoint, json=payload, timeout=12)
+        if resp.status_code == 200:
+          data = resp.json()
+          parts = (
+              data.get("candidates", [{}])[0]
+              .get("content", {})
+              .get("parts", [])
+          )
+          for p in parts:
+            inline = p.get("inlineData") or p.get("inline_data")
+            if inline and inline.get("data"):
+              raw_audio = base64.b64decode(inline["data"])
+              mime = str(inline.get("mimeType") or inline.get("mime_type") or "").lower()
+              if "pcm" in mime or "l16" in mime or not mime:
+                rate_m = re.search(r"rate=(\d+)", mime)
+                sr = int(rate_m.group(1)) if rate_m else 24000
+                wav_bytes = _pcm16_to_wav_bytes(raw_audio, sample_rate=sr)
+                return wav_bytes, "audio/wav"
+              if "wav" in mime:
+                return raw_audio, "audio/wav"
+              return raw_audio, "audio/mp3"
+      except Exception:
+        pass
+
+  # 2) المحرك الصوتي المدمج على السيرفر: تحميل ودمج مقاطع MP3 العربية مباشرة من السيرفر (يتجاوز أي حظر متصفح CORS/ORB ويعمل على جميع الأجهزة 100%)
+  sentences = [s.strip() for s in re.split(r"(?<=[.!؟،؛\n])\s+", speech_script) if s.strip()]
+  chunks = []
+  curr = ""
+  for s in sentences:
+    if len(curr) + len(s) + 1 <= 175:
+      curr = f"{curr} {s}".strip() if curr else s
+    else:
+      if curr:
+        chunks.append(curr)
+      if len(s) <= 175:
+        curr = s
+      else:
+        for i in range(0, len(s), 175):
+          chunks.append(s[i : i + 175])
+        curr = ""
+  if curr:
+    chunks.append(curr)
+
+  mp3_buffer = io.BytesIO()
+  tts_headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Referer": "https://translate.google.com/",
+  }
+  for ch in chunks[:16]:
+    for client_id in ("tw-ob", "gtx"):
+      tts_u = (
+          "https://translate.google.com/translate_tts?ie=UTF-8"
+          f"&client={client_id}&tl=ar&q={urllib.parse.quote(ch)}"
+      )
+      try:
+        r_tts = requests.get(tts_u, headers=tts_headers, timeout=5)
+        if r_tts.status_code == 200 and len(r_tts.content) > 200:
+          mp3_buffer.write(r_tts.content)
+          break
+      except Exception:
+        pass
+
+  mp3_bytes = mp3_buffer.getvalue()
+  if mp3_bytes:
+    return mp3_bytes, "audio/mp3"
+  return b"", ""
+
+
+def ensure_verbatim_full_text_for_item(item: dict) -> str:
+  """ضمان جلب وحفظ النص الأصلي الكامل للمقال حرفياً من المصدر الأصلي إذا كان المخزن سابقاً مجرد مقتطف قصير."""
+  raw_full = clean_full_article_text(item.get("raw_snippet") or "")
+  raw_sum = clean_display_text(item.get("summary") or "")
+  raw_title = clean_display_text(item.get("title") or "")
+  url = str(item.get("url") or "").strip()
+  plat = item.get("platform") or "الصحف"
+  src = item.get("source_name") or plat
+
+  # إذا كان النص الأصلي طويلاً ومختلفاً عن الملخص، نعيده مباشرة كما هو حرفياً
+  if (
+      len(raw_full) >= 420
+      and normalize_arabic_for_dedup(raw_full) != normalize_arabic_for_dedup(raw_sum)
+      and normalize_arabic_for_dedup(raw_full) != normalize_arabic_for_dedup(raw_title)
+  ):
+    return raw_full
+
+  # محاولة جلب النص الأصلي الكامل مباشرة من المصدر الأصلي أو واجهة WordPress للجريدة
+  page_img, page_body, resolved_u = scrape_article_page_content_and_image(
+      url, title_hint=raw_title, source_hint=src
+  )
+  if page_body and len(page_body) > len(raw_full):
+    raw_full = page_body
+    item["raw_snippet"] = raw_full[:15000]
+    if page_img and not item.get("image_url"):
+      item["image_url"] = page_img
+    if resolved_u and "news.google.com" not in resolved_u and "news.google.com" in url:
+      m_tag = re.search(r"(#(?:plat|v4target|v3target|v2target|target)=[^\s#]*)$", url)
+      item["url"] = f"{resolved_u}{m_tag.group(1) if m_tag else ''}"
+    # حفظ النص الأصلي الكامل في قاعدة البيانات حتى يظل متاحاً دائماً دون إعادة الجلب
+    if item.get("id"):
+      lock = get_db_lock()
+      with lock:
+        try:
+          conn = _open_sqlite_conn()
+          conn.execute(
+              "UPDATE articles SET raw_snippet = ?, image_url = ?, url = ? WHERE id = ?",
+              (item["raw_snippet"], item.get("image_url", ""), item["url"], item["id"]),
+          )
+          conn.commit()
+          conn.close()
+        except Exception:
+          pass
+
+  return raw_full
+
+
 def analyze_with_gemini(item: dict, api_key: str):
   title = clean_display_text(item.get("title", ""))
   snippet = clean_display_text(item.get("raw_snippet", "")) or title
@@ -6243,6 +6938,21 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
     ledger = load_telegram_sent_ledger()
     if int(item.get("telegram_sent", 0)) == 1 or (item_keys & ledger):
       return False
+    # فحص إضافي مباشر في قاعدة البيانات للتأكد من عدم إرسال أي خبر مطابق في العنوان أو الرابط مسبقاً
+    try:
+      conn_chk = _open_sqlite_conn()
+      c_chk = conn_chk.cursor()
+      c_chk.execute("SELECT title, url FROM articles WHERE telegram_sent = 1")
+      for sent_t, sent_u in c_chk.fetchall():
+        sent_k = compute_article_dedup_keys(sent_t or "", sent_u or "")
+        if item_keys & sent_k:
+          ledger.update(item_keys)
+          save_telegram_sent_ledger(ledger)
+          conn_chk.close()
+          return False
+      conn_chk.close()
+    except Exception:
+      pass
     # نحجز بصمة الخبر فوراً في السجل قبل الإرسال لمنع أي خيط متزامن من إرساله مرة ثانية
     ledger.update(item_keys)
     save_telegram_sent_ledger(ledger)
@@ -6261,7 +6971,7 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
   ).strftime("%Y-%m-%d %H:%M")
   clean_u = clean_social_post_url(item.get("url", ""))
   msg = (
-      f"⚖️ *االمرصد القضائي*\n"
+      f"⚖️ *المرصد الوطني للعدالة والقضاء*\n"
       f"{target_badge}"
       f"{icon} *المنصة:* {item.get('platform', 'الصحف')} | *المصدر:* {item.get('source_name', '')}\n"
       f"📅 *تاريخ النشر:* {item.get('pub_date', '')}\n"
@@ -6306,7 +7016,9 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
         bad_sum = is_summary_just_title(
             d.get("title", ""), d.get("summary", "")
         )
-        short_body = len(clean_display_text(d.get("raw_snippet") or "")) < 320 and d.get("platform") == "الصحف"
+        raw_s_check = clean_full_article_text(d.get("raw_snippet") or "")
+        sum_check = clean_display_text(d.get("summary") or "")
+        short_body = (len(raw_s_check) < 450 or normalize_arabic_for_dedup(raw_s_check) == normalize_arabic_for_dedup(sum_check) or "news.google.com" in str(d.get("url") or ""))
         if missing_img or bad_sum or short_body:
           to_upgrade.append(d)
           if len(to_upgrade) >= max_upgrades:
@@ -6374,13 +7086,31 @@ def quick_process_and_save(
         tgt_scope = int(r_tgt or 0)
         for bk in base_keys:
           existing_dedup_keys.add(f"{plat_scope}::{tgt_scope}::{bk}")
-          if bk.startswith("raw_u:") or bk.startswith("pid:"):
+          if bk.startswith("raw_u:") or bk.startswith("pid:") or bk.startswith("canon_u:") or bk.startswith("title_words:"):
             existing_dedup_keys.add(f"global::{tgt_scope}::{bk}")
             if tgt_scope == 0:
               non_target_url_map[bk] = r_id
       conn.close()
     except Exception:
       pass
+
+    for arch_file_p in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
+      if os.path.exists(arch_file_p):
+        try:
+          with open(arch_file_p, "r", encoding="utf-8") as f:
+            arch_list_p = json.load(f)
+          if isinstance(arch_list_p, list):
+            for a_it in arch_list_p:
+              if isinstance(a_it, dict):
+                base_keys = compute_article_dedup_keys(a_it.get("title", ""), a_it.get("url", ""))
+                plat_scope = a_it.get("platform") or "الصحف"
+                tgt_scope = int(a_it.get("is_custom_target") or 0)
+                for bk in base_keys:
+                  existing_dedup_keys.add(f"{plat_scope}::{tgt_scope}::{bk}")
+                  if bk.startswith("raw_u:") or bk.startswith("pid:") or bk.startswith("canon_u:") or bk.startswith("title_words:"):
+                    existing_dedup_keys.add(f"global::{tgt_scope}::{bk}")
+        except Exception:
+          pass
 
   kw_filter = cfg.get("keywords_input", "")
   candidates = []
@@ -6497,10 +7227,10 @@ def quick_process_and_save(
         "is_custom_target": (
             1 if (is_target_run or it.get("is_custom_target")) else 0
         ),
-        "raw_snippet": clean_full_article_text(it.get("raw_snippet") or "")[:12000],
+        "raw_snippet": clean_full_article_text(it.get("raw_snippet") or "")[:15000],
         "image_url": img_url,
-        "created_at": time.time(),
-        "telegram_sent": 0,
+        "created_at": pub_ts if (time.time() - pub_ts) >= 86400 else time.time(),
+        "telegram_sent": 1 if (time.time() - pub_ts) >= 86400 else 0,
     }
     prepared_rows.append(record)
 
@@ -6567,10 +7297,10 @@ def quick_process_and_save(
   upgrade_incomplete_existing_articles(cfg, max_upgrades=4)
 
   if added_items:
-    for rec in added_items[:10]:
-      sent_ok = send_telegram_alert(rec, cfg)
+    fresh_for_tg = [r for r in added_items if int(r.get("telegram_sent", 0)) == 0]
+    for rec in fresh_for_tg[:10]:
+      send_telegram_alert(rec, cfg)
       rec["telegram_sent"] = 1
-      # حتى لو تجاوز العدد 10 في دفعة واحدة، نسجل البقية في السجل حتى لا ترسل في الدورات التلقائية اللاحقة كأخبار قديمة
     with lock:
       ledger_now = load_telegram_sent_ledger()
       for rec in added_items:
@@ -6589,6 +7319,7 @@ def quick_process_and_save(
       except Exception:
         pass
     sync_db_to_json(extra_items=added_items)
+    trigger_cloud_state_backup(async_mode=True)
 
   return len(added_items)
 
@@ -8194,20 +8925,19 @@ metrics_cards_html = "".join(
 render_html(f'<div class="metrics-grid" dir="rtl">{metrics_cards_html}</div>')
 
 
-def _format_full_text_paragraphs_html(full_text: str, summary_text: str, title_text: str) -> str:
-  """تحويل النص الكامل للمقال إلى فقرات HTML منسقة وواضحة للعرض داخل نافذة المعاينة الكاملة."""
-  cleaned_full = clean_full_article_text(full_text)
-  if not cleaned_full or len(cleaned_full) < len(summary_text):
-    cleaned_full = summary_text or title_text
+def _format_verbatim_article_paragraphs_html(verbatim_text: str, title_text: str) -> str:
+  """تنسيق النص الأصلي الكامل للخبر أو المنشور حرفياً كما ورد في المصدر في فقرات واضحة دون استبداله بالملخص."""
+  cleaned_full = clean_full_article_text(verbatim_text)
+  if not cleaned_full:
+    cleaned_full = title_text
   paras = [p.strip() for p in re.split(r"\n\n+", cleaned_full) if p.strip()]
   if len(paras) == 1 and len(paras[0]) > 420:
-    # إذا كان النص متصلاً بدون فواصل أسطر، نقسمه إلى فقرات مريحة كل جملتين أو ثلاث جمل
     sents = [s.strip() for s in re.split(r"(?<=[.!؟])\s+", paras[0]) if s.strip()]
     grouped = []
     buf = []
     for s in sents:
       buf.append(s)
-      if len(" ".join(buf)) >= 260:
+      if len(" ".join(buf)) >= 280:
         grouped.append(" ".join(buf))
         buf = []
     if buf:
@@ -8217,9 +8947,14 @@ def _format_full_text_paragraphs_html(full_text: str, summary_text: str, title_t
   return "".join(f"<p>{html.escape(p)}</p>" for p in paras)
 
 
+if st is not None and "active_tts_audio" not in st.session_state:
+  st.session_state["active_tts_audio"] = {}
+
+
 def render_article_cards(
     items_list: list,
     empty_msg: str = "لا توجد منشورات مرصودة حالياً في هذا القسم.",
+    tab_prefix: str = "tab",
 ):
   if not items_list:
     render_html(
@@ -8243,8 +8978,10 @@ def render_article_cards(
       "أخرى": "🟪 منشور رقمي",
   }
 
-  cards_buffer = []
-  for item in items_list:
+  api_key_curr = (cfg.get("gemini_api_key") or "").strip()
+  live_fetches_done = 0
+
+  for idx, item in enumerate(items_list):
     plat = clean_display_text(item.get("platform") or "الصحف")
     css_cls = plat_css_map.get(plat, "plat-press")
     type_badge_txt = plat_type_label.get(plat, plat)
@@ -8252,9 +8989,21 @@ def render_article_cards(
     raw_title = clean_display_text(item.get("title") or "")
     raw_summary = clean_display_text(item.get("summary") or "")
     raw_full_text = clean_full_article_text(item.get("raw_snippet") or "")
-    raw_snip_flat = clean_display_text(raw_full_text)
     raw_src = clean_display_text(item.get("source_name") or plat)
 
+    # إذا كان النص الأصلي المخزن سابقاً قصيراً أو مطابقاً للملخص/العنوان، نجلب النص الأصلي الكامل حرفياً من المصدر تلقائياً
+    if (
+        live_fetches_done < 8
+        and (
+            len(raw_full_text) < 380
+            or normalize_arabic_for_dedup(raw_full_text) == normalize_arabic_for_dedup(raw_summary)
+            or normalize_arabic_for_dedup(raw_full_text) == normalize_arabic_for_dedup(raw_title)
+        )
+    ):
+      live_fetches_done += 1
+      raw_full_text = ensure_verbatim_full_text_for_item(item)
+
+    raw_snip_flat = clean_display_text(raw_full_text)
     if is_summary_just_title(raw_title, raw_summary):
       raw_summary = build_extractive_arabic_summary(
           raw_title, raw_snip_flat, plat, raw_src
@@ -8300,21 +9049,28 @@ def render_article_cards(
         else ""
     )
 
-    # تجهيز النص الكامل للمعاينة وللاستماع الصوتي
-    full_body_for_display = raw_full_text if len(raw_full_text) >= len(raw_summary) else raw_summary
-    full_paragraphs_html = _format_full_text_paragraphs_html(
-        full_body_for_display, raw_summary, raw_title
-    )
-    tts_summary_payload = html.escape(
-        f"{raw_title}. الملخص: {raw_summary}", quote=True
-    )
-    tts_full_payload = html.escape(
-        f"{raw_title}. التفاصيل الكاملة: {clean_display_text(full_body_for_display)[:2800]}",
-        quote=True,
+    # النص الأصلي الحرفي للموضوع (لا نعيد كتابة الملخص أبداً، بل نعرض متن الخبر الأصلي كما ورد في المصدر)
+    verbatim_body = raw_full_text if len(raw_full_text) >= 40 else raw_title
+    verbatim_paragraphs_html = _format_verbatim_article_paragraphs_html(
+        verbatim_body, raw_title
     )
 
+    item_uid = f"{tab_prefix}_{item.get('id') or idx}_{ abs(hash(raw_url)) % 100000 }"
+    active_audio_entry = st.session_state.get("active_tts_audio", {}).get(item_uid)
+    audio_player_html = ""
+    if active_audio_entry and active_audio_entry.get("b64"):
+      a_mime = active_audio_entry.get("mime", "audio/mp3")
+      a_b64 = active_audio_entry["b64"]
+      a_lbl = html.escape(active_audio_entry.get("label", "قراءة صوتية للخبر"))
+      audio_player_html = (
+          '<div style="background:rgba(6,78,59,0.45);border:1px solid rgba(52,211,153,0.6);border-radius:12px;padding:10px 14px;margin:8px 0;direction:rtl;text-align:right;">'
+          f'<div style="font-size:0.82rem;font-weight:800;color:#6ee7b7;margin-bottom:6px;">🎙️ {a_lbl} (يعمل الآن):</div>'
+          f'<audio controls autoplay style="width:100%;height:38px;border-radius:8px;" src="data:{a_mime};base64,{a_b64}"></audio>'
+          "</div>"
+      )
+
     card_html = (
-        f'<div class="news-card {css_cls}" dir="rtl" style="direction:rtl !important;text-align:right !important;">'
+        f'<div class="news-card {css_cls}" dir="rtl" style="direction:rtl !important;text-align:right !important;margin-bottom:6px;">'
         '<div class="news-card-layout" dir="rtl" style="display:flex;flex-direction:row;direction:rtl !important;text-align:right !important;">'
         '<div class="news-thumb-box">'
         f'<img class="news-thumb-img" src="{final_img_src}" alt="thumbnail" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=\'{fallback_svg_safe}\';" />'
@@ -8332,32 +9088,54 @@ def render_article_cards(
         f'<span class="date-chip" dir="rtl">📡 تاريخ الرصد: <strong style="color:#f472b6;" dir="ltr">{mon_date_safe}</strong></span>'
         "</div>"
         f'<div class="news-summary-box" dir="rtl" style="direction:rtl !important;text-align:right !important;">'
-        f'<strong style="color:#38bdf8;">📝 ملخص الخبر: </strong>{summary_safe}'
+        f'<strong style="color:#38bdf8;">📝 ملخص الخبر (AI): </strong>{summary_safe}'
         "</div>"
-        '<div class="news-actions-bar" dir="rtl">'
-        f'<button type="button" class="tts-listen-btn" data-tts-text="{tts_summary_payload}" data-default-label="🔊 استماع صوتي للخبر">🔊 استماع صوتي للخبر</button>'
-        f'<a class="news-link" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 فتح المصدر الأصلي</a>'
-        "</div>"
+        f"{audio_player_html}"
         '<details class="article-preview-drawer" dir="rtl">'
-        "<summary>👁️ معاينة نص الموضوع كاملاً (دون مغادرة الموقع)</summary>"
+        "<summary>👁️ معاينة النص الأصلي الكامل للموضوع (مطابق حرفياً للمصدر دون مغادرة الموقع)</summary>"
         '<div class="full-article-modal-box" dir="rtl">'
         '<div class="full-article-header" dir="rtl">'
-        f'<div style="font-weight:900;color:#c4b5fd;font-size:0.92rem;">📖 المعاينة الكاملة للموضوع • {source_safe}</div>'
-        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
-        f'<button type="button" class="tts-listen-btn" data-tts-text="{tts_full_payload}" data-default-label="🔊 قراءة صوتية للنص الكامل">🔊 قراءة صوتية للنص الكامل</button>'
+        f'<div style="font-weight:900;color:#c4b5fd;font-size:0.94rem;">📖 النص الأصلي الكامل للموضوع كما ورد في ({source_safe})</div>'
         f'<a class="news-link" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 التحقق من المصدر الأصلي</a>'
         "</div>"
-        "</div>"
-        f'<div class="full-article-body" dir="rtl">{full_paragraphs_html}</div>'
+        f'<div class="full-article-body" dir="rtl">{verbatim_paragraphs_html}</div>'
         "</div>"
         "</details>"
         "</div>"
         "</div>"
         "</div>"
     )
-    cards_buffer.append(card_html)
+    render_html(card_html)
 
-  render_html("\n".join(cards_buffer))
+    # شريط أزرار الاستماع الصوتي التفاعلي والتحقق من المصدر لكل خبر (يعمل عبر السيرفر وGemini API بنسبة 100%)
+    b_col1, b_col2, b_col3 = st.columns([1.4, 1.5, 1.4])
+    with b_col1:
+      if st.button("🔊 استماع صوتي للملخص", key=f"tts_sum_{item_uid}", use_container_width=True):
+        tts_text_to_read = f"{raw_title}. {raw_summary}"
+        audio_bytes, mime_t = generate_gemini_or_server_tts_audio(tts_text_to_read, api_key_curr)
+        if audio_bytes:
+          st.session_state["active_tts_audio"][item_uid] = {
+              "b64": base64.b64encode(audio_bytes).decode("ascii"),
+              "mime": mime_t,
+              "label": f"قراءة صوتية لملخص الخبر ({raw_src})",
+          }
+          st.rerun()
+    with b_col2:
+      if st.button("🎙️ استماع للنص الأصلي الكامل", key=f"tts_full_{item_uid}", use_container_width=True):
+        full_fetched = ensure_verbatim_full_text_for_item(item)
+        tts_full_to_read = f"{raw_title}. {clean_display_text(full_fetched or verbatim_body)}"
+        audio_bytes, mime_t = generate_gemini_or_server_tts_audio(tts_full_to_read, api_key_curr)
+        if audio_bytes:
+          st.session_state["active_tts_audio"][item_uid] = {
+              "b64": base64.b64encode(audio_bytes).decode("ascii"),
+              "mime": mime_t,
+              "label": f"قراءة صوتية للنص الأصلي الكامل ({raw_src})",
+          }
+          st.rerun()
+    with b_col3:
+      render_html(
+          f'<div style="display:flex;align-items:center;justify-content:center;height:42px;"><a class="news-link" style="width:100%;justify-content:center;height:40px;" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 فتح المصدر الأصلي</a></div>'
+      )
 
 
 # =====================================================================
@@ -8375,25 +9153,25 @@ tabs = st.tabs([
 ])
 
 with tabs[0]:
-  render_article_cards(live_articles)
+  render_article_cards(live_articles, tab_prefix="all")
 
 with tabs[1]:
-  render_article_cards(press_live)
+  render_article_cards(press_live, tab_prefix="press")
 
 with tabs[2]:
-  render_article_cards(fb_live)
+  render_article_cards(fb_live, tab_prefix="fb")
 
 with tabs[3]:
-  render_article_cards(x_live)
+  render_article_cards(x_live, tab_prefix="x")
 
 with tabs[4]:
-  render_article_cards(yt_live)
+  render_article_cards(yt_live, tab_prefix="yt")
 
 with tabs[5]:
-  render_article_cards(other_live)
+  render_article_cards(other_live, tab_prefix="other")
 
 with tabs[6]:
-  render_article_cards(target_live)
+  render_article_cards(target_live, tab_prefix="target")
 
 with tabs[7]:
   arch_q = st.text_input(
@@ -8419,6 +9197,7 @@ with tabs[7]:
   render_article_cards(
       filtered_arch,
       empty_msg="لا توجد عناصر في الأرشيف حالياً (تنتقل الأخبار تلقائياً إلى الأرشيف بعد مرور 24 ساعة على رصدها).",
+      tab_prefix="arch",
   )
 
 # =====================================================================
@@ -8447,145 +9226,3 @@ if cfg.get("auto_monitor", True):
     }, 60000);
     </script>
     """)
-
-# =====================================================================
-# 20. محرك القراءة الصوتية العربية التفاعلي (Web Speech API + Google Arabic TTS Audio Fallback)
-# =====================================================================
-if st is not None and hasattr(st, "components") and hasattr(st.components, "v1"):
-  st.components.v1.html(
-      """
-      <script>
-      (function() {
-        const parentDoc = window.parent ? window.parent.document : document;
-        const parentWin = window.parent || window;
-        if (parentWin.__justiceTtsInitialized) return;
-        parentWin.__justiceTtsInitialized = true;
-
-        let activeBtn = null;
-        let activeAudio = null;
-        let isSpeaking = false;
-        let speechQueue = [];
-        let queueIdx = 0;
-
-        function resetActiveButton() {
-          isSpeaking = false;
-          speechQueue = [];
-          queueIdx = 0;
-          if (parentWin.speechSynthesis) {
-            try { parentWin.speechSynthesis.cancel(); } catch (e) {}
-          }
-          if (activeAudio) {
-            try { activeAudio.pause(); activeAudio.src = ""; } catch (e) {}
-            activeAudio = null;
-          }
-          if (activeBtn) {
-            activeBtn.classList.remove("playing");
-            activeBtn.innerText = activeBtn.getAttribute("data-default-label") || "🔊 استماع صوتي للخبر";
-            activeBtn = null;
-          }
-        }
-
-        function splitArabicTextIntoChunks(text, maxLen) {
-          const clean = (text || "").replace(/\s+/g, " ").trim();
-          if (!clean) return [];
-          const sentences = clean.split(/(?<=[.!؟،؛\n])\s+/);
-          const chunks = [];
-          let current = "";
-          for (const s of sentences) {
-            if ((current + " " + s).trim().length <= maxLen) {
-              current = (current + " " + s).trim();
-            } else {
-              if (current) chunks.push(current);
-              if (s.length <= maxLen) {
-                current = s;
-              } else {
-                for (let i = 0; i < s.length; i += maxLen) {
-                  chunks.push(s.slice(i, i + maxLen));
-                }
-                current = "";
-              }
-            }
-          }
-          if (current) chunks.push(current);
-          return chunks;
-        }
-
-        function playViaAudioStreamFallback(chunks, idx) {
-          if (!isSpeaking || idx >= chunks.length) {
-            resetActiveButton();
-            return;
-          }
-          const chunk = chunks[idx];
-          const url = "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=ar&q=" + encodeURIComponent(chunk);
-          const audio = new Audio(url);
-          activeAudio = audio;
-          audio.onended = function() {
-            if (isSpeaking) playViaAudioStreamFallback(chunks, idx + 1);
-          };
-          audio.onerror = function() {
-            resetActiveButton();
-          };
-          audio.play().catch(function() {
-            resetActiveButton();
-          });
-        }
-
-        function speakTextAloud(text, btnEl) {
-          if (activeBtn === btnEl && isSpeaking) {
-            resetActiveButton();
-            return;
-          }
-          resetActiveButton();
-          activeBtn = btnEl;
-          isSpeaking = true;
-          btnEl.classList.add("playing");
-          btnEl.innerText = "⏹ إيقاف القراءة الصوتية...";
-
-          const synth = parentWin.speechSynthesis;
-          if (synth) {
-            const voices = synth.getVoices() || [];
-            const arVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith("ar"));
-            const chunks = splitArabicTextIntoChunks(text, 220);
-            if (arVoice || voices.length > 0) {
-              queueIdx = 0;
-              speechQueue = chunks;
-              function speakNextChunk() {
-                if (!isSpeaking || queueIdx >= speechQueue.length) {
-                  resetActiveButton();
-                  return;
-                }
-                const utter = new parentWin.SpeechSynthesisUtterance(speechQueue[queueIdx]);
-                utter.lang = arVoice ? arVoice.lang : "ar-MA";
-                if (arVoice) utter.voice = arVoice;
-                utter.rate = 1.0;
-                utter.onend = function() {
-                  if (isSpeaking) {
-                    queueIdx += 1;
-                    speakNextChunk();
-                  }
-                };
-                utter.onerror = function() {
-                  playViaAudioStreamFallback( splitArabicTextIntoChunks(text, 160), 0 );
-                };
-                synth.speak(utter);
-              }
-              speakNextChunk();
-              return;
-            }
-          }
-          playViaAudioStreamFallback(splitArabicTextIntoChunks(text, 160), 0);
-        }
-
-        parentDoc.addEventListener("click", function(ev) {
-          const btn = ev.target.closest ? ev.target.closest(".tts-listen-btn") : null;
-          if (!btn) return;
-          ev.preventDefault();
-          ev.stopPropagation();
-          const txt = btn.getAttribute("data-tts-text") || "";
-          if (txt) speakTextAloud(txt, btn);
-        }, true);
-      })();
-      </script>
-      """,
-      height=0,
-  )
