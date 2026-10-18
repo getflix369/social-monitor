@@ -1,4 +1,6 @@
 import base64
+import concurrent.futures
+import hashlib
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import gzip
@@ -1945,6 +1947,8 @@ def _create_shared_runtime():
       "cloud_backup_msg_id": 0,
       "cloud_backup_file_id": "",
       "last_cloud_push_ts": 0.0,
+      "fulltext_checked_ids": set(),
+      "gemini_tts_cooldown_until": 0.0,
   }
 
 
@@ -2500,7 +2504,24 @@ def restore_state_from_telegram_cloud(force: bool = False) -> bool:
     if isinstance(cloud_ledger, list) and cloud_ledger:
       local_ledger.update(str(k) for k in cloud_ledger if k)
 
-    # ب) استعادة الروابط المخصصة إن وجدت
+    # ب) استعادة الإعدادات ومفتاح Gemini API والروابط المخصصة إن وجدت
+    cloud_creds = payload.get("credentials", {})
+    if isinstance(cloud_creds, dict) and cloud_creds:
+      try:
+        curr_c = {}
+        if os.path.exists(CREDENTIALS_FILE):
+          with open(CREDENTIALS_FILE, "r", encoding="utf-8") as f:
+            curr_c = json.load(f) or {}
+        if not curr_c.get("gemini_api_key") and cloud_creds.get("gemini_api_key"):
+          curr_c["gemini_api_key"] = cloud_creds["gemini_api_key"]
+        for k_c, v_c in cloud_creds.items():
+          if k_c not in curr_c or not curr_c[k_c]:
+            curr_c[k_c] = v_c
+        with open(CREDENTIALS_FILE, "w", encoding="utf-8") as f:
+          json.dump(curr_c, f, ensure_ascii=False, indent=2)
+      except Exception:
+        pass
+
     cloud_targets = payload.get("custom_targets", [])
     if isinstance(cloud_targets, list) and cloud_targets and not os.path.exists(CUSTOM_TARGETS_FILE):
       try:
@@ -2585,11 +2606,19 @@ def _push_state_to_telegram_cloud_sync():
     if not articles_to_save and not ledger_set:
       return
 
+    creds_to_save = {}
+    if os.path.exists(CREDENTIALS_FILE):
+      try:
+        with open(CREDENTIALS_FILE, "r", encoding="utf-8") as f:
+          creds_to_save = json.load(f) or {}
+      except Exception:
+        pass
     payload = {
         "updated_at": time.time(),
         "articles": articles_to_save,
         "telegram_ledger": sorted(list(ledger_set))[-8000:],
         "custom_targets": targets_to_save,
+        "credentials": creds_to_save,
     }
     raw_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     gz_bytes = gzip.compress(raw_bytes)
@@ -3013,8 +3042,17 @@ def load_credentials():
 
   try:
     if st is not None and hasattr(st, "secrets"):
-      if "GEMINI_API_KEY" in st.secrets and st.secrets["GEMINI_API_KEY"]:
-        cfg["gemini_api_key"] = str(st.secrets["GEMINI_API_KEY"]).strip()
+      for k_sec in ("GEMINI_API_KEY", "gemini_api_key", "GOOGLE_API_KEY", "google_api_key", "GEMINI_KEY", "API_KEY"):
+        if k_sec in st.secrets and st.secrets[k_sec]:
+          cfg["gemini_api_key"] = str(st.secrets[k_sec]).strip()
+          break
+      if not cfg.get("gemini_api_key"):
+        for sec_val in st.secrets.values():
+          if isinstance(sec_val, dict):
+            for k_sec in ("GEMINI_API_KEY", "gemini_api_key", "GOOGLE_API_KEY", "google_api_key", "api_key"):
+              if sec_val.get(k_sec):
+                cfg["gemini_api_key"] = str(sec_val[k_sec]).strip()
+                break
       if (
           "TELEGRAM_BOT_TOKEN" in st.secrets
           and st.secrets["TELEGRAM_BOT_TOKEN"]
@@ -3027,9 +3065,17 @@ def load_credentials():
   except Exception:
     pass
 
-  env_gemini = os.environ.get("GEMINI_API_KEY", "").strip()
-  if env_gemini:
-    cfg["gemini_api_key"] = env_gemini
+  for env_k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY", "API_KEY"):
+    env_gemini = os.environ.get(env_k, "").strip()
+    if env_gemini:
+      cfg["gemini_api_key"] = env_gemini
+      break
+
+  try:
+    if st is not None and st.session_state.get("gemini_api_key_live"):
+      cfg["gemini_api_key"] = str(st.session_state["gemini_api_key_live"]).strip()
+  except Exception:
+    pass
   env_tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
   if env_tg_token:
     cfg["telegram_bot_token"] = env_tg_token
@@ -6713,106 +6759,255 @@ def _pcm16_to_wav_bytes(pcm_bytes: bytes, sample_rate: int = 24000, channels: in
   return buf.getvalue()
 
 
-def generate_gemini_or_server_tts_audio(text: str, api_key: str = "") -> tuple:
-  """توليد ملف صوتي عربي واضح (WAV / MP3) لقراءة الخبر عبر Gemini API المدمج (Native Audio TTS) مع بديل صوتي فوري على السيرفر."""
-  clean_txt = clean_display_text(text)
-  if not clean_txt:
+def _strip_mp3_metadata_frames(mp3_data: bytes) -> bytes:
+  """إزالة ترويسات ID3v2 و ID3v1 وإطارات Xing/Info VBR من مقاطع MP3 لضمان دمجها في ملف صوتي واحد متصل يُقرأ كاملاً دون توقف."""
+  if not mp3_data or len(mp3_data) < 16:
+    return mp3_data
+  data = mp3_data
+  while len(data) >= 10 and data[:3] == b"ID3":
+    b6, b7, b8, b9 = data[6], data[7], data[8], data[9]
+    tag_size = ((b6 & 0x7F) << 21) | ((b7 & 0x7F) << 14) | ((b8 & 0x7F) << 7) | (b9 & 0x7F)
+    total_id3 = 10 + tag_size
+    if len(data) > total_id3:
+      data = data[total_id3:]
+    else:
+      break
+
+  if len(data) > 128 and data[-128:-125] == b"TAG":
+    data = data[:-128]
+
+  if len(data) > 64:
+    sync_idx = -1
+    for i in range(min(512, len(data) - 4)):
+      if data[i] == 0xFF and (data[i + 1] & 0xE0) == 0xE0:
+        sync_idx = i
+        break
+    if sync_idx > 0:
+      data = data[sync_idx:]
+    first_window = data[:220]
+    if b"Xing" in first_window or b"Info" in first_window or b"VBRI" in first_window:
+      for j in range(36, min(650, len(data) - 4)):
+        if data[j] == 0xFF and (data[j + 1] & 0xE0) == 0xE0 and (data[j + 1] & 0x18) != 0x08:
+          data = data[j:]
+          break
+  return data
+
+
+def prepare_arabic_text_for_speech(text: str, max_chars: int = 3800) -> str:
+  """تنظيف وتجهيز النص العربي للقراءة الصوتية الإذاعية (إزالة الروابط والرموز المربكة للنطق مع الحفاظ على علامات الوقف)."""
+  if not text:
+    return ""
+  t = clean_display_text(text)
+  t = re.sub(r"https?://\S+", " ", t)
+  t = re.sub(r"#\S+", " ", t)
+  # إزالة الرموز التعبيرية والزخارف التي قد تربك محرك النطق
+  t = re.sub(r"[🎯📰🟦⬛🟥🟪🌐🗄️📡📅📝🏷️🔗👁️📖🔊🎙️⚖️✨🛑✅⏳]", " ", t)
+  t = re.sub(r"[«»\"'`~^*_\[\]{}<>|\\]", " ", t)
+  t = re.sub(r"\s+", " ", t).strip()
+  return t[:max_chars]
+
+
+def _call_single_gemini_tts_chunk(chunk_text: str, api_key: str, model_id: str = "gemini-2.5-flash-preview-tts") -> tuple:
+  """طلب توليد صوتي لمقطع نصي واحد عبر Gemini Native TTS API."""
+  endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
+  payload = {
+      "contents": [{"parts": [{"text": chunk_text}]}],
+      "generationConfig": {
+          "responseModalities": ["AUDIO"],
+          "speechConfig": {
+              "voiceConfig": {
+                  "prebuiltVoiceConfig": {"voiceName": "Aoede"}
+              }
+          },
+      },
+  }
+  resp = requests.post(endpoint, json=payload, timeout=14)
+  if resp.status_code == 200:
+    data = resp.json()
+    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    for p in parts:
+      inline = p.get("inlineData") or p.get("inline_data")
+      if inline and inline.get("data"):
+        raw_audio = base64.b64decode(inline["data"])
+        mime = str(inline.get("mimeType") or inline.get("mime_type") or "").lower()
+        rate_m = re.search(r"rate=(\d+)", mime)
+        sr = int(rate_m.group(1)) if rate_m else 24000
+        return raw_audio, mime, sr
+  return b"", "", 24000
+
+
+def _vocalize_script_with_gemini(text: str, api_key: str) -> str:
+  """استخدام مفتاح Gemini API العامل في المنصة لتشكيل الكلمات الأساسية وتحويل الأرقام والاختصارات لنص إذاعي عربي سليم النطق."""
+  if not api_key or not text or len(text) > 900:
+    return text
+  prompt = (
+      "أعد كتابة النص الإخباري التالي ليُقرأ صوتياً باللغة العربية الفصحى بإلقاء إذاعي واضح، "
+      "مع وضع التشكيل الضروري على الكلمات التي قد تلتبس في النطق وتحويل الأرقام والتواريخ إلى كلمات عربية منطوقة، "
+      "دون حذف أو تلخيص أي معلومة ودون إضافة أي مقدمات (أرجع النص المشكول الجاهز للقراءة فقط):\n\n"
+      f"{text}"
+  )
+  try:
+    global _WORKING_GEMINI_MODEL
+    model_id = _WORKING_GEMINI_MODEL or "gemini-2.5-flash"
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
+    resp = requests.post(
+        endpoint,
+        json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.15, "maxOutputTokens": 600},
+        },
+        timeout=4.5,
+    )
+    if resp.status_code == 200:
+      cand = (
+          resp.json()
+          .get("candidates", [{}])[0]
+          .get("content", {})
+          .get("parts", [{}])[0]
+          .get("text", "")
+      )
+      cleaned_cand = prepare_arabic_text_for_speech(cand, max_chars=1500)
+      if len(cleaned_cand) >= int(len(text) * 0.65):
+        return cleaned_cand
+  except Exception:
+    pass
+  return text
+
+
+def _fetch_single_tts_mp3_chunk(idx_and_chunk: tuple) -> tuple:
+  """جلب مقطع صوتي MP3 واحد من عدة خوادم TTS عربية متوازية مع إزالة ترويسات ID3/Xing لضمان الاتصال السلس."""
+  idx, ch = idx_and_chunk
+  if not ch or not ch.strip():
+    return idx, b""
+  q_enc = urllib.parse.quote(ch.strip())
+  endpoints = [
+      f"https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=ar&dt=t&q={q_enc}",
+      f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=ar&q={q_enc}",
+      f"https://translate.google.com.vn/translate_tts?ie=UTF-8&client=tw-ob&tl=ar&q={q_enc}",
+      f"https://translate.google.com/translate_tts?ie=UTF-8&client=dict-chrome-ex&tl=ar&q={q_enc}",
+      f"https://api.streamelements.com/kappa/v2/speech?voice=Zeina&text={q_enc}",
+      f"https://texttospeech.responsivevoice.org/v1/text:synthesize?text={q_enc}&lang=ar&engine=g1&name=&pitch=0.5&rate=0.5&volume=1&key=0POmS5Y2&gender=male",
+  ]
+  tts_headers = {
+      "User-Agent": (
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+      ),
+      "Referer": "https://translate.google.com/",
+      "Accept": "*/*",
+  }
+  for u in endpoints:
+    try:
+      r = requests.get(u, headers=tts_headers, timeout=5.0)
+      if r.status_code == 200 and len(r.content) > 150:
+        return idx, _strip_mp3_metadata_frames(r.content)
+    except Exception:
+      pass
+  return idx, b""
+
+
+def generate_gemini_or_server_tts_audio(text: str, api_key: str = "", mode: str = "summary") -> tuple:
+  """توليد ملف صوتي عربي واضح ومتصل (WAV / MP3) لقراءة الملخص أو النص الأصلي الكامل عبر Gemini API المدمج + التوليد السحابي المتوازي."""
+  max_len = 1200 if mode == "summary" else 3800
+  speech_script = prepare_arabic_text_for_speech(text, max_chars=max_len)
+  if not speech_script:
     return b"", ""
 
-  # تقليم النص الصوتي ليكون مناسباً للقراءة الإذاعية السريعة والواضحة
-  speech_script = clean_txt[:2200]
   key = str(api_key or "").strip()
+  if not key:
+    try:
+      key = str(load_credentials().get("gemini_api_key") or "").strip()
+    except Exception:
+      key = ""
 
-  # 1) المحاولة الأولى: استخدام Gemini API المدمج لتوليد الصوت مباشرة (gemini-2.5-flash-preview-tts / gemini-2.0-flash)
-  if key:
-    tts_models = [
-        "gemini-2.5-flash-preview-tts",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-exp",
-    ]
-    tts_prompt = (
-        "اقرأ النص الإخباري القضائي التالي باللغة العربية الفصحى بصوت إذاعي واضح ومتزن:\n\n"
-        f"{speech_script}"
-    )
-    for m_id in tts_models:
-      try:
-        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{m_id}:generateContent?key={key}"
-        payload = {
-            "contents": [{"parts": [{"text": tts_prompt}]}],
-            "generationConfig": {
-                "responseModalities": ["AUDIO"],
-                "speechConfig": {
-                    "voiceConfig": {
-                        "prebuiltVoiceConfig": {"voiceName": "Aoede"}
-                    }
-                },
-            },
-        }
-        resp = requests.post(endpoint, json=payload, timeout=12)
-        if resp.status_code == 200:
-          data = resp.json()
-          parts = (
-              data.get("candidates", [{}])[0]
-              .get("content", {})
-              .get("parts", [])
-          )
-          for p in parts:
-            inline = p.get("inlineData") or p.get("inline_data")
-            if inline and inline.get("data"):
-              raw_audio = base64.b64decode(inline["data"])
-              mime = str(inline.get("mimeType") or inline.get("mime_type") or "").lower()
-              if "pcm" in mime or "l16" in mime or not mime:
-                rate_m = re.search(r"rate=(\d+)", mime)
-                sr = int(rate_m.group(1)) if rate_m else 24000
-                wav_bytes = _pcm16_to_wav_bytes(raw_audio, sample_rate=sr)
-                return wav_bytes, "audio/wav"
-              if "wav" in mime:
-                return raw_audio, "audio/wav"
-              return raw_audio, "audio/mp3"
-      except Exception:
-        pass
+  rt = get_shared_runtime()
+  cooldown_until = float(rt.get("gemini_tts_cooldown_until") or 0.0)
 
-  # 2) المحرك الصوتي المدمج على السيرفر: تحميل ودمج مقاطع MP3 العربية مباشرة من السيرفر (يتجاوز أي حظر متصفح CORS/ORB ويعمل على جميع الأجهزة 100%)
-  sentences = [s.strip() for s in re.split(r"(?<=[.!؟،؛\n])\s+", speech_script) if s.strip()]
+  # 1) المحاولة الأولى: استخدام Gemini Native TTS API (gemini-2.5-flash-preview-tts) بتقسيم متوازن يمنع انتهاء المهلة
+  if key and time.time() >= cooldown_until:
+    g_sents = [s.strip() for s in re.split(r"(?<=[.!؟،؛\n])\s+", speech_script) if s.strip()]
+    g_chunks = []
+    g_curr = ""
+    for s in g_sents:
+      if len(g_curr) + len(s) + 1 <= 550:
+        g_curr = f"{g_curr} {s}".strip() if g_curr else s
+      else:
+        if g_curr:
+          g_chunks.append(g_curr)
+        g_curr = s[:550]
+    if g_curr:
+      g_chunks.append(g_curr)
+    if not g_chunks:
+      g_chunks = [speech_script[:550]]
+
+    try:
+      raw_0, mime_0, sr_0 = _call_single_gemini_tts_chunk(g_chunks[0], key, "gemini-2.5-flash-preview-tts")
+      if raw_0:
+        if "pcm" in mime_0 or "l16" in mime_0 or not mime_0:
+          pcm_parts = [raw_0]
+          for extra_ch in g_chunks[1:6]:
+            r_ext, _, _ = _call_single_gemini_tts_chunk(extra_ch, key, "gemini-2.5-flash-preview-tts")
+            if r_ext:
+              pcm_parts.append(r_ext)
+            else:
+              break
+          return _pcm16_to_wav_bytes(b"".join(pcm_parts), sample_rate=sr_0), "audio/wav"
+        if "wav" in mime_0:
+          return raw_0, "audio/wav"
+        return raw_0, "audio/mpeg"
+      else:
+        rt["gemini_tts_cooldown_until"] = time.time() + 240
+    except Exception:
+      rt["gemini_tts_cooldown_until"] = time.time() + 240
+
+  # 2) استخدام مفتاح Gemini API العامل في المنصة لتشكيل وتحسين النص الإذاعي قبل التوليد الصوتي المتوازي السريع
+  if key and len(speech_script) <= 750:
+    speech_script = _vocalize_script_with_gemini(speech_script, key)
+
+  # 3) التوليد الصوتي المتوازي الفائق السرعة (ThreadPoolExecutor) مع دمج إطارات MP3 النظيفة بدون ترويسات قاطعة
+  sentences = [s.strip() for s in re.split(r"(?<=[.!؟،؛:\n])\s+", speech_script) if s.strip()]
   chunks = []
   curr = ""
   for s in sentences:
-    if len(curr) + len(s) + 1 <= 175:
+    if len(curr) + len(s) + 1 <= 160:
       curr = f"{curr} {s}".strip() if curr else s
     else:
       if curr:
         chunks.append(curr)
-      if len(s) <= 175:
+      if len(s) <= 160:
         curr = s
       else:
-        for i in range(0, len(s), 175):
-          chunks.append(s[i : i + 175])
-        curr = ""
+        words = s.split()
+        w_buf = ""
+        for w in words:
+          if len(w_buf) + len(w) + 1 <= 160:
+            w_buf = f"{w_buf} {w}".strip() if w_buf else w
+          else:
+            if w_buf:
+              chunks.append(w_buf)
+            w_buf = w[:160]
+        curr = w_buf
   if curr:
     chunks.append(curr)
 
+  max_chunks = 10 if mode == "summary" else 26
+  indexed_chunks = list(enumerate(chunks[:max_chunks]))
+  if not indexed_chunks:
+    return b"", ""
+
+  ordered_results = {}
+  with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(indexed_chunks))) as pool:
+    for idx_res, mp3_part in pool.map(_fetch_single_tts_mp3_chunk, indexed_chunks):
+      if mp3_part:
+        ordered_results[idx_res] = mp3_part
+
   mp3_buffer = io.BytesIO()
-  tts_headers = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      "Referer": "https://translate.google.com/",
-  }
-  for ch in chunks[:16]:
-    for client_id in ("tw-ob", "gtx"):
-      tts_u = (
-          "https://translate.google.com/translate_tts?ie=UTF-8"
-          f"&client={client_id}&tl=ar&q={urllib.parse.quote(ch)}"
-      )
-      try:
-        r_tts = requests.get(tts_u, headers=tts_headers, timeout=5)
-        if r_tts.status_code == 200 and len(r_tts.content) > 200:
-          mp3_buffer.write(r_tts.content)
-          break
-      except Exception:
-        pass
+  for idx_k in sorted(ordered_results.keys()):
+    mp3_buffer.write(ordered_results[idx_k])
 
   mp3_bytes = mp3_buffer.getvalue()
   if mp3_bytes:
-    return mp3_bytes, "audio/mp3"
+    return mp3_bytes, "audio/mpeg"
   return b"", ""
 
 
@@ -8451,6 +8646,12 @@ with st.sidebar:
   gemini_key_in = st.text_input(
       "مفتاح Gemini API", value=cfg.get("gemini_api_key", ""), type="password"
   )
+  if gemini_key_in.strip() and gemini_key_in.strip() != cfg.get("gemini_api_key", ""):
+    cfg["gemini_api_key"] = gemini_key_in.strip()
+    if st is not None:
+      st.session_state["gemini_api_key_live"] = gemini_key_in.strip()
+    save_credentials(cfg)
+    trigger_cloud_state_backup(async_mode=True)
   tg_token_in = st.text_input(
       "Telegram Bot Token",
       value=cfg.get("telegram_bot_token", DEFAULT_TG_TOKEN),
@@ -8951,6 +9152,327 @@ if st is not None and "active_tts_audio" not in st.session_state:
   st.session_state["active_tts_audio"] = {}
 
 
+def _render_interactive_audio_component(audio_b64: str, mime_type: str, spoken_text: str, label_text: str, auto_play: bool = True, api_key: str = ''):
+  """مشغل صوتي تفاعلي مدمج يعمل بتقنية HTML5 Audio Blob + Web Speech API الاحتياطي لضمان عمل الصوت في جميع المتصفحات 100%."""
+  try:
+    import streamlit.components.v1 as components
+  except Exception:
+    return
+
+  safe_label = html.escape(label_text)
+  text_json = json.dumps(prepare_arabic_text_for_speech(spoken_text, max_chars=3600), ensure_ascii=False)
+  auto_js = "true" if auto_play else "false"
+
+  comp_html = f"""<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="utf-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@600;700;800&display=swap');
+  * {{ box-sizing: border-box; font-family: 'Cairo', sans-serif; }}
+  body {{
+    margin: 0; padding: 0; background: transparent; color: #f8fafc; direction: rtl; overflow: hidden;
+  }}
+  .tts-box {{
+    background: linear-gradient(135deg, rgba(6, 78, 59, 0.85) 0%, rgba(15, 23, 42, 0.95) 100%);
+    border: 1.5px solid rgba(52, 211, 153, 0.7);
+    border-radius: 14px;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  }}
+  .tts-top {{
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  }}
+  .tts-title {{
+    font-size: 0.84rem; font-weight: 800; color: #6ee7b7; display: flex; align-items: center; gap: 6px;
+  }}
+  .tts-controls {{
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }}
+  .tts-btn {{
+    background: rgba(16, 185, 129, 0.25);
+    border: 1px solid rgba(52, 211, 153, 0.65);
+    color: #ecfdf5;
+    border-radius: 8px;
+    padding: 3px 10px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }}
+  .tts-btn:hover {{
+    background: rgba(16, 185, 129, 0.5);
+    border-color: #ffffff;
+  }}
+  .tts-btn.stop {{
+    background: rgba(239, 68, 68, 0.28);
+    border-color: rgba(252, 165, 165, 0.65);
+  }}
+  audio {{
+    width: 100%; height: 36px; border-radius: 8px; outline: none;
+  }}
+</style>
+</head>
+<body>
+<div class="tts-box" dir="rtl">
+  <div class="tts-top">
+    <div class="tts-title">
+      <span id="statusIcon">🎙️</span>
+      <span id="statusText">{safe_label}</span>
+    </div>
+    <div class="tts-controls">
+      <button class="tts-btn" onclick="togglePlay()">⏯️ تشغيل / إيقاف مؤقت</button>
+      <button class="tts-btn stop" onclick="restartAudio()">🔄 من البداية</button>
+      <button class="tts-btn" onclick="cycleSpeed()" id="speedBtn">⚡ السرعة: 1x</button>
+    </div>
+  </div>
+  <audio id="mainAudio" controls preload="auto"></audio>
+</div>
+<script>
+(function() {{
+  const b64Data = "{audio_b64}";
+  const mimeType = "{mime_type}" || "audio/mpeg";
+  const fallbackText = {text_json};
+  const shouldAutoPlay = {auto_js};
+  const geminiKey = {json.dumps(str(api_key or "").strip())};
+  const audioEl = document.getElementById("mainAudio");
+  const statusText = document.getElementById("statusText");
+  const speedBtn = document.getElementById("speedBtn");
+  const speeds = [1.0, 1.25, 1.5];
+  let speedIdx = 0;
+  let usingWebSpeech = false;
+
+  function b64ToBlobUrl(b64, mime) {{
+    const binStr = atob(b64);
+    const len = binStr.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {{
+      bytes[i] = binStr.charCodeAt(i);
+    }}
+    const blob = new Blob([bytes], {{ type: mime }});
+    return URL.createObjectURL(blob);
+  }}
+
+  let streamChunks = [];
+  let streamIdx = 0;
+  let usingStreamFallback = false;
+
+  function buildTextChunks(txt) {{
+    const rawSents = (txt || "").split(/(?<=[.!؟،؛:])\\s+/);
+    const out = [];
+    let cur = "";
+    for (const s of rawSents) {{
+      if ((cur + " " + s).trim().length <= 150) {{
+        cur = (cur + " " + s).trim();
+      }} else {{
+        if (cur) out.push(cur);
+        if (s.length <= 150) {{
+          cur = s.trim();
+        }} else {{
+          const words = s.split(/\\s+/);
+          let wb = "";
+          for (const w of words) {{
+            if ((wb + " " + w).trim().length <= 150) wb = (wb + " " + w).trim();
+            else {{ if (wb) out.push(wb); wb = w; }}
+          }}
+          cur = wb;
+        }}
+      }}
+    }}
+    if (cur) out.push(cur);
+    return out.slice(0, 28);
+  }}
+
+  function speakViaWebSpeech() {{
+    if (!("speechSynthesis" in window) || !fallbackText) return;
+    usingWebSpeech = true;
+    window.speechSynthesis.cancel();
+    const sents = fallbackText.split(/(?<=[.!؟،؛])\\s+/);
+    sents.forEach((s) => {{
+      if (!s.trim()) return;
+      const u = new SpeechSynthesisUtterance(s.trim());
+      u.lang = "ar-SA";
+      u.rate = speeds[speedIdx];
+      const voices = window.speechSynthesis.getVoices();
+      const arVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith("ar"));
+      if (arVoice) u.voice = arVoice;
+      window.speechSynthesis.speak(u);
+    }});
+    statusText.textContent = "{safe_label} (قراءة صوتية نشطة 🔊)";
+  }}
+
+  function startClientStreamFallback() {{
+    streamChunks = buildTextChunks(fallbackText);
+    if (!streamChunks.length) {{
+      speakViaWebSpeech();
+      return;
+    }}
+    usingStreamFallback = true;
+    streamIdx = 0;
+    audioEl.style.display = "block";
+    audioEl.setAttribute("referrerpolicy", "no-referrer");
+    playNextStreamChunk();
+  }}
+
+  function playNextStreamChunk() {{
+    if (!usingStreamFallback || streamIdx >= streamChunks.length) {{
+      statusText.textContent = "{safe_label} (اكتملت القراءة الصوتية ✅)";
+      return;
+    }}
+    const q = encodeURIComponent(streamChunks[streamIdx]);
+    audioEl.src = "https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=ar&dt=t&q=" + q;
+    audioEl.playbackRate = speeds[speedIdx];
+    statusText.textContent = "{safe_label} (مقطع " + (streamIdx + 1) + "/" + streamChunks.length + " 🔊)";
+    audioEl.onended = function() {{
+      streamIdx += 1;
+      playNextStreamChunk();
+    }};
+    audioEl.onerror = function() {{
+      usingStreamFallback = false;
+      speakViaWebSpeech();
+    }};
+    audioEl.play().catch(() => {{
+      statusText.textContent = "{safe_label} — اضغط ▶ للتشغيل";
+    }});
+  }}
+
+  if (b64Data && b64Data.length > 100) {{
+    try {{
+      const blobUrl = b64ToBlobUrl(b64Data, mimeType);
+      audioEl.src = blobUrl;
+      if (shouldAutoPlay) {{
+        const p = audioEl.play();
+        if (p !== undefined) {{
+          p.then(() => {{
+            statusText.textContent = "{safe_label} (يعمل الآن 🔊)";
+          }}).catch(() => {{
+            statusText.textContent = "{safe_label} — اضغط ▶ للتشغيل";
+          }});
+        }}
+      }}
+    }} catch (e) {{
+      startClientStreamFallback();
+    }}
+  }} else {{
+    tryBrowserGeminiTtsOrStream();
+  }}
+
+  function pcm16B64ToWavBlobUrl(pcmB64, sampleRate) {{
+    const binStr = atob(pcmB64);
+    const pcmLen = binStr.length;
+    const wavBuffer = new ArrayBuffer(44 + pcmLen);
+    const view = new DataView(wavBuffer);
+    function writeStr(offset, s) {{
+      for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+    }}
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + pcmLen, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, "data");
+    view.setUint32(40, pcmLen, true);
+    const bytes = new Uint8Array(wavBuffer, 44);
+    for (let i = 0; i < pcmLen; i++) bytes[i] = binStr.charCodeAt(i);
+    const blob = new Blob([wavBuffer], {{ type: "audio/wav" }});
+    return URL.createObjectURL(blob);
+  }}
+
+  async function tryBrowserGeminiTtsOrStream() {{
+    if (geminiKey && fallbackText) {{
+      try {{
+        statusText.textContent = "{safe_label} (جاري التوليد الصوتي عبر Gemini AI...)";
+        const resp = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=" + encodeURIComponent(geminiKey),
+          {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{
+              contents: [{{ parts: [{{ text: fallbackText.slice(0, 900) }}] }}],
+              generationConfig: {{
+                responseModalities: ["AUDIO"],
+                speechConfig: {{
+                  voiceConfig: {{ prebuiltVoiceConfig: {{ voiceName: "Aoede" }} }}
+                }}
+              }}
+            }})
+          }}
+        );
+        if (resp.ok) {{
+          const data = await resp.json();
+          const parts = (((data.candidates || [])[0] || {{}}).content || {{}}).parts || [];
+          for (const p of parts) {{
+            const inl = p.inlineData || p.inline_data;
+            if (inl && inl.data) {{
+              const wavUrl = pcm16B64ToWavBlobUrl(inl.data, 24000);
+              audioEl.src = wavUrl;
+              audioEl.play().then(() => {{
+                statusText.textContent = "{safe_label} (يعمل الآن عبر Gemini AI 🔊)";
+              }}).catch(() => {{
+                statusText.textContent = "{safe_label} — اضغط ▶ للتشغيل";
+              }});
+              return;
+            }}
+          }}
+        }}
+      }} catch (err) {{}}
+    }}
+    startClientStreamFallback();
+  }}
+
+  window.togglePlay = function() {{
+    if (usingWebSpeech && "speechSynthesis" in window) {{
+      if (window.speechSynthesis.speaking) {{
+        if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+        else window.speechSynthesis.pause();
+      }} else {{
+        speakViaWebSpeech();
+      }}
+      return;
+    }}
+    if (audioEl.paused) {{
+      audioEl.play().catch(() => startClientStreamFallback());
+    }} else {{
+      audioEl.pause();
+    }}
+  }};
+
+  window.restartAudio = function() {{
+    if (usingWebSpeech && "speechSynthesis" in window) {{
+      speakViaWebSpeech();
+      return;
+    }}
+    if (usingStreamFallback) {{
+      streamIdx = 0;
+      playNextStreamChunk();
+      return;
+    }}
+    audioEl.currentTime = 0;
+    audioEl.play().catch(() => startClientStreamFallback());
+  }};
+
+  window.cycleSpeed = function() {{
+    speedIdx = (speedIdx + 1) % speeds.length;
+    const sp = speeds[speedIdx];
+    audioEl.playbackRate = sp;
+    speedBtn.textContent = "⚡ السرعة: " + sp + "x";
+  }};
+}})();
+</script>
+</body>
+</html>"""
+  components.html(comp_html, height=106, scrolling=False)
+
+
 def render_article_cards(
     items_list: list,
     empty_msg: str = "لا توجد منشورات مرصودة حالياً في هذا القسم.",
@@ -8979,6 +9501,8 @@ def render_article_cards(
   }
 
   api_key_curr = (cfg.get("gemini_api_key") or "").strip()
+  rt_shared = get_shared_runtime()
+  checked_ft_ids = rt_shared.setdefault("fulltext_checked_ids", set())
   live_fetches_done = 0
 
   for idx, item in enumerate(items_list):
@@ -8991,15 +9515,27 @@ def render_article_cards(
     raw_full_text = clean_full_article_text(item.get("raw_snippet") or "")
     raw_src = clean_display_text(item.get("source_name") or plat)
 
-    # إذا كان النص الأصلي المخزن سابقاً قصيراً أو مطابقاً للملخص/العنوان، نجلب النص الأصلي الكامل حرفياً من المصدر تلقائياً
+    # معرف ثابت 100% لكل خبر لا يتغير أبداً عند تحديث الرابط أو بين التبويبات
+    if item.get("id"):
+      stable_art_id = f"id_{item['id']}"
+    else:
+      t_hash = hashlib.md5(normalize_arabic_for_dedup(raw_title).encode("utf-8")).hexdigest()[:10]
+      stable_art_id = f"th_{t_hash}"
+    widget_uid = f"{tab_prefix}_{stable_art_id}_{idx}"
+
+    # جلب النص الكامل تلقائياً للمقالات الصحفية غير المفحوصة سابقاً (بحد أقصى مقالين في الدورة لمنع أي بطء عند ضغط أزرار الصوت)
     if (
-        live_fetches_done < 8
+        tab_prefix == "all"
+        and plat == "الصحف"
+        and stable_art_id not in checked_ft_ids
+        and live_fetches_done < 2
         and (
             len(raw_full_text) < 380
             or normalize_arabic_for_dedup(raw_full_text) == normalize_arabic_for_dedup(raw_summary)
             or normalize_arabic_for_dedup(raw_full_text) == normalize_arabic_for_dedup(raw_title)
         )
     ):
+      checked_ft_ids.add(stable_art_id)
       live_fetches_done += 1
       raw_full_text = ensure_verbatim_full_text_for_item(item)
 
@@ -9049,25 +9585,10 @@ def render_article_cards(
         else ""
     )
 
-    # النص الأصلي الحرفي للموضوع (لا نعيد كتابة الملخص أبداً، بل نعرض متن الخبر الأصلي كما ورد في المصدر)
     verbatim_body = raw_full_text if len(raw_full_text) >= 40 else raw_title
     verbatim_paragraphs_html = _format_verbatim_article_paragraphs_html(
         verbatim_body, raw_title
     )
-
-    item_uid = f"{tab_prefix}_{item.get('id') or idx}_{ abs(hash(raw_url)) % 100000 }"
-    active_audio_entry = st.session_state.get("active_tts_audio", {}).get(item_uid)
-    audio_player_html = ""
-    if active_audio_entry and active_audio_entry.get("b64"):
-      a_mime = active_audio_entry.get("mime", "audio/mp3")
-      a_b64 = active_audio_entry["b64"]
-      a_lbl = html.escape(active_audio_entry.get("label", "قراءة صوتية للخبر"))
-      audio_player_html = (
-          '<div style="background:rgba(6,78,59,0.45);border:1px solid rgba(52,211,153,0.6);border-radius:12px;padding:10px 14px;margin:8px 0;direction:rtl;text-align:right;">'
-          f'<div style="font-size:0.82rem;font-weight:800;color:#6ee7b7;margin-bottom:6px;">🎙️ {a_lbl} (يعمل الآن):</div>'
-          f'<audio controls autoplay style="width:100%;height:38px;border-radius:8px;" src="data:{a_mime};base64,{a_b64}"></audio>'
-          "</div>"
-      )
 
     card_html = (
         f'<div class="news-card {css_cls}" dir="rtl" style="direction:rtl !important;text-align:right !important;margin-bottom:6px;">'
@@ -9090,7 +9611,6 @@ def render_article_cards(
         f'<div class="news-summary-box" dir="rtl" style="direction:rtl !important;text-align:right !important;">'
         f'<strong style="color:#38bdf8;">📝 ملخص الخبر (AI): </strong>{summary_safe}'
         "</div>"
-        f"{audio_player_html}"
         '<details class="article-preview-drawer" dir="rtl">'
         "<summary>👁️ معاينة النص الأصلي الكامل للموضوع (مطابق حرفياً للمصدر دون مغادرة الموقع)</summary>"
         '<div class="full-article-modal-box" dir="rtl">'
@@ -9107,35 +9627,81 @@ def render_article_cards(
     )
     render_html(card_html)
 
-    # شريط أزرار الاستماع الصوتي التفاعلي والتحقق من المصدر لكل خبر (يعمل عبر السيرفر وGemini API بنسبة 100%)
+    # حاوية فورية لمشغل الصوت تظهر مباشرة عند الضغط دون الحاجة إلى st.rerun()
+    audio_slot = st.empty()
+    just_triggered_audio = False
+
     b_col1, b_col2, b_col3 = st.columns([1.4, 1.5, 1.4])
     with b_col1:
-      if st.button("🔊 استماع صوتي للملخص", key=f"tts_sum_{item_uid}", use_container_width=True):
+      if st.button("🔊 استماع صوتي للملخص", key=f"tts_sum_{widget_uid}", use_container_width=True):
+        with audio_slot.container():
+          render_html(
+              '<div style="background:rgba(14,165,233,0.18);border:1px solid rgba(56,189,248,0.5);border-radius:10px;padding:8px 14px;margin:4px 0;color:#7dd3fc;font-weight:800;font-size:0.84rem;direction:rtl;text-align:right;">⏳ جاري توليد القراءة الصوتية للملخص...</div>'
+          )
         tts_text_to_read = f"{raw_title}. {raw_summary}"
-        audio_bytes, mime_t = generate_gemini_or_server_tts_audio(tts_text_to_read, api_key_curr)
-        if audio_bytes:
-          st.session_state["active_tts_audio"][item_uid] = {
-              "b64": base64.b64encode(audio_bytes).decode("ascii"),
-              "mime": mime_t,
-              "label": f"قراءة صوتية لملخص الخبر ({raw_src})",
-          }
-          st.rerun()
+        audio_bytes, mime_t = generate_gemini_or_server_tts_audio(
+            tts_text_to_read, api_key_curr, mode="summary"
+        )
+        st.session_state["active_tts_audio"][stable_art_id] = {
+            "bytes": audio_bytes,
+            "b64": base64.b64encode(audio_bytes).decode("ascii") if audio_bytes else "",
+            "mime": mime_t or "audio/mpeg",
+            "text": tts_text_to_read,
+            "label": f"قراءة صوتية لملخص الخبر ({raw_src})",
+            "active_tab": tab_prefix,
+        }
+        just_triggered_audio = True
+
     with b_col2:
-      if st.button("🎙️ استماع للنص الأصلي الكامل", key=f"tts_full_{item_uid}", use_container_width=True):
+      if st.button("🎙️ استماع للنص الأصلي الكامل", key=f"tts_full_{widget_uid}", use_container_width=True):
+        with audio_slot.container():
+          render_html(
+              '<div style="background:rgba(139,92,246,0.2);border:1px solid rgba(167,139,250,0.55);border-radius:10px;padding:8px 14px;margin:4px 0;color:#ddd6fe;font-weight:800;font-size:0.84rem;direction:rtl;text-align:right;">⏳ جاري استخراج النص الأصلي الكامل وتوليد القراءة الصوتية...</div>'
+          )
         full_fetched = ensure_verbatim_full_text_for_item(item)
-        tts_full_to_read = f"{raw_title}. {clean_display_text(full_fetched or verbatim_body)}"
-        audio_bytes, mime_t = generate_gemini_or_server_tts_audio(tts_full_to_read, api_key_curr)
-        if audio_bytes:
-          st.session_state["active_tts_audio"][item_uid] = {
-              "b64": base64.b64encode(audio_bytes).decode("ascii"),
-              "mime": mime_t,
-              "label": f"قراءة صوتية للنص الأصلي الكامل ({raw_src})",
-          }
-          st.rerun()
+        full_body_clean = clean_display_text(full_fetched or verbatim_body)
+        if len(full_body_clean) < len(raw_summary):
+          full_body_clean = f"{raw_summary}. {full_body_clean}"
+        tts_full_to_read = f"{raw_title}. {full_body_clean}"
+        audio_bytes, mime_t = generate_gemini_or_server_tts_audio(
+            tts_full_to_read, api_key_curr, mode="full"
+        )
+        st.session_state["active_tts_audio"][stable_art_id] = {
+            "bytes": audio_bytes,
+            "b64": base64.b64encode(audio_bytes).decode("ascii") if audio_bytes else "",
+            "mime": mime_t or "audio/mpeg",
+            "text": tts_full_to_read,
+            "label": f"قراءة صوتية للنص الأصلي الكامل ({raw_src})",
+            "active_tab": tab_prefix,
+        }
+        just_triggered_audio = True
+
     with b_col3:
       render_html(
           f'<div style="display:flex;align-items:center;justify-content:center;height:42px;"><a class="news-link" style="width:100%;justify-content:center;height:40px;" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 فتح المصدر الأصلي</a></div>'
       )
+
+    active_audio_entry = st.session_state.get("active_tts_audio", {}).get(stable_art_id)
+    if active_audio_entry and (just_triggered_audio or active_audio_entry.get("active_tab", tab_prefix) == tab_prefix):
+      with audio_slot.container():
+        a_bytes = active_audio_entry.get("bytes") or b""
+        a_b64 = active_audio_entry.get("b64") or ""
+        a_mime = active_audio_entry.get("mime") or "audio/mpeg"
+        a_text = active_audio_entry.get("text") or f"{raw_title}. {raw_summary}"
+        a_lbl = active_audio_entry.get("label") or "قراءة صوتية للخبر"
+        _render_interactive_audio_component(
+            a_b64,
+            a_mime,
+            a_text,
+            a_lbl,
+            auto_play=just_triggered_audio,
+            api_key=api_key_curr,
+        )
+        if a_bytes and hasattr(st, "audio"):
+          try:
+            st.audio(a_bytes, format=a_mime, autoplay=just_triggered_audio)
+          except TypeError:
+            st.audio(a_bytes, format=a_mime)
 
 
 # =====================================================================
@@ -9219,10 +9785,11 @@ if cfg.get("auto_monitor", True):
         name="OnLoadAsyncCycle",
     ).start()
 
-  render_html("""
-    <script>
-    setTimeout(function() {
-        window.parent.location.reload();
-    }, 60000);
-    </script>
-    """)
+  if not st.session_state.get("active_tts_audio"):
+    render_html("""
+      <script>
+      setTimeout(function() {
+          window.parent.location.reload();
+      }, 60000);
+      </script>
+      """)
