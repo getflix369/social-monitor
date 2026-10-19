@@ -1292,38 +1292,375 @@ def belongs_to_any_custom_target(item: dict, targets_list: list) -> bool:
 # =====================================================================
 # 3. فك روابط Google News واستخراج النص الأصلي الكامل للموضوع حرفياً (Verbatim Full Text) والصورة الأصلية
 # =====================================================================
-def _find_press_domain_by_source_or_url(source_name: str, url: str) -> str:
-  """تحديد النطاق الرسمي للجريدة المغربية من اسم المصدر أو الرابط لاستخدامه في جلب النص الأصلي الكامل عبر WordPress API."""
+MOROCCAN_SITE_DOMAIN_MAP = {
+    "hespress.com": "هسبريس",
+    "al3omk.com": "العمق المغربي",
+    "alyaoum24.com": "اليوم 24",
+    "madar21.com": "مدار 21",
+    "alayam24.com": "الأيام 24",
+    "akhbarona.com": "أخبارنا",
+    "goud.ma": "كود",
+    "assabah.ma": "الصباح",
+    "rue20.com": "زنقة 20",
+    "kech24.com": "كش 24",
+    "agadir24.info": "أكادير 24",
+    "sabahagadir.com": "صباح أكادير",
+    "tanja24.com": "طنجة 24",
+    "barlamane.com": "برلمان.كوم",
+    "le360.ma": "Le360",
+    "hibapress.com": "هبة بريس",
+    "nadorcity.com": "ناظورسيتي",
+    "thevoice.ma": "ذا فويس",
+    "snrtnews.com": "SNRTnews",
+    "mapexpress.ma": "وكالة المغرب العربي للأنباء",
+    "mapnews.ma": "وكالة المغرب العربي للأنباء",
+    "2m.ma": "القناة الثانية 2M",
+    "medi1tv.com": "مدي 1 تيفي",
+    "aljarida24.ma": "الجريدة 24",
+    "febrayer.com": "فبراير.كوم",
+    "lakome2.com": "لكم",
+    "anfaspress.com": "أنفاس بريس",
+    "achtari24.com": "أشطاري 24",
+    "chattpress.com": "الشط بريس",
+    "alittihad.info": "الاتحاد الاشتراكي",
+    "alaraby.co.uk": "العربي الجديد",
+    "skynewsarabia.com": "سكاي نيوز عربية",
+    "aljazeera.net": "الجزيرة نت",
+    "alarabiya.net": "العربية",
+    "asharq.com": "الشرق للأخبار",
+    "independentarabia.com": "اندبندنت عربية",
+    "rt.com": "RT Arabic",
+    "cnn.com": "CNN بالعربية",
+    "bbc.com": "BBC News عربي",
+    "france24.com": "فرانس 24",
+    "dw.com": "DW عربية",
+    "cspj.ma": "المجلس الأعلى للسلطة القضائية",
+    "pmp.ma": "رئاسة النيابة العامة",
+    "justice.gov.ma": "وزارة العدل",
+    "mahakim.ma": "بوابة المحاكم المغربية",
+}
+
+MOROCCAN_NAME_TO_DOMAIN_ALIAS = {
+    "هسبريس": "hespress.com",
+    "hespress": "hespress.com",
+    "العمق المغربي": "al3omk.com",
+    "العمق": "al3omk.com",
+    "al3omk": "al3omk.com",
+    "اليوم 24": "alyaoum24.com",
+    "اليوم24": "alyaoum24.com",
+    "alyaoum24": "alyaoum24.com",
+    "مدار 21": "madar21.com",
+    "مدار21": "madar21.com",
+    "madar21": "madar21.com",
+    "الأيام 24": "alayam24.com",
+    "الايام 24": "alayam24.com",
+    "alayam24": "alayam24.com",
+    "أخبارنا المغربية": "akhbarona.com",
+    "أخبارنا": "akhbarona.com",
+    "اخبارنا": "akhbarona.com",
+    "akhbarona": "akhbarona.com",
+    "كش 24": "kech24.com",
+    "كشـ24": "kech24.com",
+    "kech24": "kech24.com",
+    "أكادير 24": "agadir24.info",
+    "اكادير 24": "agadir24.info",
+    "agadir24": "agadir24.info",
+    "صباح أكادير": "sabahagadir.com",
+    "sabahagadir": "sabahagadir.com",
+    "كود": "goud.ma",
+    "گود": "goud.ma",
+    "goud": "goud.ma",
+    "الصباح": "assabah.ma",
+    "جريدة الصباح": "assabah.ma",
+    "assabah": "assabah.ma",
+    "برلمان.كوم": "barlamane.com",
+    "برلمان كوم": "barlamane.com",
+    "برلمان": "barlamane.com",
+    "barlamane": "barlamane.com",
+    "زنقة 20": "rue20.com",
+    "الزنقة 20": "rue20.com",
+    "rue20": "rue20.com",
+    "طنجة 24": "tanja24.com",
+    "tanja24": "tanja24.com",
+    "ذا فويس": "thevoice.ma",
+    "thevoice": "thevoice.ma",
+    "ناظورسيتي": "nadorcity.com",
+    "ناظور سيتي": "nadorcity.com",
+    "nadorcity": "nadorcity.com",
+    "هبة بريس": "hibapress.com",
+    "hibapress": "hibapress.com",
+    "le360": "le360.ma",
+    "snrtnews": "snrtnews.com",
+    "وكالة المغرب العربي للأنباء": "mapexpress.ma",
+    "لاماب": "mapexpress.ma",
+    "الجريدة 24": "aljarida24.ma",
+    "aljarida24": "aljarida24.ma",
+    "فبراير": "febrayer.com",
+    "febrayer": "febrayer.com",
+    "أنفاس بريس": "anfaspress.com",
+    "anfaspress": "anfaspress.com",
+    "أشطاري 24": "achtari24.com",
+    "achtari24": "achtari24.com",
+    "المجلس الأعلى للسلطة القضائية": "cspj.ma",
+    "رئاسة النيابة العامة": "pmp.ma",
+    "وزارة العدل": "justice.gov.ma",
+}
+
+REDIRECT_WRAPPER_DOMAINS = (
+    "news.google.com",
+    "google.com",
+    "bing.com",
+    "yahoo.com",
+    "duckduckgo.com",
+)
+
+
+def _extract_clean_domain(url_str: str) -> str:
+  """استخراج اسم النطاق الصافي (Domain) من الرابط مع تجاهل نطاقات محركات البحث التحويلية."""
+  if not url_str:
+    return ""
+  u = strip_internal_url_fragments(str(url_str).strip())
+  if not u:
+    return ""
+  if "://" not in u and re.match(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/|$)", u):
+    u = "https://" + u
+  try:
+    p = urllib.parse.urlparse(u)
+    dom = p.netloc.lower().strip()
+    for pref in ("www.", "m.", "web.", "mbasic.", "ar.", "fr.", "mobile."):
+      if dom.startswith(pref):
+        dom = dom[len(pref) :]
+    if not dom or any(dom == rd or dom.endswith("." + rd) for rd in REDIRECT_WRAPPER_DOMAINS):
+      return ""
+    return dom
+  except Exception:
+    return ""
+
+
+def _find_press_domain_by_source_or_url(source_name: str, url: str, source_url_hint: str = "") -> str:
+  """تحديد النطاق الرسمي الدقيق (Domain) للجريدة أو الموقع من رابط المصدر أو الرابط المباشر أو اسم الجريدة."""
+  for cand_u in (source_url_hint, url):
+    dom_u = _extract_clean_domain(cand_u)
+    if dom_u and dom_u not in ("facebook.com", "fb.com", "fb.watch", "youtube.com", "youtu.be", "x.com", "twitter.com", "instagram.com", "tiktok.com", "linkedin.com"):
+      for known_dom in MOROCCAN_SITE_DOMAIN_MAP:
+        if dom_u == known_dom or dom_u.endswith("." + known_dom):
+          return known_dom
+      return dom_u
+
   u_low = str(url or "").lower()
   s_clean = clean_display_text(source_name or "").lower()
+  # التحقق مما إذا كان اسم المصدر يحتوي بالفعل على دومين بين قوسين مثل: هسبريس (hespress.com)
+  m_dom_in_src = re.search(r"\b([a-z0-9-]+\.(?:com|ma|info|net|org|tv|co\.uk|me))\b", s_clean)
+  if m_dom_in_src:
+    cand_d = m_dom_in_src.group(1)
+    if cand_d not in REDIRECT_WRAPPER_DOMAINS:
+      return cand_d
+
   for site in MOROCCAN_PRESS_SITES:
     dom = site["domain"].lower()
     name_low = site["name"].lower()
     if dom in u_low or (name_low and name_low in s_clean):
       return dom
-  # فحص إضافي للأسماء الشائعة
-  alias_map = {
-      "هسبريس": "hespress.com",
-      "hespress": "hespress.com",
-      "العمق": "al3omk.com",
-      "اليوم 24": "alyaoum24.com",
-      "alyaoum24": "alyaoum24.com",
-      "مدار 21": "madar21.com",
-      "الأيام 24": "alayam24.com",
-      "أخبارنا": "akhbarona.com",
-      "كش 24": "kech24.com",
-      "أكادير 24": "agadir24.info",
-      "صباح أكادير": "sabahagadir.com",
-      "كود": "goud.ma",
-      "الصباح": "assabah.ma",
-      "برلمان": "barlamane.com",
-      "زنقة 20": "rue20.com",
-      "طنجة 24": "tanja24.com",
-      "ذا فويس": "thevoice.ma",
-  }
-  for k_alias, dom_val in alias_map.items():
+
+  for k_alias, dom_val in MOROCCAN_NAME_TO_DOMAIN_ALIAS.items():
     if k_alias in s_clean or k_alias in u_low:
       return dom_val
+  return ""
+
+
+def format_precise_source_with_domain(
+    source_name: str,
+    url: str = "",
+    platform: str = "الصحف",
+    source_url_hint: str = "",
+    title_hint: str = "",
+) -> str:
+  """تحديد وتنسيق اسم المصدر بدقة عالية بحيث يعرض دائماً اسم الموقع مقترناً بالدومين الخاص به، مثل: هسبريس (hespress.com)."""
+  raw_s = clean_display_text(source_name or "")
+  is_target = raw_s.startswith("🎯")
+  s_core = raw_s.lstrip("🎯").strip()
+
+  # إزالة التكرار القديم إن وجد في اسم المصدر (مثل قوسين مكررين)
+  s_core = re.sub(r"\s*\([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^)]*)?\)\s*$", "", s_core).strip()
+
+  # إذا كان اسم المصدر فارغاً أو عاماً، نحاول استنتاجه من آخر العنوان قبل التنظيف
+  if (not s_core or s_core in ("الصحف", "صحافة", "الأخبار", "Google News")) and title_hint:
+    for sep in (" - ", " | ", " – ", " — "):
+      if sep in title_hint:
+        tail_s = title_hint.rsplit(sep, 1)[-1].strip()
+        if 2 <= len(tail_s) <= 32:
+          s_core = tail_s
+          break
+
+  clean_u = clean_social_post_url(url)
+  u_dom = _extract_clean_domain(clean_u)
+
+  # 1) معالجة منصات التواصل الاجتماعي (فيسبوك، يوتيوب، إكس، أخرى) مع إظهار اسم الصفحة/القناة والدومين
+  if platform == "فيسبوك" or u_dom in ("facebook.com", "fb.com", "fb.watch"):
+    page_lbl = s_core
+    if not page_lbl or page_lbl in ("فيسبوك", "الصحف"):
+      page_lbl = _extract_fb_page_label_from_entry(clean_u, title_hint) if "clean_u" in locals() else "فيسبوك"
+    if not page_lbl.startswith("فيسبوك") and not page_lbl.startswith("صفحة"):
+      page_lbl = f"فيسبوك • {page_lbl}"
+    fb_dom_label = "facebook.com"
+    try:
+      p_fb = urllib.parse.urlparse(clean_u)
+      parts_fb = [urllib.parse.unquote(x).strip() for x in p_fb.path.strip("/").split("/") if x.strip()]
+      if parts_fb and parts_fb[0].lower() not in GENERIC_SOCIAL_SEGMENTS and not parts_fb[0].isdigit():
+        fb_dom_label = f"facebook.com/{parts_fb[0]}"
+    except Exception:
+      pass
+    res = f"{page_lbl} ({fb_dom_label})"
+    return f"🎯 {res}" if is_target else res
+
+  if platform == "يوتيوب" or u_dom in ("youtube.com", "youtu.be"):
+    ch_lbl = s_core or "يوتيوب"
+    if ch_lbl.lower() == "youtube":
+      ch_lbl = "يوتيوب"
+    res = f"{ch_lbl} (youtube.com)"
+    return f"🎯 {res}" if is_target else res
+
+  if platform == "إكس" or u_dom in ("x.com", "twitter.com"):
+    x_lbl = s_core or "منصة إكس"
+    x_dom_label = "x.com"
+    m_xh = re.search(r"(?:x\.com|twitter\.com)/([A-Za-z0-9_]{2,25})/status/", clean_u, re.IGNORECASE)
+    if m_xh:
+      handle_x = m_xh.group(1)
+      x_dom_label = f"x.com/{handle_x}"
+      if x_lbl in ("إكس", "منصة إكس", "X", "Twitter"):
+        x_lbl = f"إكس • @{handle_x}"
+    res = f"{x_lbl} ({x_dom_label})"
+    return f"🎯 {res}" if is_target else res
+
+  if platform == "أخرى" or u_dom in ("tiktok.com", "instagram.com", "linkedin.com"):
+    soc_dom = u_dom or "social"
+    soc_lbl = s_core or "منصة رقمية"
+    res = f"{soc_lbl} ({soc_dom})" if soc_dom != "social" else soc_lbl
+    return f"🎯 {res}" if is_target else res
+
+  # 2) معالجة الصحف والمواقع الإخبارية: تحديد الدومين واسم الموقع بدقة
+  press_dom = _find_press_domain_by_source_or_url(s_core, clean_u, source_url_hint=source_url_hint)
+  if not press_dom and title_hint:
+    press_dom = _find_press_domain_by_source_or_url(title_hint, clean_u, source_url_hint=source_url_hint)
+
+  canonical_site_name = MOROCCAN_SITE_DOMAIN_MAP.get(press_dom, "")
+
+  # تنظيف اسم المصدر إذا كان يحتوي على الدومين نفسه فقط
+  if s_core.lower() == press_dom.lower() or s_core in ("الصحف", "صحافة", "موقع إخباري", ""):
+    display_name = canonical_site_name or press_dom or "صحافة وطنية"
+  else:
+    display_name = canonical_site_name if (canonical_site_name and s_core.lower() in press_dom.lower()) else s_core
+
+  if press_dom:
+    if press_dom.lower() not in display_name.lower():
+      res = f"{display_name} ({press_dom})"
+    else:
+      # إذا كان اسم المصدر هو الدومين فقط ولدينا اسم عربي معروف، نجمعهما معاً
+      if canonical_site_name and canonical_site_name != display_name:
+        res = f"{canonical_site_name} ({press_dom})"
+      else:
+        res = display_name
+  else:
+    res = display_name or "الصحف المغربية"
+
+  return f"🎯 {res}" if is_target else res
+
+
+def clean_and_validate_image_url(
+    img_url: str, article_url: str = "", platform: str = "الصحف"
+) -> str:
+  """التحقق من صحة رابط الصورة المصغرة واستبعاد شعارات Google News والأيقونات المكسورة أو روابط التتبع."""
+  u_art = clean_social_post_url(article_url)
+  m_yt = re.search(
+      r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})",
+      u_art,
+  )
+  if m_yt:
+    return f"https://i.ytimg.com/vi/{m_yt.group(1)}/hqdefault.jpg"
+
+  if not img_url:
+    return ""
+  img = html.unescape(str(img_url).strip())
+  if img.startswith("data:image/"):
+    return img
+  if img.startswith("//"):
+    img = "https:" + img
+  elif img.startswith("/") and u_art.startswith("http"):
+    img = urllib.parse.urljoin(u_art, img)
+
+  if not img.startswith("http"):
+    return ""
+
+  img_low = img.lower()
+  bad_img_Tokens = [
+      "1x1",
+      "pixel",
+      "tracker",
+      "blank.gif",
+      "spacer.gif",
+      "favicon",
+      "sprite",
+      "default-avatar",
+      "gravatar.com",
+      "googleusercontent.com/j6_cofbogxhri9im864nl_ligxvsqp2aupskei7z0cnnfdvgumwuy20nuuhkreqyrpy4beeibuc",
+      "lh3.googleusercontent.com/j6_co",
+      "news.google.com",
+      "gstatic.com/images/branding",
+      "google.com/images/branding",
+      "/plugins/close_popup",
+      " safe_image.php?d=aq",
+      "p50x50",
+      "s50x50",
+      "p32x32",
+      "s32x32",
+  ]
+  if any(b_tok in img_low for b_tok in bad_img_Tokens):
+    return ""
+  if img_low.endswith(".svg") and any(w in img_low for w in ("logo", "icon", "header", "brand")):
+    return ""
+  return img
+
+
+def _extract_wp_media_from_post_json(p_obj: dict, article_url: str = "") -> str:
+  """استخراج الصورة البارزة عالية الدقة من كائن JSON لمقال WordPress بكافة الطرق الممكنة."""
+  if not isinstance(p_obj, dict):
+    return ""
+  # 1) Jetpack featured media
+  cand = str(p_obj.get("jetpack_featured_media_url") or "").strip()
+  cand = clean_and_validate_image_url(cand, article_url)
+  if cand:
+    return cand
+
+  # 2) Yoast SEO og_image
+  og_imgs = p_obj.get("yoast_head_json", {}).get("og_image", [])
+  if isinstance(og_imgs, list) and og_imgs and isinstance(og_imgs[0], dict):
+    cand = clean_and_validate_image_url(str(og_imgs[0].get("url") or "").strip(), article_url)
+    if cand:
+      return cand
+
+  # 3) WP REST API _embedded['wp:featuredmedia']
+  embedded = p_obj.get("_embedded", {})
+  if isinstance(embedded, dict):
+    feat_list = embedded.get("wp:featuredmedia", [])
+    if isinstance(feat_list, list) and feat_list and isinstance(feat_list[0], dict):
+      fm = feat_list[0]
+      cand = clean_and_validate_image_url(str(fm.get("source_url") or "").strip(), article_url)
+      if cand:
+        return cand
+      sizes = fm.get("media_details", {}).get("sizes", {})
+      if isinstance(sizes, dict):
+        for sz_k in ("large", "medium_large", "full", "medium"):
+          if isinstance(sizes.get(sz_k), dict) and sizes[sz_k].get("source_url"):
+            cand = clean_and_validate_image_url(str(sizes[sz_k]["source_url"]).strip(), article_url)
+            if cand:
+              return cand
+
+  # 4) الصورة الأولى داخل متن المقال rendered HTML
+  rendered_html = p_obj.get("content", {}).get("rendered", "")
+  if rendered_html:
+    cand = extract_thumbnail_for_item(article_url, rendered_html, "الصحف")
+    if cand:
+      return cand
   return ""
 
 
@@ -1335,24 +1672,20 @@ def _fetch_wordpress_verbatim_article(domain: str, title: str, article_url: str 
   # أ) إذا كان لدينا رابط مباشر للمقال يحتوي على معرف رقمي (مثل hespress.com/...-123456.html أو al3omk.com/123456.html)، نفحص WP REST API بالمعرف أولاً
   if article_url and "news.google.com" not in article_url:
     parsed_a = urllib.parse.urlparse(article_url)
-    dom_a = parsed_a.netloc.lower().replace("www.", "")
+    dom_a = _extract_clean_domain(article_url) or domain
     m_post_id = re.search(r"(?:-|/|\?p=)(\d{5,8})(?:\.html|/|&|$)", article_url)
     if m_post_id and dom_a:
       pid = m_post_id.group(1)
-      wp_single_u = f"https://{dom_a}/wp-json/wp/v2/posts/{pid}"
+      wp_single_u = f"https://{dom_a}/wp-json/wp/v2/posts/{pid}?_embed=1"
       try:
         r_wp = requests.get(wp_single_u, headers=DEFAULT_HEADERS, timeout=4.5)
         if r_wp.status_code == 200:
           p_json = r_wp.json()
           if isinstance(p_json, dict) and p_json.get("content", {}).get("rendered"):
             full_txt = clean_full_article_text(p_json["content"]["rendered"])
-            img_u = str(p_json.get("jetpack_featured_media_url") or "").strip()
-            if not img_u:
-              og_imgs = p_json.get("yoast_head_json", {}).get("og_image", [])
-              if isinstance(og_imgs, list) and og_imgs and isinstance(og_imgs[0], dict):
-                img_u = str(og_imgs[0].get("url") or "").strip()
             link_u = str(p_json.get("link") or article_url).strip()
-            if len(full_txt) >= 180:
+            img_u = _extract_wp_media_from_post_json(p_json, link_u)
+            if len(full_txt) >= 120 or img_u:
               return img_u, full_txt, link_u
       except Exception:
         pass
@@ -1361,39 +1694,44 @@ def _fetch_wordpress_verbatim_article(domain: str, title: str, article_url: str 
     return "", "", ""
 
   # تنظيف العنوان من اسم الجريدة في آخره للبحث الدقيق
-  clean_t = re.sub(r"\s*[-|–—]\s*[^-|–—]{2,25}$", "", clean_display_text(title)).strip()
-  search_phrase = clean_t[:70].strip()
-  if len(search_phrase) < 8:
+  clean_t = strip_source_suffix_from_title(title)
+  search_phrase = clean_t[:75].strip()
+  if len(search_phrase) < 6:
     return "", "", ""
 
-  # ب) البحث في واجهة WordPress REST API الرسمية للجريدة (/wp-json/wp/v2/posts?search=...)
-  wp_api_u = f"https://{domain}/wp-json/wp/v2/posts?search={urllib.parse.quote(search_phrase)}&per_page=3"
+  norm_target_t = normalize_arabic_for_dedup(clean_t)
+  target_words = [w for w in norm_target_t.split() if len(w) >= 3]
+
+  def _title_matches_candidate(cand_title: str) -> bool:
+    if not target_words:
+      return True
+    norm_cand_t = normalize_arabic_for_dedup(cand_title)
+    if not norm_cand_t:
+      return False
+    if norm_target_t[:30] in norm_cand_t or norm_cand_t[:30] in norm_target_t:
+      return True
+    overlap = sum(1 for w in target_words[:8] if w in norm_cand_t or w.lstrip("ال") in norm_cand_t)
+    min_req = 1 if len(target_words) <= 3 else 2
+    return overlap >= min_req
+
+  # ب) البحث في واجهة WordPress REST API الرسمية للجريدة (/wp-json/wp/v2/posts?search=...&_embed=1)
+  wp_api_u = f"https://{domain}/wp-json/wp/v2/posts?search={urllib.parse.quote(search_phrase)}&per_page=5&_embed=1"
   try:
     r_api = requests.get(wp_api_u, headers=DEFAULT_HEADERS, timeout=5.0)
     if r_api.status_code == 200:
       posts_list = r_api.json()
-      if isinstance(posts_list, list):
-        norm_target_t = normalize_arabic_for_dedup(clean_t)
-        target_words = [w for w in norm_target_t.split() if len(w) >= 3]
+      if isinstance(posts_list, list) and posts_list:
         for p_obj in posts_list:
           if not isinstance(p_obj, dict):
             continue
           cand_t = clean_display_text(p_obj.get("title", {}).get("rendered", ""))
-          norm_cand_t = normalize_arabic_for_dedup(cand_t)
-          # التحقق من تطابق العنوان مع المقال المطلوب
-          if target_words:
-            overlap = sum(1 for w in target_words[:6] if w in norm_cand_t)
-            if overlap < max(1, min(3, len(target_words) // 2)):
-              continue
-          rendered_html = p_obj.get("content", {}).get("rendered", "")
+          if not _title_matches_candidate(cand_t):
+            continue
+          rendered_html = p_obj.get("content", {}).get("rendered", "") or p_obj.get("excerpt", {}).get("rendered", "")
           full_txt = clean_full_article_text(rendered_html)
-          if len(full_txt) >= 150:
-            img_u = str(p_obj.get("jetpack_featured_media_url") or "").strip()
-            if not img_u:
-              og_imgs = p_obj.get("yoast_head_json", {}).get("og_image", [])
-              if isinstance(og_imgs, list) and og_imgs and isinstance(og_imgs[0], dict):
-                img_u = str(og_imgs[0].get("url") or "").strip()
-            link_u = str(p_obj.get("link") or "").strip()
+          link_u = str(p_obj.get("link") or "").strip()
+          img_u = _extract_wp_media_from_post_json(p_obj, link_u)
+          if len(full_txt) >= 100 or link_u:
             return img_u, full_txt, link_u
   except Exception:
     pass
@@ -1405,20 +1743,23 @@ def _fetch_wordpress_verbatim_article(domain: str, title: str, article_url: str 
     if r_rss.status_code == 200 and b"<item>" in r_rss.content:
       root = ET.fromstring(r_rss.content)
       ns_c = {"content": "http://purl.org/rss/1.0/modules/content/", "media": "http://search.yahoo.com/mrss/"}
-      norm_target_t = normalize_arabic_for_dedup(clean_t)
-      target_words = [w for w in norm_target_t.split() if len(w) >= 3]
-      for it_el in root.findall(".//item")[:3]:
+      for it_el in root.findall(".//item")[:4]:
         cand_t = clean_display_text(it_el.findtext("title") or "")
-        norm_cand_t = normalize_arabic_for_dedup(cand_t)
-        if target_words:
-          overlap = sum(1 for w in target_words[:6] if w in norm_cand_t)
-          if overlap < max(1, min(3, len(target_words) // 2)):
-            continue
+        if not _title_matches_candidate(cand_t):
+          continue
         raw_enc = it_el.findtext("content:encoded", default="", namespaces=ns_c) or it_el.findtext("description") or ""
         full_txt = clean_full_article_text(raw_enc)
         link_u = clean_social_post_url(it_el.findtext("link") or "")
-        img_u = extract_thumbnail_for_item(link_u, raw_enc, "الصحف")
-        if len(full_txt) >= 150:
+        img_u = ""
+        for m_tag in ["media:content", "media:thumbnail", "enclosure"]:
+          el_m = it_el.find(m_tag, ns_c) if ":" in m_tag else it_el.find(m_tag)
+          if el_m is not None and el_m.attrib.get("url"):
+            img_u = clean_and_validate_image_url(el_m.attrib["url"].strip(), link_u)
+            if img_u:
+              break
+        if not img_u:
+          img_u = extract_thumbnail_for_item(link_u, raw_enc, "الصحف")
+        if len(full_txt) >= 100 or link_u:
           return img_u, full_txt, link_u
   except Exception:
     pass
@@ -1426,8 +1767,10 @@ def _fetch_wordpress_verbatim_article(domain: str, title: str, article_url: str 
   return "", "", ""
 
 
-def resolve_google_news_url(url: str, title_hint: str = "", source_hint: str = "") -> str:
-  """فك تشفير روابط Google News الحديثة (CBMi...) عبر الكوكيز التجاوزية + batchexecute + البحث المباشر بالعنوان عند الحاجة."""
+def resolve_google_news_url(
+    url: str, title_hint: str = "", source_hint: str = "", domain_hint: str = ""
+) -> str:
+  """فك تشفير روابط Google News الحديثة (CBMi...) عبر الكوكيز التجاوزية + batchexecute + واجهة WordPress + محركات البحث المباشرة."""
   u = strip_internal_url_fragments(url)
   if "news.google.com" not in u:
     return u
@@ -1493,45 +1836,54 @@ def resolve_google_news_url(url: str, title_hint: str = "", source_hint: str = "
             if rb.status_code == 200 and rb.text:
               unesc = rb.text.replace("\\/", "/").replace("\/", "/").replace("\u003d", "=").replace("\u0026", "&")
               m_res = re.search(
-                  r'garturlres\*",\*"(https?://[^"\]+)', unesc
+                  r'garturlres\*",\*"(https?://[^"\\]+)', unesc
               )
               if m_res and "google.com" not in m_res.group(1):
                 return m_res.group(1)
       except Exception:
         pass
 
-  # إذا لم ينفك رابط Google News، نستخدم عنوان الخبر ومصدره لإيجاد الرابط الأصلي المباشر
+  # إذا لم ينفك رابط Google News، نستخدم الدومين وعنوان الخبر لإيجاد الرابط الأصلي المباشر
   if title_hint:
-    dom_hint = _find_press_domain_by_source_or_url(source_hint, u)
+    dom_hint = domain_hint or _find_press_domain_by_source_or_url(source_hint, u)
     if dom_hint:
       _, _, wp_link = _fetch_wordpress_verbatim_article(dom_hint, title_hint)
       if wp_link and "news.google.com" not in wp_link:
         return wp_link
+    _, _, b_link = fetch_bing_news_enrichment(title_hint, source_hint)
+    if b_link and "news.google.com" not in b_link and b_link.startswith("http"):
+      return b_link
 
   return u
 
 
-def scrape_article_page_content_and_image(url: str, title_hint: str = "", source_hint: str = ""):
+def scrape_article_page_content_and_image(
+    url: str, title_hint: str = "", source_hint: str = "", domain_hint: str = ""
+):
   """جلب الصورة الأصلية والنص الأصلي الكامل للموضوع حرفياً (فقرة بفقرة كما ورد في المصدر الأصلي دون اختصار)."""
-  real_url = resolve_google_news_url(url, title_hint=title_hint, source_hint=source_hint)
+  real_url = resolve_google_news_url(
+      url, title_hint=title_hint, source_hint=source_hint, domain_hint=domain_hint
+  )
 
-  # 1) إذا كان الخبر من جريدة مغربية تدعم WordPress API، نحاول جلب النص الأصلي الكامل والرابط المباشر منها
-  press_dom = _find_press_domain_by_source_or_url(source_hint, real_url)
+  # 1) إذا كان الخبر من جريدة مغربية تدعم WordPress API، نحاول جلب النص الأصلي الكامل والصورة والرابط المباشر منها
+  press_dom = domain_hint or _find_press_domain_by_source_or_url(source_hint, real_url)
   if press_dom and ("news.google.com" in real_url or title_hint):
     wp_img, wp_full_text, wp_link = _fetch_wordpress_verbatim_article(
         press_dom, title_hint, "" if "news.google.com" in real_url else real_url
     )
     if wp_link and "news.google.com" in real_url:
       real_url = wp_link
-    if len(wp_full_text) >= 260 and wp_img:
+    wp_img = clean_and_validate_image_url(wp_img, real_url)
+    if len(wp_full_text) >= 240 and wp_img:
       return wp_img, wp_full_text, real_url
 
   if not real_url or "news.google.com" in real_url:
-    # محاولة أخيرة عبر محركات البحث للعثور على الرابط الأصلي للمقال من عنوانه
-    if title_hint and len(title_hint) >= 15:
-      clean_t_q = re.sub(r"\s*[-|–—]\s*[^-|–—]{2,25}$", "", clean_display_text(title_hint)).strip()
-      q_find = f'"{clean_t_q[:65]}" {source_hint}'.strip()
-      for sr in _multi_engine_web_search(q_find, platform="الصحف", max_results=4):
+    # محاولة إضافية عبر محركات البحث للعثور على الرابط الأصلي للمقال من عنوانه ونطاقه
+    if title_hint and len(title_hint) >= 12:
+      clean_t_q = strip_source_suffix_from_title(title_hint)
+      site_filter = f"site:{press_dom} " if press_dom else ""
+      q_find = f'{site_filter}"{clean_t_q[:65]}"'.strip()
+      for sr in _multi_engine_web_search(q_find, platform="الصحف", max_results=5):
         cand_u = clean_social_post_url(sr.get("url", ""))
         if cand_u and "news.google.com" not in cand_u and "facebook.com" not in cand_u:
           real_url = cand_u
@@ -1556,7 +1908,7 @@ def scrape_article_page_content_and_image(url: str, title_hint: str = "", source
       )
       if ryt.status_code == 200 and ryt.text:
         m_sd = re.search(
-            r'"shortDescription"\s*:\s*"((?:[^"\]|\.){15,8000})"',
+            r'"shortDescription"\s*:\s*"((?:[^"\\]|\\.){15,8000})"',
             ryt.text,
         )
         if m_sd:
@@ -1576,7 +1928,7 @@ def scrape_article_page_content_and_image(url: str, title_hint: str = "", source
   if "facebook.com" in real_url.lower() or "fb.watch" in real_url.lower():
     emb_body, emb_img, _ = _fetch_fb_embed_plugin_content(real_url)
     if emb_body and len(emb_body) >= 20:
-      return emb_img, emb_body, real_url
+      return clean_and_validate_image_url(emb_img, real_url, "فيسبوك"), emb_body, real_url
 
   img_url = ""
   body_text = ""
@@ -1598,18 +1950,14 @@ def scrape_article_page_content_and_image(url: str, title_hint: str = "", source
         r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:image|og:image:secure_url|twitter:image|twitter:image:src)["\']',
         r'<link[^>]+rel=["\']image_src["\'][^>]+href=["\']([^"\']+)["\']',
     ]:
-      m_img = re.search(meta_pattern, html_doc[:45000], re.IGNORECASE)
+      m_img = re.search(meta_pattern, html_doc[:55000], re.IGNORECASE)
       if m_img:
-        candidate_img = html.unescape(m_img.group(1).strip())
-        if candidate_img.startswith("//"):
-          candidate_img = "https:" + candidate_img
-        elif candidate_img.startswith("/"):
-          candidate_img = urllib.parse.urljoin(real_url, candidate_img)
-        if candidate_img.startswith("http"):
+        candidate_img = clean_and_validate_image_url(m_img.group(1), real_url)
+        if candidate_img:
           img_url = candidate_img
           break
 
-    # 1) استخراج النص الأصلي الكامل من JSON-LD (articleBody) إن وجد
+    # 1) استخراج النص الأصلي الكامل وصورة JSON-LD إن وجدا
     ld_article_body = ""
     for m_ld in re.finditer(
         r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
@@ -1617,7 +1965,13 @@ def scrape_article_page_content_and_image(url: str, title_hint: str = "", source
         re.DOTALL | re.IGNORECASE,
     ):
       ld_raw = m_ld.group(1).strip()
-      m_ab = re.search(r'"articleBody"\s*:\s*"((?:[^"\]|\.){80,})"', ld_raw)
+      if not img_url:
+        m_ld_img = re.search(r'"image"\s*:\s*(?:\{[^{}]*"url"\s*:\s*"([^"]+)"|"([^"]+)")', ld_raw)
+        if m_ld_img:
+          cand_ldi = clean_and_validate_image_url(decode_js_escaped_text(m_ld_img.group(1) or m_ld_img.group(2) or ""), real_url)
+          if cand_ldi:
+            img_url = cand_ldi
+      m_ab = re.search(r'"articleBody"\s*:\s*"((?:[^"\\]|\\.){80,})"', ld_raw)
       if m_ab:
         cand_ab = clean_full_article_text(decode_js_escaped_text(m_ab.group(1)))
         if len(cand_ab) > len(ld_article_body):
@@ -1628,23 +1982,21 @@ def scrape_article_page_content_and_image(url: str, title_hint: str = "", source
       soup = BeautifulSoup(html_doc, "html.parser")
       if not img_url:
         for img_tag in soup.select(
-            "article img, .post-content img, .entry-content img, .single-post img, main img"
+            "article img, .post-content img, .entry-content img, .single-post img, .featured-image img, .post-thumbnail img, main img"
         ):
           src_cand = (
               img_tag.get("data-src")
               or img_tag.get("data-lazy-src")
+              or img_tag.get("data-original")
               or img_tag.get("src")
               or ""
           ).strip()
+          if not src_cand and img_tag.get("srcset"):
+            src_cand = img_tag.get("srcset").split(",")[0].strip().split(" ")[0]
           if src_cand and not src_cand.startswith("data:"):
-            if src_cand.startswith("//"):
-              src_cand = "https:" + src_cand
-            elif src_cand.startswith("/"):
-              src_cand = urllib.parse.urljoin(real_url, src_cand)
-            if src_cand.startswith("http") and not any(
-                x in src_cand.lower() for x in ["avatar", "logo", "icon", "1x1"]
-            ):
-              img_url = src_cand
+            valid_c = clean_and_validate_image_url(src_cand, real_url)
+            if valid_c and not any(x in valid_c.lower() for x in ["avatar", "logo", "icon", "author"]):
+              img_url = valid_c
               break
 
       for tag in soup.select(
@@ -1668,7 +2020,7 @@ def scrape_article_page_content_and_image(url: str, title_hint: str = "", source
         p_txt = clean_display_text(p_el.get_text(" ", strip=True))
         if (
             len(p_txt) >= 20
-            and len(re.findall(r"[؀-ۿ]", p_txt)) >= 5
+            and len(re.findall(r"[\u0600-\u06FF]", p_txt)) >= 5
             and not any(
                 noise in p_txt
                 for noise in [
@@ -1691,7 +2043,7 @@ def scrape_article_page_content_and_image(url: str, title_hint: str = "", source
         p_txt = clean_display_text(raw_p)
         if (
             len(p_txt) >= 20
-            and len(re.findall(r"[؀-ۿ]", p_txt)) >= 5
+            and len(re.findall(r"[\u0600-\u06FF]", p_txt)) >= 5
         ):
           if p_txt not in paragraphs:
             paragraphs.append(p_txt)
@@ -1704,26 +2056,26 @@ def scrape_article_page_content_and_image(url: str, title_hint: str = "", source
     else:
       body_text = dom_body[:15000]
 
-    # إذا كانت الصفحة محمية أو أعادت نصاً قصيراً جداً، نستعين بواجهة WordPress الخاصة بالجريدة
-    if len(body_text) < 220 and press_dom and title_hint:
+    # إذا كانت الصفحة محمية أو أعادت نصاً قصيراً جداً أو بدون صورة، نستعين بواجهة WordPress الخاصة بالجريدة
+    if (len(body_text) < 220 or not img_url) and press_dom and title_hint:
       wp_img2, wp_body2, wp_link2 = _fetch_wordpress_verbatim_article(press_dom, title_hint, real_url)
       if len(wp_body2) > len(body_text):
         body_text = wp_body2
       if wp_img2 and not img_url:
-        img_url = wp_img2
+        img_url = clean_and_validate_image_url(wp_img2, real_url)
       if wp_link2 and "news.google.com" in real_url:
         real_url = wp_link2
   except Exception:
     pass
 
-  return img_url, body_text, real_url
+  return clean_and_validate_image_url(img_url, real_url), body_text, real_url
 
 
 def fetch_bing_news_enrichment(title: str, source_name: str = ""):
-  q_clean = clean_display_text(title)
+  q_clean = strip_source_suffix_from_title(title)
   if not q_clean:
     return "", "", ""
-  src_clean = re.sub(r"🎯", "", clean_display_text(source_name)).strip()
+  src_clean = re.sub(r"\(.*?\)", "", re.sub(r"🎯", "", clean_display_text(source_name))).strip()
   search_q = f"{q_clean[:75]} {src_clean}".strip()
   bing_url = (
       f"https://www.bing.com/news/search?q={urllib.parse.quote(search_q)}"
@@ -1747,15 +2099,15 @@ def fetch_bing_news_enrichment(title: str, source_name: str = ""):
             r"<link>(.*?)</link>", it_x, re.DOTALL | re.IGNORECASE
         )
 
-        b_img = html.unescape(img_m.group(1).strip()) if img_m else ""
-        b_desc = clean_display_text(desc_m.group(1)) if desc_m else ""
         b_link = html.unescape(link_m.group(1).strip()) if link_m else ""
         if "url=" in b_link:
           qs = urllib.parse.parse_qs(urllib.parse.urlparse(b_link).query)
-          if "url" in qs:
+          if "url" in qs and qs["url"]:
             b_link = qs["url"][0]
+        b_img = clean_and_validate_image_url(html.unescape(img_m.group(1).strip()) if img_m else "", b_link)
+        b_desc = clean_display_text(desc_m.group(1)) if desc_m else ""
 
-        if b_img or len(b_desc) > 45:
+        if b_img or len(b_desc) > 45 or (b_link and "bing.com" not in b_link):
           return b_img, b_desc, b_link
   except Exception:
     pass
@@ -1766,10 +2118,15 @@ def enrich_item_content_and_image(item: dict) -> dict:
   url = (item.get("url") or "").strip()
   title = clean_display_text(item.get("title") or "")
   plat = item.get("platform", "الصحف")
-  src = item.get("source_name", plat)
+  src_dom_hint = (item.get("source_domain_hint") or "").strip()
+  src = format_precise_source_with_domain(
+      item.get("source_name", plat), url, plat, source_url_hint=src_dom_hint, title_hint=title
+  )
+  item["source_name"] = src
+
   raw_snip_full = clean_full_article_text(item.get("raw_snippet") or "")
   raw_snip = clean_display_text(raw_snip_full)
-  img_url = (item.get("image_url") or "").strip()
+  img_url = clean_and_validate_image_url((item.get("image_url") or "").strip(), url, plat)
 
   if not img_url:
     img_url = extract_thumbnail_for_item(url, "", plat)
@@ -1785,10 +2142,10 @@ def enrich_item_content_and_image(item: dict) -> dict:
 
   if need_img or need_body:
     page_img, page_body, resolved_u = scrape_article_page_content_and_image(
-        url, title_hint=title, source_hint=src
+        url, title_hint=title, source_hint=src, domain_hint=src_dom_hint
     )
     if page_img and not img_url:
-      img_url = page_img
+      img_url = clean_and_validate_image_url(page_img, resolved_u or url, plat)
     if page_body and len(page_body) > len(raw_snip_full):
       raw_snip_full = page_body
       raw_snip = clean_display_text(page_body)
@@ -1799,28 +2156,37 @@ def enrich_item_content_and_image(item: dict) -> dict:
     ):
       m_tag = re.search(r"(#(?:plat|v4target|v3target|v2target|target)=[^\s#]*)$", url)
       item["url"] = f"{resolved_u}{m_tag.group(1) if m_tag else ''}"
+      url = item["url"]
 
-  # إذا بقي النص قصيراً في مقال صحفي، نفحص Bing News للحصول على رابط المقال المباشر ثم نسحب النص الكامل منه
+  # إذا بقي النص قصيراً أو الصورة مفقودة أو الرابط غير مفكوك في مقال صحفي، نفحص Bing News للحصول على رابط المقال المباشر والصورة
   if (
       plat == "الصحف"
       and not int(item.get("is_custom_target", 0))
-      and (not img_url or len(raw_snip_full) < 350 or raw_snip.lower() == title.lower())
+      and (not img_url or "news.google.com" in url or len(raw_snip_full) < 350 or raw_snip.lower() == title.lower())
   ):
     b_img, b_desc, b_link = fetch_bing_news_enrichment(title, src)
     if b_img and not img_url:
-      img_url = b_img
+      img_url = clean_and_validate_image_url(b_img, b_link or url, plat)
+    if b_link and "news.google.com" in url and "bing.com" not in b_link:
+      m_tag = re.search(r"(#(?:plat|v4target|v3target|v2target|target)=[^\s#]*)$", url)
+      item["url"] = f"{b_link}{m_tag.group(1) if m_tag else ''}"
+      url = item["url"]
     if b_link and len(raw_snip_full) < 350:
       p_img2, p_body2, _ = scrape_article_page_content_and_image(
-          b_link, title_hint=title, source_hint=src
+          b_link, title_hint=title, source_hint=src, domain_hint=src_dom_hint
       )
       if p_img2 and not img_url:
-        img_url = p_img2
+        img_url = clean_and_validate_image_url(p_img2, b_link, plat)
       if p_body2 and len(p_body2) > len(raw_snip_full):
         raw_snip_full = p_body2
     if len(raw_snip_full) < len(b_desc) and b_desc.lower() != title.lower():
       raw_snip_full = b_desc
 
-  item["image_url"] = img_url
+  # تحديث اسم المصدر مع الدومين النهائي بعد فك الرابط
+  item["source_name"] = format_precise_source_with_domain(
+      item.get("source_name", src), item.get("url", url), plat, source_url_hint=src_dom_hint, title_hint=title
+  )
+  item["image_url"] = clean_and_validate_image_url(img_url, item.get("url", url), plat)
   final_full_text = raw_snip_full if len(raw_snip_full) >= len(raw_snip) else raw_snip
   item["raw_snippet"] = final_full_text[:15000]
   return item
@@ -1875,7 +2241,7 @@ def get_fallback_thumbnail_data_uri(platform: str, source_name: str = "") -> str
   bg1, accent, en_lbl, ar_lbl = themes.get(
       platform, ("#0f172a", "#38bdf8", "AL-MARSAD AL-QADAI", "⚖️ المرصد القضائي")
   )
-  src_short = html.escape(clean_display_text(source_name or platform)[:18])
+  src_short = html.escape(clean_display_text(source_name or platform)[:26])
   svg = (
       f'<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200" viewBox="0 0 320 200">'
       f"<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
@@ -1887,7 +2253,7 @@ def get_fallback_thumbnail_data_uri(platform: str, source_name: str = "") -> str
       f"<rect x='16' y='16' width='288' height='168' rx='10' fill='none' stroke='{accent}' stroke-opacity='0.35' stroke-width='1.5'/>"
       f"<text x='160' y='78' text-anchor='middle' fill='{accent}' font-family='Cairo, sans-serif' font-size='15' font-weight='800'>{en_lbl}</text>"
       f"<text x='160' y='115' text-anchor='middle' fill='#f8fafc' font-family='Cairo, sans-serif' font-size='20' font-weight='900'>{ar_lbl}</text>"
-      f"<text x='160' y='148' text-anchor='middle' fill='#cbd5e1' font-family='Cairo, sans-serif' font-size='14' font-weight='700'>{src_short}</text>"
+      f"<text x='160' y='148' text-anchor='middle' fill='#cbd5e1' font-family='Cairo, sans-serif' font-size='13' font-weight='700'>{src_short}</text>"
       f"</svg>"
   )
   b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
@@ -1906,23 +2272,13 @@ def extract_thumbnail_for_item(
     return f"https://i.ytimg.com/vi/{m_yt.group(1)}/hqdefault.jpg"
 
   if raw_html_desc:
-    m_img = re.search(
-        r'<img[^>]+src=["\'](https?://[^"\'>\s]+)["\']',
+    for m_img in re.finditer(
+        r'<img[^>]+(?:data-src|data-lazy-src|src)=["\']([^"\'>\s]+)["\']',
         str(raw_html_desc),
         re.IGNORECASE,
-    )
-    if m_img:
-      img_u = html.unescape(m_img.group(1).strip())
-      if not any(
-          skip in img_u.lower()
-          for skip in [
-              "1x1",
-              "pixel",
-              "tracker",
-              "blank.gif",
-              "googleusercontent.com/J6_coFbogxhRI9iM864NL_liGXvsQp2AupsKei7z0cNNfDvGUmWUy20nuUhkREQyrpY4bEeIBuc",
-          ]
-      ):
+    ):
+      img_u = clean_and_validate_image_url(m_img.group(1), u, platform)
+      if img_u:
         return img_u
 
   return ""
@@ -2983,6 +3339,15 @@ def fetch_articles_from_db():
             continue
           if is_tgt and not belongs_to_any_custom_target(d, current_targets):
             continue
+        d["source_name"] = format_precise_source_with_domain(
+            d.get("source_name") or d.get("platform") or "الصحف",
+            u_str,
+            d.get("platform") or "الصحف",
+            title_hint=t_str,
+        )
+        d["image_url"] = clean_and_validate_image_url(
+            d.get("image_url") or "", u_str, d.get("platform") or "الصحف"
+        )
         db_rows.append(d)
       conn.close()
     except Exception:
@@ -3505,7 +3870,8 @@ def parse_rss_xml(
   now_ts = time.time()
 
   for item in root.findall(".//item"):
-    title = clean_html_text(item.findtext("title") or "")
+    raw_title_full = clean_html_text(item.findtext("title") or "")
+    title = raw_title_full
     link = clean_social_post_url((item.findtext("link") or "").strip())
     raw_desc_html = item.findtext("description") or ""
     raw_content_encoded = (
@@ -3520,17 +3886,24 @@ def parse_rss_xml(
         or ""
     )
     source_el = item.find("source")
+    source_url_attr = (
+        (source_el.attrib.get("url") or "").strip()
+        if source_el is not None and hasattr(source_el, "attrib")
+        else ""
+    )
     source_name = (
         clean_html_text(source_el.text)
         if source_el is not None and source_el.text
         else default_source
     )
-    if " - " in title:
-      parts = title.rsplit(" - ", 1)
-      if len(parts[0].strip()) >= 18 and len(parts[1].strip()) < 35:
-        if not source_name:
-          source_name = parts[1].strip()
-        title = parts[0].strip()
+    for sep in (" - ", " | ", " – ", " — "):
+      if sep in title:
+        parts = title.rsplit(sep, 1)
+        if len(parts[0].strip()) >= 16 and 2 <= len(parts[1].strip()) <= 35:
+          if not source_name or source_name == default_platform:
+            source_name = parts[1].strip()
+          title = parts[0].strip()
+          break
 
     if not title or not link:
       continue
@@ -3539,8 +3912,10 @@ def parse_rss_xml(
     for m_tag in ["media:content", "media:thumbnail", "enclosure"]:
       el = item.find(m_tag, ns) if ":" in m_tag else item.find(m_tag)
       if el is not None and el.attrib.get("url"):
-        img_url = el.attrib["url"].strip()
-        break
+        cand_img = clean_and_validate_image_url(el.attrib["url"].strip(), link, default_platform)
+        if cand_img:
+          img_url = cand_img
+          break
     if not img_url:
       for child in item:
         if (
@@ -3548,8 +3923,10 @@ def parse_rss_xml(
             and child.text
             and child.text.strip().startswith("http")
         ):
-          img_url = child.text.strip()
-          break
+          cand_img = clean_and_validate_image_url(child.text.strip(), link, default_platform)
+          if cand_img:
+            img_url = cand_img
+            break
     if not img_url:
       img_url = extract_thumbnail_for_item(
           link, full_raw_html, default_platform
@@ -3561,11 +3938,20 @@ def parse_rss_xml(
     if max_age_sec > 0 and (now_ts - pub_ts) > max_age_sec:
       continue
 
+    precise_source = format_precise_source_with_domain(
+        source_name or default_platform,
+        link,
+        default_platform,
+        source_url_hint=source_url_attr,
+        title_hint=raw_title_full,
+    )
+
     results.append({
         "title": title,
         "url": link,
         "raw_snippet": desc[:15000] if desc else title,
-        "source_name": source_name or default_platform,
+        "source_name": precise_source,
+        "source_domain_hint": _extract_clean_domain(source_url_attr),
         "platform": default_platform,
         "pub_date": pub_str,
         "pub_timestamp": pub_ts,
@@ -3589,7 +3975,7 @@ def parse_rss_xml(
     )
     thumb_el = entry.find("media:group/media:thumbnail", ns)
     img_url = (
-        thumb_el.attrib.get("url", "").strip()
+        clean_and_validate_image_url(thumb_el.attrib.get("url", "").strip(), link, default_platform)
         if thumb_el is not None
         else extract_thumbnail_for_item(link, "", default_platform)
     )
@@ -3602,13 +3988,18 @@ def parse_rss_xml(
     if max_age_sec > 0 and (now_ts - pub_ts) > max_age_sec:
       continue
 
+    precise_author = format_precise_source_with_domain(
+        clean_html_text(author_name or default_source or default_platform),
+        link,
+        default_platform,
+        title_hint=title,
+    )
+
     results.append({
         "title": title,
         "url": link,
         "raw_snippet": clean_full_article_text(media_desc)[:15000] if media_desc else snippet_txt[:15000],
-        "source_name": clean_html_text(
-            author_name or default_source or default_platform
-        ),
+        "source_name": precise_author,
         "platform": default_platform,
         "pub_date": pub_str,
         "pub_timestamp": pub_ts,
@@ -7270,32 +7661,42 @@ def ensure_verbatim_full_text_for_item(item: dict) -> str:
   ):
     return raw_full
 
-  # محاولة جلب النص الأصلي الكامل مباشرة من المصدر الأصلي أو واجهة WordPress للجريدة
+  # محاولة جلب النص الأصلي الكامل والرابط المباشر والصورة مباشرة من المصدر الأصلي أو واجهة WordPress للجريدة
   page_img, page_body, resolved_u = scrape_article_page_content_and_image(
-      url, title_hint=raw_title, source_hint=src
+      url, title_hint=raw_title, source_hint=src, domain_hint=item.get("source_domain_hint", "")
   )
+  updated_any = False
   if page_body and len(page_body) > len(raw_full):
     raw_full = page_body
     item["raw_snippet"] = raw_full[:15000]
-    if page_img and not item.get("image_url"):
-      item["image_url"] = page_img
-    if resolved_u and "news.google.com" not in resolved_u and "news.google.com" in url:
-      m_tag = re.search(r"(#(?:plat|v4target|v3target|v2target|target)=[^\s#]*)$", url)
-      item["url"] = f"{resolved_u}{m_tag.group(1) if m_tag else ''}"
-    # حفظ النص الأصلي الكامل في قاعدة البيانات حتى يظل متاحاً دائماً دون إعادة الجلب
-    if item.get("id"):
-      lock = get_db_lock()
-      with lock:
-        try:
-          conn = _open_sqlite_conn()
-          conn.execute(
-              "UPDATE articles SET raw_snippet = ?, image_url = ?, url = ? WHERE id = ?",
-              (item["raw_snippet"], item.get("image_url", ""), item["url"], item["id"]),
-          )
-          conn.commit()
-          conn.close()
-        except Exception:
-          pass
+    updated_any = True
+  valid_p_img = clean_and_validate_image_url(page_img, resolved_u or url, plat)
+  if valid_p_img and not clean_and_validate_image_url(item.get("image_url", ""), url, plat):
+    item["image_url"] = valid_p_img
+    updated_any = True
+  if resolved_u and "news.google.com" not in resolved_u and "news.google.com" in url:
+    m_tag = re.search(r"(#(?:plat|v4target|v3target|v2target|target)=[^\s#]*)$", url)
+    item["url"] = f"{resolved_u}{m_tag.group(1) if m_tag else ''}"
+    updated_any = True
+  new_precise_src = format_precise_source_with_domain(
+      item.get("source_name") or src, item.get("url") or url, plat, title_hint=raw_title
+  )
+  if new_precise_src != item.get("source_name"):
+    item["source_name"] = new_precise_src
+    updated_any = True
+  if updated_any and item.get("id"):
+    lock = get_db_lock()
+    with lock:
+      try:
+        conn = _open_sqlite_conn()
+        conn.execute(
+            "UPDATE articles SET raw_snippet = ?, source_name = ?, image_url = ?, url = ? WHERE id = ?",
+            (item.get("raw_snippet", raw_full), item.get("source_name", new_precise_src), item.get("image_url", ""), item.get("url", url), item["id"]),
+        )
+        conn.commit()
+        conn.close()
+      except Exception:
+        pass
 
   return raw_full
 
@@ -7407,10 +7808,14 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
       float(item.get("created_at") or time.time()), tz=timezone.utc
   ).strftime("%Y-%m-%d %H:%M")
   clean_u = clean_social_post_url(item.get("url", ""))
+  plat_tg = item.get("platform", "الصحف")
+  precise_src_tg = format_precise_source_with_domain(
+      item.get("source_name", plat_tg), clean_u, plat_tg, title_hint=item.get("title", "")
+  )
   msg = (
       f"⚖️ *المرصد القضائي*\n"
       f"{target_badge}"
-      f"{icon} *المنصة:* {item.get('platform', 'الصحف')} | *المصدر:* {item.get('source_name', '')}\n"
+      f"{icon} *المنصة:* {plat_tg} | *المصدر:* {precise_src_tg}\n"
       f"📅 *تاريخ النشر:* {item.get('pub_date', '')}\n"
       f"📡 *تاريخ الرصد:* {monitored_dt}\n"
       f"📌 *العنوان:* {item.get('title', '')}\n\n"
@@ -7449,14 +7854,17 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
       )
       for r in c.fetchall():
         d = dict(r)
-        missing_img = not (d.get("image_url") or "").strip()
+        valid_img = clean_and_validate_image_url(d.get("image_url") or "", d.get("url") or "", d.get("platform") or "الصحف")
+        missing_img = not valid_img
         bad_sum = is_summary_just_title(
             d.get("title", ""), d.get("summary", "")
         )
+        src_curr = clean_display_text(d.get("source_name") or "")
+        missing_domain_in_src = ("(" not in src_curr or ")" not in src_curr)
         raw_s_check = clean_full_article_text(d.get("raw_snippet") or "")
         sum_check = clean_display_text(d.get("summary") or "")
         short_body = (len(raw_s_check) < 450 or normalize_arabic_for_dedup(raw_s_check) == normalize_arabic_for_dedup(sum_check) or "news.google.com" in str(d.get("url") or ""))
-        if missing_img or bad_sum or short_body:
+        if missing_img or bad_sum or short_body or missing_domain_in_src:
           to_upgrade.append(d)
           if len(to_upgrade) >= max_upgrades:
             break
@@ -7484,9 +7892,10 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
         c = conn.cursor()
         for rec in upgraded_records:
           c.execute(
-              "UPDATE articles SET summary = ?, image_url = ?, raw_snippet = ?, url = ? WHERE id = ?",
+              "UPDATE articles SET summary = ?, source_name = ?, image_url = ?, raw_snippet = ?, url = ? WHERE id = ?",
               (
                   rec["summary"],
+                  rec.get("source_name", ""),
                   rec.get("image_url", ""),
                   rec.get("raw_snippet", ""),
                   rec.get("url", ""),
@@ -7623,8 +8032,15 @@ def quick_process_and_save(
       continue
     post_enrich_seen_keys.update(post_keys)
 
+    src = format_precise_source_with_domain(
+        it.get("source_name") or src,
+        it.get("url") or "",
+        plat,
+        source_url_hint=it.get("source_domain_hint", ""),
+        title_hint=it.get("title", ""),
+    )
     raw_snip = clean_display_text(it.get("raw_snippet") or "")
-    img_url = (it.get("image_url") or "").strip()
+    img_url = clean_and_validate_image_url((it.get("image_url") or "").strip(), it.get("url") or "", plat)
 
     if ai_calls < 12 and api_key:
       ai_res = analyze_with_gemini(it, api_key)
@@ -9763,18 +10179,31 @@ def _create_fallback_png_bytes(platform: str = "الصحف", source_name: str = 
 
 
 def _fetch_single_export_image(item: dict) -> tuple:
-  """جلب وتحويل صورة الخبر إلى PNG/JPEG متناسقة الأبعاد لدمجها داخل جدول Word و PDF."""
+  """جلب وتحويل صورة الخبر إلى PNG/JPEG متناسقة الأبعاد لدمجها داخل جدول PDF."""
   art_id = get_stable_article_id(item)
   plat = clean_display_text(item.get("platform") or "الصحف")
-  src = clean_display_text(item.get("source_name") or plat)
   raw_u = clean_social_post_url(item.get("url") or "")
-  img_u = (item.get("image_url") or "").strip()
+  src = format_precise_source_with_domain(
+      item.get("source_name") or plat, raw_u, plat, title_hint=item.get("title", "")
+  )
+  img_u = clean_and_validate_image_url((item.get("image_url") or "").strip(), raw_u, plat)
   if not img_u:
     img_u = extract_thumbnail_for_item(raw_u, "", plat)
 
+  # إذا لم تكن الصورة متوفرة في السجل، نحاول سحبها سريعاً من صفحة الخبر
+  if not img_u and raw_u.startswith("http"):
+    try:
+      scraped_img, _, resolved_u = scrape_article_page_content_and_image(
+          raw_u, title_hint=item.get("title", ""), source_hint=src
+      )
+      if scraped_img:
+        img_u = clean_and_validate_image_url(scraped_img, resolved_u or raw_u, plat)
+    except Exception:
+      pass
+
   if img_u and img_u.startswith("http"):
     try:
-      r = requests.get(img_u, headers=DEFAULT_HEADERS, timeout=3.5)
+      r = requests.get(img_u, headers=DEFAULT_HEADERS, timeout=4.0)
       if r.status_code == 200 and len(r.content) > 200:
         try:
           from PIL import Image
@@ -9792,7 +10221,7 @@ def _fetch_single_export_image(item: dict) -> tuple:
 
 
 def prepare_export_images_map(selected_items: list) -> dict:
-  """جلب صور الأخبار المحددة بالتوازي لضمان سرعة التصدير إلى Word و PDF."""
+  """جلب صور الأخبار المحددة بالتوازي لضمان سرعة التصدير إلى PDF."""
   if not selected_items:
     return {}
   img_map = {}
@@ -9802,8 +10231,8 @@ def prepare_export_images_map(selected_items: list) -> dict:
   return img_map
 
 
-def _build_pure_python_openxml_docx(selected_items: list, img_map: dict, search_kw: str = "") -> bytes:
-  """مولد ملفات Word (.docx) احتياطي نقي (Pure-Python OpenXML ZIP) يعمل حتى في حال عدم تثبيت مكتبة python-docx على السيرفر."""
+def _build_pure_python_openxml_docx(selected_items: list, search_kw: str = "") -> bytes:
+  """مولد ملفات Word (.docx) احتياطي نقي (Pure-Python OpenXML ZIP) بـ 3 أعمدة واتجاه RTL صارم من اليمين إلى اليسار (العنوان | الملخص | المصدر (رابط الخبر))."""
   import zipfile
   buf = io.BytesIO()
   now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -9814,29 +10243,40 @@ def _build_pure_python_openxml_docx(selected_items: list, img_map: dict, search_
   ]
   rows_xml = []
 
-  # ترويسة الجدول: العنوان | الملخص | المصدر | الصورة
+  # ترويسة الجدول من اليمين إلى اليسار (3 أعمدة فقط بدون عمود الصورة): العنوان | الملخص | المصدر (رابط الخبر)
   rows_xml.append("""
     <w:tr>
-      <w:trPr><w:tblHeader/></w:trPr>
-      <w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="22"/></w:rPr><w:t>العنوان</w:t></w:r></w:p></w:tc>
-      <w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="22"/></w:rPr><w:t>الملخص</w:t></w:r></w:p></w:tc>
-      <w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="22"/></w:rPr><w:t>المصدر</w:t></w:r></w:p></w:tc>
-      <w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="22"/></w:rPr><w:t>الصورة</w:t></w:r></w:p></w:tc>
+      <w:trPr><w:tblHeader/><w:cantSplit/></w:trPr>
+      <w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi w:val="1"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Cairo" w:hAnsi="Cairo" w:cs="Cairo"/><w:b/><w:bCs/><w:color w:val="FFFFFF"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl w:val="1"/></w:rPr><w:t>العنوان</w:t></w:r></w:p></w:tc>
+      <w:tc><w:tcPr><w:tcW w:w="4800" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi w:val="1"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Cairo" w:hAnsi="Cairo" w:cs="Cairo"/><w:b/><w:bCs/><w:color w:val="FFFFFF"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl w:val="1"/></w:rPr><w:t>الملخص</w:t></w:r></w:p></w:tc>
+      <w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi w:val="1"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Cairo" w:hAnsi="Cairo" w:cs="Cairo"/><w:b/><w:bCs/><w:color w:val="FFFFFF"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:rtl w:val="1"/></w:rPr><w:t>المصدر (رابط الخبر)</w:t></w:r></w:p></w:tc>
     </w:tr>
   """)
 
   for idx, it in enumerate(selected_items):
-    title_t = html.escape(clean_display_text(it.get("title") or ""))
-    sum_t = html.escape(clean_display_text(it.get("summary") or ""))
+    raw_t = clean_display_text(it.get("title") or "")
     plat_t = clean_display_text(it.get("platform") or "الصحف")
-    src_t = html.escape(f"{clean_display_text(it.get('source_name') or plat_t)} ({plat_t}) - {clean_display_text(it.get('pub_date') or '')}")
-    img_label = html.escape(clean_social_post_url(it.get("url") or ""))
+    clean_u = resolve_google_news_url(
+        clean_social_post_url(it.get("url") or ""),
+        title_hint=raw_t,
+        source_hint=it.get("source_name") or plat_t,
+    )
+    precise_src = format_precise_source_with_domain(
+        it.get("source_name") or plat_t, clean_u, plat_t, title_hint=raw_t
+    )
+    title_t = html.escape(f"[{idx + 1}] {raw_t}")
+    sum_t = html.escape(clean_display_text(it.get("summary") or ""))
+    src_line = html.escape(f"{precise_src} | المنصة: {plat_t} | التاريخ: {clean_display_text(it.get('pub_date') or '')}")
+    url_line = html.escape(clean_u)
     rows_xml.append(f"""
       <w:tr>
-        <w:tc><w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="21"/></w:rPr><w:t>{title_t}</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:t>{sum_t}</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="20"/></w:rPr><w:t>{src_t}</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>[صورة الخبر] {img_label[:45]}</w:t></w:r></w:p></w:tc>
+        <w:trPr><w:cantSplit/></w:trPr>
+        <w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:bidi w:val="1"/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Cairo" w:hAnsi="Cairo" w:cs="Cairo"/><w:b/><w:bCs/><w:sz w:val="21"/><w:szCs w:val="21"/><w:rtl w:val="1"/></w:rPr><w:t>‏{title_t}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:tcPr><w:tcW w:w="4800" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:bidi w:val="1"/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Cairo" w:hAnsi="Cairo" w:cs="Cairo"/><w:sz w:val="20"/><w:szCs w:val="20"/><w:rtl w:val="1"/></w:rPr><w:t>‏{sum_t}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>
+          <w:p><w:pPr><w:bidi w:val="1"/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Cairo" w:hAnsi="Cairo" w:cs="Cairo"/><w:b/><w:bCs/><w:sz w:val="20"/><w:szCs w:val="20"/><w:rtl w:val="1"/></w:rPr><w:t>‏{src_line}</w:t></w:r></w:p>
+          <w:p><w:pPr><w:bidi w:val="1"/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Cairo"/><w:color w:val="2563EB"/><w:u w:val="single"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr><w:t>{url_line}</w:t></w:r></w:p>
+        </w:tc>
       </w:tr>
     """)
 
@@ -9844,23 +10284,30 @@ def _build_pure_python_openxml_docx(selected_items: list, img_map: dict, search_
   doc_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
-    <w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>المرصد القضائي — تقرير الأخبار المحددة ({len(selected_items)} خبر)</w:t></w:r></w:p>
-    <w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:sz w:val="21"/></w:rPr><w:t>المنصة: المرصد القضائي | تاريخ التصدير: {now_str} | الكلمة المفتاحية: {html.escape(search_kw or 'شامل')}</w:t></w:r></w:p>
+    <w:p><w:pPr><w:bidi w:val="1"/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Cairo" w:hAnsi="Cairo" w:cs="Cairo"/><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/><w:rtl w:val="1"/></w:rPr><w:t>‏⚖️ المرصد القضائي — تقرير الأخبار القضائية المحددة ({len(selected_items)} خبر)</w:t></w:r></w:p>
+    <w:p><w:pPr><w:bidi w:val="1"/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Cairo" w:hAnsi="Cairo" w:cs="Cairo"/><w:b/><w:bCs/><w:color w:val="0369A1"/><w:sz w:val="21"/><w:szCs w:val="21"/><w:rtl w:val="1"/></w:rPr><w:t>‏المنصة: المرصد القضائي | تاريخ التصدير: {now_str} | الكلمة المفتاحية: {html.escape(search_kw or 'جميع الأخبار المرصودة')}</w:t></w:r></w:p>
     <w:tbl>
       <w:tblPr>
         <w:bidi/>
+        <w:bidiVisual/>
+        <w:jc w:val="right"/>
         <w:tblW w:w="5000" w:type="pct"/>
         <w:tblBorders>
-          <w:top w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
-          <w:bottom w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
-          <w:left w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
-          <w:right w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
-          <w:insideH w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
-          <w:insideV w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+          <w:top w:val="single" w:sz="8" w:space="0" w:color="0F172A"/>
+          <w:bottom w:val="single" w:sz="8" w:space="0" w:color="0F172A"/>
+          <w:left w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>
+          <w:right w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>
+          <w:insideH w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>
+          <w:insideV w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>
         </w:tblBorders>
       </w:tblPr>
       {''.join(rows_xml)}
     </w:tbl>
+    <w:sectPr>
+      <w:pgSz w:w="16834" w:h="11909" w:orient="landscape"/>
+      <w:pgMar w:top="936" w:right="936" w:bottom="936" w:left="936"/>
+      <w:bidi/>
+    </w:sectPr>
   </w:body>
 </w:document>"""
 
@@ -9873,24 +10320,115 @@ def _build_pure_python_openxml_docx(selected_items: list, img_map: dict, search_
 
 
 def generate_selected_articles_docx(selected_items: list, search_kw: str = "", img_map: dict = None) -> bytes:
-  """توليد ملف وورد (.docx) احترافي باتجاه عربي RTL يضم الأخبار المحددة في جدول منظم (العنوان، الملخص، المصدر، الصورة)."""
+  """توليد ملف وورد (.docx) احترافي باتجاه عربي صارم من اليمين إلى اليسار (RTL) للعناوين والجدول، مكون من 3 أعمدة:
+  العمود الأول (يمين): العنوان | العمود الثاني (وسط): الملخص | العمود الثالث (يسار): المصدر (رابط الخبر) — بدون عمود الصورة المصغرة."""
   if not selected_items:
     return b""
-  if img_map is None:
-    img_map = prepare_export_images_map(selected_items)
 
   try:
     import docx
     from docx.enum.section import WD_ORIENT
     from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml import parse_xml
-    from docx.oxml.ns import nsdecls
+    from docx.opc.constants import RELATIONSHIP_TYPE
+    from docx.oxml import OxmlElement, parse_xml
+    from docx.oxml.ns import nsdecls, qn
     from docx.shared import Inches, Pt, RGBColor
 
     doc = docx.Document()
 
-    # إعداد الصفحة بالوضع الأفقي (Landscape) لمنح الجدول المكون من 4 أعمدة مساحة مريحة وواضحة
+    def _set_p_rtl(p_obj, align=WD_ALIGN_PARAGRAPH.RIGHT):
+      p_obj.alignment = align
+      pPr = p_obj._p.get_or_add_pPr()
+      for old_bidi in pPr.findall(qn("w:bidi")):
+        pPr.remove(old_bidi)
+      bidi_el = OxmlElement("w:bidi")
+      bidi_el.set(qn("w:val"), "1")
+      pPr.append(bidi_el)
+      jc_val = "center" if align == WD_ALIGN_PARAGRAPH.CENTER else ("left" if align == WD_ALIGN_PARAGRAPH.LEFT else "right")
+      for old_jc in pPr.findall(qn("w:jc")):
+        pPr.remove(old_jc)
+      jc_el = OxmlElement("w:jc")
+      jc_el.set(qn("w:val"), jc_val)
+      pPr.append(jc_el)
+
+    def _style_run_rtl(run_obj, font_name: str = "Cairo", size_pt: float = 10.5, bold: bool = False, color_rgb=None, is_rtl: bool = True):
+      run_obj.font.name = font_name
+      run_obj.font.size = Pt(size_pt)
+      run_obj.font.bold = bold
+      if color_rgb is not None:
+        run_obj.font.color.rgb = color_rgb
+      rPr = run_obj._r.get_or_add_rPr()
+      rFonts = rPr.find(qn("w:rFonts"))
+      if rFonts is None:
+        rFonts = OxmlElement("w:rFonts")
+        rPr.insert(0, rFonts)
+      rFonts.set(qn("w:ascii"), font_name)
+      rFonts.set(qn("w:hAnsi"), font_name)
+      rFonts.set(qn("w:cs"), "Cairo")
+      sz_half = str(int(size_pt * 2))
+      for tag_sz in ("w:sz", "w:szCs"):
+        el_sz = rPr.find(qn(tag_sz))
+        if el_sz is None:
+          el_sz = OxmlElement(tag_sz)
+          rPr.append(el_sz)
+        el_sz.set(qn("w:val"), sz_half)
+      if bold:
+        for tag_b in ("w:b", "w:bCs"):
+          if rPr.find(qn(tag_b)) is None:
+            rPr.append(OxmlElement(tag_b))
+      for old_rtl in rPr.findall(qn("w:rtl")):
+        rPr.remove(old_rtl)
+      if is_rtl:
+        rtl_el = OxmlElement("w:rtl")
+        rtl_el.set(qn("w:val"), "1")
+        rPr.append(rtl_el)
+        lang_el = OxmlElement("w:lang")
+        lang_el.set(qn("w:bidi"), "ar-MA")
+        rPr.append(lang_el)
+
+    def _add_docx_hyperlink(paragraph, url: str, link_text: str):
+      """إضافة رابط تشعبي قابل للنقر داخل خلية المصدر (رابط الخبر) في ملف Word."""
+      try:
+        part = paragraph.part
+        r_id = part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+        hyperlink = OxmlElement("w:hyperlink")
+        hyperlink.set(qn("r:id"), r_id)
+        new_run = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        rFonts = OxmlElement("w:rFonts")
+        rFonts.set(qn("w:ascii"), "Cairo")
+        rFonts.set(qn("w:hAnsi"), "Cairo")
+        rFonts.set(qn("w:cs"), "Cairo")
+        rPr.append(rFonts)
+        c_el = OxmlElement("w:color")
+        c_el.set(qn("w:val"), "2563EB")
+        rPr.append(c_el)
+        u_el = OxmlElement("w:u")
+        u_el.set(qn("w:val"), "single")
+        rPr.append(u_el)
+        b_el = OxmlElement("w:b")
+        rPr.append(b_el)
+        bcs_el = OxmlElement("w:bCs")
+        rPr.append(bcs_el)
+        for t_sz in ("w:sz", "w:szCs"):
+          s_el = OxmlElement(t_sz)
+          s_el.set(qn("w:val"), "20")
+          rPr.append(s_el)
+        rtl_el = OxmlElement("w:rtl")
+        rtl_el.set(qn("w:val"), "1")
+        rPr.append(rtl_el)
+        new_run.append(rPr)
+        t_el = OxmlElement("w:t")
+        t_el.text = f"‏{link_text}"
+        new_run.append(t_el)
+        hyperlink.append(new_run)
+        paragraph._p.append(hyperlink)
+      except Exception:
+        r_fb = paragraph.add_run(f"‏{link_text}")
+        _style_run_rtl(r_fb, "Cairo", 10, bold=True, color_rgb=RGBColor(37, 99, 235), is_rtl=True)
+
+    # إعداد الصفحة بالوضع الأفقي (Landscape) وتفعيل اتجاه القسم من اليمين إلى اليسار (<w:bidi/>)
     for section in doc.sections:
       section.orientation = WD_ORIENT.LANDSCAPE
       section.page_width = Inches(11.69)
@@ -9899,13 +10437,14 @@ def generate_selected_articles_docx(selected_items: list, search_kw: str = "", i
       section.bottom_margin = Inches(0.65)
       section.left_margin = Inches(0.65)
       section.right_margin = Inches(0.65)
+      sectPr = section._sectPr
+      if sectPr.find(qn("w:bidi")) is None:
+        sectPr.append(OxmlElement("w:bidi"))
       try:
         ftr_p = section.footer.paragraphs[0]
-        ftr_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        ftr_run = ftr_p.add_run("⚖️ المرصد القضائي — تقرير الأخبار القضائية المرصودة")
-        ftr_run.font.name = "Cairo"
-        ftr_run.font.size = Pt(9.5)
-        ftr_run.font.color.rgb = RGBColor(100, 116, 139)
+        _set_p_rtl(ftr_p, WD_ALIGN_PARAGRAPH.CENTER)
+        ftr_run = ftr_p.add_run("‏⚖️ المرصد القضائي — تقرير الأخبار القضائية المرصودة")
+        _style_run_rtl(ftr_run, "Cairo", 9.5, bold=False, color_rgb=RGBColor(100, 116, 139), is_rtl=True)
       except Exception:
         pass
 
@@ -9913,20 +10452,17 @@ def generate_selected_articles_docx(selected_items: list, search_kw: str = "", i
     style_normal.font.name = "Cairo"
     style_normal.font.size = Pt(11)
     style_normal.font.color.rgb = RGBColor(15, 23, 42)
+    norm_pPr = style_normal._element.get_or_add_pPr()
+    if norm_pPr.find(qn("w:bidi")) is None:
+      b_norm = OxmlElement("w:bidi")
+      b_norm.set(qn("w:val"), "1")
+      norm_pPr.append(b_norm)
 
-    def _set_p_rtl(p_obj, align=WD_ALIGN_PARAGRAPH.RIGHT):
-      p_obj.alignment = align
-      pPr = p_obj._p.get_or_add_pPr()
-      pPr.append(parse_xml(r"<w:bidi {}/>".format(nsdecls("w"))))
-
-    # عنوان التقرير الرئيسي
+    # عنوان التقرير الرئيسي من اليمين إلى اليسار
     title_p = doc.add_paragraph()
     _set_p_rtl(title_p, WD_ALIGN_PARAGRAPH.RIGHT)
-    t_run = title_p.add_run("⚖️ المرصد القضائي — تقرير تجميعي للأخبار القضائية المحددة")
-    t_run.font.name = "Cairo"
-    t_run.font.size = Pt(18)
-    t_run.font.bold = True
-    t_run.font.color.rgb = RGBColor(15, 23, 42)
+    t_run = title_p.add_run("‏⚖️ المرصد القضائي — تقرير تجميعي للأخبار القضائية المحددة")
+    _style_run_rtl(t_run, "Cairo", 18, bold=True, color_rgb=RGBColor(15, 23, 42), is_rtl=True)
     title_p.paragraph_format.space_after = Pt(4)
     title_p.paragraph_format.keep_with_next = True
 
@@ -9935,23 +10471,25 @@ def generate_selected_articles_docx(selected_items: list, search_kw: str = "", i
     meta_p = doc.add_paragraph()
     _set_p_rtl(meta_p, WD_ALIGN_PARAGRAPH.RIGHT)
     m_run = meta_p.add_run(
-        f"المنصة: المرصد القضائي   |   تاريخ التصدير: {now_str}   |   عدد الأخبار المجمعة: {len(selected_items)} خبر   |   الكلمة المفتاحية للبحث: {kw_label}"
+        f"‏المنصة: المرصد القضائي   |   تاريخ التصدير: ‎{now_str}‏   |   عدد الأخبار المجمعة: {len(selected_items)} خبر   |   الكلمة المفتاحية للبحث: {kw_label}"
     )
-    m_run.font.name = "Cairo"
-    m_run.font.size = Pt(11)
-    m_run.font.bold = True
-    m_run.font.color.rgb = RGBColor(3, 105, 161)
+    _style_run_rtl(m_run, "Cairo", 11, bold=True, color_rgb=RGBColor(3, 105, 161), is_rtl=True)
     meta_p.paragraph_format.space_after = Pt(12)
     meta_p.paragraph_format.keep_with_next = True
 
-    # إنشاء الجدول المنظم بـ 4 أعمدة: العنوان | الملخص | المصدر | الصورة
-    headers = ["العنوان", "الملخص", "المصدر", "الصورة"]
-    col_widths = [Inches(2.55), Inches(4.25), Inches(1.85), Inches(1.65)]
+    # إنشاء الجدول المنظم بـ 3 أعمدة مرتبة من اليمين إلى اليسار (بدون عمود الصورة المصغرة):
+    # العمود الأول (0 - يمين): العنوان | العمود الثاني (1 - وسط): الملخص | العمود الثالث (2 - يسار): المصدر (رابط الخبر)
+    headers = ["العنوان", "الملخص", "المصدر (رابط الخبر)"]
+    col_widths = [Inches(2.90), Inches(4.65), Inches(2.84)]
 
-    table = doc.add_table(rows=1, cols=4)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table = doc.add_table(rows=1, cols=3)
+    table.alignment = WD_TABLE_ALIGNMENT.RIGHT
+    table.autofit = False
     tblPr = table._tbl.tblPr
-    tblPr.append(parse_xml(r"<w:bidi {}/>".format(nsdecls("w"))))
+    for old_b in tblPr.findall(qn("w:bidi")) + tblPr.findall(qn("w:bidiVisual")):
+      tblPr.remove(old_b)
+    tblPr.append(parse_xml(r'<w:bidi {} w:val="1"/>'.format(nsdecls("w"))))
+    tblPr.append(parse_xml(r'<w:bidiVisual {}/>'.format(nsdecls("w"))))
     tblPr.append(
         parse_xml(
             r'<w:tblBorders {}>'
@@ -9968,24 +10506,21 @@ def generate_selected_articles_docx(selected_items: list, search_kw: str = "", i
     hdr_row = table.rows[0]
     hdr_trPr = hdr_row._tr.get_or_add_trPr()
     hdr_trPr.append(parse_xml(r"<w:tblHeader {}/>".format(nsdecls("w"))))
+    hdr_trPr.append(parse_xml(r"<w:cantSplit {}/>".format(nsdecls("w"))))
 
     for idx, h_text in enumerate(headers):
       cell = hdr_row.cells[idx]
       cell.width = col_widths[idx]
       cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-      cell._tc.get_or_add_tcPr().append(
-          parse_xml(r'<w:shd {} w:fill="0F172A"/>'.format(nsdecls("w")))
-      )
+      tcPr = cell._tc.get_or_add_tcPr()
+      tcPr.append(parse_xml(r'<w:shd {} w:fill="0F172A"/>'.format(nsdecls("w"))))
       p_cell = cell.paragraphs[0]
       _set_p_rtl(p_cell, WD_ALIGN_PARAGRAPH.CENTER)
       p_cell.paragraph_format.space_before = Pt(6)
       p_cell.paragraph_format.space_after = Pt(6)
       p_cell.paragraph_format.keep_with_next = True
-      r_h = p_cell.add_run(h_text)
-      r_h.font.name = "Cairo"
-      r_h.font.size = Pt(11)
-      r_h.font.bold = True
-      r_h.font.color.rgb = RGBColor(255, 255, 255)
+      r_h = p_cell.add_run(f"‏{h_text}")
+      _style_run_rtl(r_h, "Cairo", 11.5, bold=True, color_rgb=RGBColor(255, 255, 255), is_rtl=True)
 
     for row_idx, item in enumerate(selected_items):
       row = table.add_row()
@@ -10002,94 +10537,75 @@ def generate_selected_articles_docx(selected_items: list, search_kw: str = "", i
 
       raw_t = clean_display_text(item.get("title") or "")
       plat = clean_display_text(item.get("platform") or "الصحف")
-      raw_src = clean_display_text(item.get("source_name") or plat)
+      raw_u_orig = clean_social_post_url(item.get("url") or "")
+      clean_u = resolve_google_news_url(
+          raw_u_orig, title_hint=raw_t, source_hint=item.get("source_name") or plat
+      )
+      precise_src = format_precise_source_with_domain(
+          item.get("source_name") or plat, clean_u, plat, title_hint=raw_t
+      )
       raw_sum = clean_display_text(item.get("summary") or "")
       raw_snip = clean_display_text(item.get("raw_snippet") or "")
       if is_summary_just_title(raw_t, raw_sum):
-        raw_sum = build_extractive_arabic_summary(raw_t, raw_snip, plat, raw_src)
+        raw_sum = build_extractive_arabic_summary(raw_t, raw_snip, plat, precise_src)
       pub_dt = clean_display_text(item.get("pub_date") or "")
-      clean_u = clean_social_post_url(item.get("url") or "")
 
-      # 1. خلية العنوان
+      # العمود الأول (0 - يمين الجدول): العنوان
       c_title = row.cells[0]
       p_t = c_title.paragraphs[0]
       _set_p_rtl(p_t, WD_ALIGN_PARAGRAPH.RIGHT)
-      p_t.paragraph_format.space_before = Pt(4)
-      p_t.paragraph_format.space_after = Pt(4)
-      r_num = p_t.add_run(f"[{row_idx + 1}] ")
-      r_num.font.name = "Cairo"
-      r_num.font.size = Pt(10.5)
-      r_num.font.bold = True
-      r_num.font.color.rgb = RGBColor(2, 132, 199)
-      r_t = p_t.add_run(raw_t)
-      r_t.font.name = "Cairo"
-      r_t.font.size = Pt(10.5)
-      r_t.font.bold = True
-      r_t.font.color.rgb = RGBColor(15, 23, 42)
+      p_t.paragraph_format.space_before = Pt(5)
+      p_t.paragraph_format.space_after = Pt(5)
+      r_num = p_t.add_run(f"‏({row_idx + 1}) ")
+      _style_run_rtl(r_num, "Cairo", 10.5, bold=True, color_rgb=RGBColor(2, 132, 199), is_rtl=True)
+      r_t = p_t.add_run(f"‏{raw_t}")
+      _style_run_rtl(r_t, "Cairo", 10.5, bold=True, color_rgb=RGBColor(15, 23, 42), is_rtl=True)
 
-      # 2. خلية الملخص
+      # العمود الثاني (1 - وسط الجدول): الملخص
       c_sum = row.cells[1]
       p_s = c_sum.paragraphs[0]
       _set_p_rtl(p_s, WD_ALIGN_PARAGRAPH.RIGHT)
-      p_s.paragraph_format.space_before = Pt(4)
-      p_s.paragraph_format.space_after = Pt(4)
-      r_s = p_s.add_run(raw_sum)
-      r_s.font.name = "Cairo"
-      r_s.font.size = Pt(10)
-      r_s.font.color.rgb = RGBColor(51, 65, 85)
+      p_s.paragraph_format.space_before = Pt(5)
+      p_s.paragraph_format.space_after = Pt(5)
+      r_s = p_s.add_run(f"‏{raw_sum}")
+      _style_run_rtl(r_s, "Cairo", 10.5, bold=False, color_rgb=RGBColor(51, 65, 85), is_rtl=True)
 
-      # 3. خلية المصدر
+      # العمود الثالث (2 - يسار الجدول): المصدر (رابط الخبر)
       c_src = row.cells[2]
       p_src = c_src.paragraphs[0]
       _set_p_rtl(p_src, WD_ALIGN_PARAGRAPH.RIGHT)
-      p_src.paragraph_format.space_before = Pt(4)
-      p_src.paragraph_format.space_after = Pt(4)
-      r_src_name = p_src.add_run(f"{raw_src}\n")
-      r_src_name.font.name = "Cairo"
-      r_src_name.font.size = Pt(10)
-      r_src_name.font.bold = True
-      r_src_name.font.color.rgb = RGBColor(15, 23, 42)
+      p_src.paragraph_format.space_before = Pt(5)
+      p_src.paragraph_format.space_after = Pt(2)
+      r_src_name = p_src.add_run(f"‏{precise_src}\n")
+      _style_run_rtl(r_src_name, "Cairo", 10.5, bold=True, color_rgb=RGBColor(15, 23, 42), is_rtl=True)
 
-      r_plat = p_src.add_run(f"المنصة: {plat}\n")
-      r_plat.font.name = "Cairo"
-      r_plat.font.size = Pt(10)
-      r_plat.font.color.rgb = RGBColor(3, 105, 161)
-
-      if pub_dt:
-        r_dt = p_src.add_run(f"التاريخ: {pub_dt}\n")
-        r_dt.font.name = "Cairo"
-        r_dt.font.size = Pt(10)
-        r_dt.font.color.rgb = RGBColor(100, 116, 139)
+      meta_src_line = f"‏المنصة: {plat}" + (f" | التاريخ: ‎{pub_dt}‏" if pub_dt else "")
+      r_plat = p_src.add_run(meta_src_line)
+      _style_run_rtl(r_plat, "Cairo", 9.5, bold=False, color_rgb=RGBColor(71, 85, 105), is_rtl=True)
 
       if clean_u:
-        r_u = p_src.add_run(clean_u[:55] + ("..." if len(clean_u) > 55 else ""))
-        r_u.font.name = "Calibri"
-        r_u.font.size = Pt(10)
-        r_u.font.color.rgb = RGBColor(37, 99, 235)
+        p_link = c_src.add_paragraph()
+        _set_p_rtl(p_link, WD_ALIGN_PARAGRAPH.RIGHT)
+        p_link.paragraph_format.space_before = Pt(2)
+        p_link.paragraph_format.space_after = Pt(2)
+        _add_docx_hyperlink(p_link, clean_u, "🔗 فتح رابط الخبر الأصلي")
 
-      # 4. خلية الصورة
-      c_img = row.cells[3]
-      p_img = c_img.paragraphs[0]
-      p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-      p_img.paragraph_format.space_before = Pt(4)
-      p_img.paragraph_format.space_after = Pt(4)
-      aid = get_stable_article_id(item)
-      img_bytes = img_map.get(aid) or _create_fallback_png_bytes(plat, raw_src)
-      try:
-        p_img.add_run().add_picture(io.BytesIO(img_bytes), width=Inches(1.42))
-      except Exception:
-        fb_png = _create_fallback_png_bytes(plat, raw_src)
-        p_img.add_run().add_picture(io.BytesIO(fb_png), width=Inches(1.42))
+        p_raw_u = c_src.add_paragraph()
+        _set_p_rtl(p_raw_u, WD_ALIGN_PARAGRAPH.LEFT)
+        p_raw_u.paragraph_format.space_before = Pt(1)
+        p_raw_u.paragraph_format.space_after = Pt(4)
+        r_u = p_raw_u.add_run(clean_u)
+        _style_run_rtl(r_u, "Calibri", 8.5, bold=False, color_rgb=RGBColor(37, 99, 235), is_rtl=False)
 
     out_stream = io.BytesIO()
     doc.save(out_stream)
     return out_stream.getvalue()
   except Exception:
-    return _build_pure_python_openxml_docx(selected_items, img_map, search_kw=search_kw)
+    return _build_pure_python_openxml_docx(selected_items, search_kw=search_kw)
 
 
 def build_selected_articles_export_html(selected_items: list, search_kw: str = "", img_map: dict = None) -> str:
-  """بناء وثيقة HTML5 RTL متكاملة ومستقلة (تضم الصور بترميز Base64) لتوليد ملف PDF رسمي عالي الدقة."""
+  """بناء وثيقة HTML5 RTL متكاملة ومستقلة لتوليد ملف PDF رسمي عالي الدقة مع الإبقاء على عمود الصورة المصغرة في ملف PDF (العنوان | الملخص | المصدر (رابط الخبر) | الصورة)."""
   if img_map is None:
     img_map = prepare_export_images_map(selected_items)
   now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -10099,16 +10615,21 @@ def build_selected_articles_export_html(selected_items: list, search_kw: str = "
   for idx, item in enumerate(selected_items):
     raw_t = clean_display_text(item.get("title") or "")
     plat = clean_display_text(item.get("platform") or "الصحف")
-    raw_src = clean_display_text(item.get("source_name") or plat)
+    raw_u_orig = clean_social_post_url(item.get("url") or "")
+    clean_u = resolve_google_news_url(
+        raw_u_orig, title_hint=raw_t, source_hint=item.get("source_name") or plat
+    )
+    precise_src = format_precise_source_with_domain(
+        item.get("source_name") or plat, clean_u, plat, title_hint=raw_t
+    )
     raw_sum = clean_display_text(item.get("summary") or "")
     raw_snip = clean_display_text(item.get("raw_snippet") or "")
     if is_summary_just_title(raw_t, raw_sum):
-      raw_sum = build_extractive_arabic_summary(raw_t, raw_snip, plat, raw_src)
+      raw_sum = build_extractive_arabic_summary(raw_t, raw_snip, plat, precise_src)
     pub_dt = clean_display_text(item.get("pub_date") or "")
-    clean_u = clean_social_post_url(item.get("url") or "")
 
     aid = get_stable_article_id(item)
-    img_bytes = img_map.get(aid) or _create_fallback_png_bytes(plat, raw_src)
+    img_bytes = img_map.get(aid) or _create_fallback_png_bytes(plat, precise_src)
     b64_img = base64.b64encode(img_bytes).decode("ascii")
     img_data_uri = f"data:image/png;base64,{b64_img}"
 
@@ -10121,10 +10642,10 @@ def build_selected_articles_export_html(selected_items: list, search_kw: str = "
           <div class="summary-txt">{html.escape(raw_sum)}</div>
         </td>
         <td class="col-source">
-          <div class="src-name">{html.escape(raw_src)}</div>
+          <div class="src-name">{html.escape(precise_src)}</div>
           <div class="src-meta">المنصة: {html.escape(plat)}</div>
           <div class="src-meta">النشر: <span dir="ltr">{html.escape(pub_dt)}</span></div>
-          {f'<div class="src-link"><a href="{html.escape(clean_u, quote=True)}">رابط المصدر الأصلي</a></div>' if clean_u else ''}
+          {f'<div class="src-link"><a href="{html.escape(clean_u, quote=True)}">🔗 رابط الخبر الأصلي</a><div class="src-url-text" dir="ltr">{html.escape(clean_u[:65] + ("..." if len(clean_u) > 65 else ""))}</div></div>' if clean_u else ''}
         </td>
         <td class="col-image">
           <img src="{img_data_uri}" alt="thumb" />
@@ -10165,6 +10686,8 @@ def build_selected_articles_export_html(selected_items: list, search_kw: str = "
       border-bottom: 2.5px solid #0f172a;
       padding-bottom: 10px;
       margin-bottom: 14px;
+      direction: rtl;
+      text-align: right;
     }}
     .report-header h1 {{
       font-size: 16pt;
@@ -10181,6 +10704,7 @@ def build_selected_articles_export_html(selected_items: list, search_kw: str = "
       width: 100%;
       border-collapse: collapse;
       table-layout: fixed;
+      direction: rtl;
     }}
     th, td {{
       border: 1px solid #cbd5e1;
@@ -10205,9 +10729,9 @@ def build_selected_articles_export_html(selected_items: list, search_kw: str = "
       break-inside: avoid;
       page-break-inside: avoid;
     }}
-    .col-title {{ width: 25%; }}
-    .col-summary {{ width: 42%; }}
-    .col-source {{ width: 18%; }}
+    .col-title {{ width: 24%; }}
+    .col-summary {{ width: 41%; }}
+    .col-source {{ width: 20%; }}
     .col-image {{ width: 15%; text-align: center; }}
     .title-txt {{
       font-size: 10pt;
@@ -10237,8 +10761,15 @@ def build_selected_articles_export_html(selected_items: list, search_kw: str = "
     }}
     .src-link a {{
       font-size: 8.5pt;
+      font-weight: 700;
       color: #2563eb;
       text-decoration: underline;
+    }}
+    .src-url-text {{
+      font-size: 7.5pt;
+      color: #64748b;
+      margin-top: 2px;
+      word-break: break-all;
     }}
     .col-image img {{
       width: 125px;
@@ -10264,7 +10795,7 @@ def build_selected_articles_export_html(selected_items: list, search_kw: str = "
       <tr>
         <th class="col-title">العنوان</th>
         <th class="col-summary">الملخص</th>
-        <th class="col-source">المصدر</th>
+        <th class="col-source">المصدر (رابط الخبر)</th>
         <th class="col-image">الصورة</th>
       </tr>
     </thead>
@@ -10277,7 +10808,7 @@ def build_selected_articles_export_html(selected_items: list, search_kw: str = "
 
 
 def generate_selected_articles_pdf(selected_items: list, search_kw: str = "", img_map: dict = None) -> bytes:
-  """توليد ملف PDF (.pdf) منظم يضم الأخبار المحددة في جدول (العنوان، الملخص، المصدر، الصورة) مع دعم WeasyPrint وبدائل بايثون."""
+  """توليد ملف PDF (.pdf) منظم يضم الأخبار المحددة في جدول بـ 4 أعمدة (العنوان | الملخص | المصدر (رابط الخبر) | الصورة) مع دعم WeasyPrint وبدائل بايثون."""
   if not selected_items:
     return b""
   if img_map is None:
@@ -10296,27 +10827,30 @@ def generate_selected_articles_pdf(selected_items: list, search_kw: str = "", im
   try:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.platypus import Image as RLImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import Image as RLImage, Paragraph, SimpleDocTemplate, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet
 
     buf_pdf = io.BytesIO()
     doc_pdf = SimpleDocTemplate(buf_pdf, pagesize=landscape(A4), leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
     styles = getSampleStyleSheet()
     normal_st = styles["Normal"]
-    table_rows = [["العنوان", "الملخص", "المصدر", "الصورة"]]
+    table_rows = [["العنوان", "الملخص", "المصدر (رابط الخبر)", "الصورة"]]
     for item in selected_items:
       aid = get_stable_article_id(item)
       plat = clean_display_text(item.get("platform") or "الصحف")
-      raw_src = clean_display_text(item.get("source_name") or plat)
-      img_b = img_map.get(aid) or _create_fallback_png_bytes(plat, raw_src)
+      clean_u = clean_social_post_url(item.get("url") or "")
+      precise_src = format_precise_source_with_domain(
+          item.get("source_name") or plat, clean_u, plat, title_hint=item.get("title", "")
+      )
+      img_b = img_map.get(aid) or _create_fallback_png_bytes(plat, precise_src)
       rl_img = RLImage(io.BytesIO(img_b), width=95, height=60)
       table_rows.append([
           Paragraph(html.escape(clean_display_text(item.get("title") or "")), normal_st),
           Paragraph(html.escape(clean_display_text(item.get("summary") or "")), normal_st),
-          Paragraph(html.escape(f"{raw_src} ({plat})"), normal_st),
+          Paragraph(html.escape(f"{precise_src} ({plat}) - {clean_u}"), normal_st),
           rl_img,
       ])
-    t_obj = Table(table_rows, colWidths=[190, 310, 140, 115], repeatRows=1)
+    t_obj = Table(table_rows, colWidths=[185, 300, 155, 115], repeatRows=1)
     t_obj.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -10330,11 +10864,11 @@ def generate_selected_articles_pdf(selected_items: list, search_kw: str = "", im
 
 
 def get_or_build_export_files(selected_items: list, search_kw: str = "") -> tuple:
-  """تجهيز وتخزين ملفات Word (.docx) و PDF (.pdf) في الذاكرة المؤقتة للجلسة لضمان سرعة التحميل بضغطة واحدة."""
+  """تجهيز وتخزين ملفات Word (.docx بـ 3 أعمدة بدون صورة) و PDF (.pdf بـ 4 أعمدة مع الصورة) في الذاكرة المؤقتة للجلسة."""
   if not selected_items:
     return b"", b"", ""
   sig_ids = tuple(get_stable_article_id(x) for x in selected_items)
-  cache_key = (sig_ids, str(search_kw or "").strip())
+  cache_key = (sig_ids, str(search_kw or "").strip(), "v2_rtl_3col_word_4col_pdf")
   if st is not None:
     cached = st.session_state.get("cached_export_bundle")
     if isinstance(cached, dict) and cached.get("key") == cache_key:
@@ -10356,7 +10890,7 @@ def get_or_build_export_files(selected_items: list, search_kw: str = "") -> tupl
 
 
 def _render_client_side_pdf_printer(export_html_str: str, count_items: int):
-  """زر تصدير وطباعة PDF فوري من المتصفح (يعمل بتقنية html2pdf + نافذة الطباعة المباشرة لضمان دعم العربية 100% على كافة المتصفحات)."""
+  """زر تصدير وطباعة PDF فوري من المتصفح (يعمل بتقنية نافذة الطباعة المباشرة لضمان دعم العربية 100% على كافة المتصفحات)."""
   try:
     import streamlit.components.v1 as components
   except Exception:
@@ -10446,20 +10980,23 @@ def render_article_cards(
     raw_title = clean_display_text(item.get("title") or "")
     raw_summary = clean_display_text(item.get("summary") or "")
     raw_full_text = clean_full_article_text(item.get("raw_snippet") or "")
-    raw_src = clean_display_text(item.get("source_name") or plat)
 
     # معرف ثابت 100% لكل خبر لا يتغير أبداً عند تحديث الرابط أو بين التبويبات
     stable_art_id = get_stable_article_id(item)
     widget_uid = f"{tab_prefix}_{stable_art_id}_{idx}"
 
-    # جلب النص الكامل تلقائياً للمقالات الصحفية غير المفحوصة سابقاً (بحد أقصى مقالين في الدورة لمنع أي بطء عند ضغط أزرار الصوت)
+    raw_url = str(item.get("url") or "#").strip()
+    clean_link_url = clean_social_post_url(raw_url)
+    raw_img_candidate = clean_and_validate_image_url((item.get("image_url") or "").strip(), clean_link_url, plat)
+
+    # جلب النص الكامل والرابط المباشر والصورة تلقائياً للمقالات غير المفحوصة سابقاً (بحد أقصى 3 مقالات في الدورة لمنع أي بطء)
     if (
-        tab_prefix == "all"
-        and plat == "الصحف"
-        and stable_art_id not in checked_ft_ids
-        and live_fetches_done < 2
+        stable_art_id not in checked_ft_ids
+        and live_fetches_done < 3
         and (
-            len(raw_full_text) < 380
+            "news.google.com" in clean_link_url
+            or not raw_img_candidate
+            or len(raw_full_text) < 380
             or normalize_arabic_for_dedup(raw_full_text) == normalize_arabic_for_dedup(raw_summary)
             or normalize_arabic_for_dedup(raw_full_text) == normalize_arabic_for_dedup(raw_title)
         )
@@ -10467,6 +11004,19 @@ def render_article_cards(
       checked_ft_ids.add(stable_art_id)
       live_fetches_done += 1
       raw_full_text = ensure_verbatim_full_text_for_item(item)
+      raw_url = str(item.get("url") or raw_url).strip()
+      clean_link_url = clean_social_post_url(raw_url)
+      raw_img_candidate = clean_and_validate_image_url((item.get("image_url") or "").strip(), clean_link_url, plat)
+
+    # تحديد اسم المصدر بدقة مع الدومين (اسم الموقع + الدومين) لجميع الأخبار الجديدة والقديمة
+    raw_src = format_precise_source_with_domain(
+        item.get("source_name") or plat,
+        clean_link_url,
+        plat,
+        source_url_hint=item.get("source_domain_hint", ""),
+        title_hint=raw_title,
+    )
+    item["source_name"] = raw_src
 
     raw_snip_flat = clean_display_text(raw_full_text)
     if is_summary_just_title(raw_title, raw_summary):
@@ -10486,11 +11036,8 @@ def render_article_cards(
         "%Y-%m-%d %H:%M"
     )
 
-    raw_url = str(item.get("url") or "#").strip()
-    clean_link_url = clean_social_post_url(raw_url)
-
     fallback_svg_uri = get_fallback_thumbnail_data_uri(plat, raw_src)
-    raw_img = (item.get("image_url") or "").strip()
+    raw_img = raw_img_candidate
     if not raw_img:
       raw_img = extract_thumbnail_for_item(clean_link_url, "", plat)
     final_img_src = html.escape(
@@ -10529,7 +11076,7 @@ def render_article_cards(
         '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;direction:rtl !important;text-align:right !important;">'
         f'<span class="badge-plat">{html.escape(type_badge_txt)}</span>'
         f"{target_tag}"
-        f'<span style="font-weight:800;color:#e2e8f0;font-size:0.86rem;">{source_safe}</span>'
+        f'<span style="font-weight:800;color:#38bdf8;background:rgba(15,23,42,0.75);border:1px solid rgba(56,189,248,0.35);padding:2px 10px;border-radius:999px;font-size:0.84rem;" dir="rtl">🌐 المصدر: {source_safe}</span>'
         f'<span style="color:#64748b;font-size:0.82rem;">• {category_safe}</span>'
         "</div>"
         f'<div class="news-title" dir="rtl" style="direction:rtl !important;text-align:right !important;"><a href="{url_safe}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;">{title_safe}</a></div>'
@@ -10615,6 +11162,10 @@ def render_article_cards(
         else:
           item_copy = dict(item)
           item_copy["summary"] = raw_summary
+          item_copy["source_name"] = raw_src
+          item_copy["url"] = clean_link_url
+          if raw_img:
+            item_copy["image_url"] = raw_img
           selected_map_curr[stable_art_id] = item_copy
         st.rerun()
 
@@ -10660,7 +11211,7 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
               <span style="width:44px;height:44px;min-width:44px;border-radius:13px;display:inline-flex;align-items:center;justify-content:center;font-size:1.35rem;background:rgba(56,189,248,0.2);border:1px solid rgba(56,189,248,0.55);">📑</span>
               <div>
                   <div style="font-size:clamp(1.02rem, 1.8vw, 1.18rem);font-weight:900;color:#f0f9ff;line-height:1.3;">المرصد القضائي — البحث في الأخبار المرصودة وتجميع وتصدير التقارير (Word & PDF)</div>
-                  <div style="font-size:0.8rem;font-weight:700;color:#cbd5e1;margin-top:2px;">ابحث بالكلمة المفتاحية في الأخبار المعروضة حالياً أو المؤرشفة، وحدد الأخبار لتصديرها في جدول منظم يضم (العنوان، الملخص، المصدر، والصورة)</div>
+                  <div style="font-size:0.8rem;font-weight:700;color:#cbd5e1;margin-top:2px;">ابحث بالكلمة المفتاحية في الأخبار المعروضة حالياً أو المؤرشفة، وحدد الأخبار لتصديرها إلى Word (جدول RTL بـ 3 أعمدة: العنوان • الملخص • المصدر والرابط) أو PDF (مع عمود الصورة المصغرة)</div>
               </div>
           </div>
           <span style="background:rgba(16,185,129,0.22);border:1px solid rgba(52,211,153,0.6);color:#6ee7b7;padding:5px 14px;border-radius:999px;font-size:0.82rem;font-weight:900;">✅ الأخبار المحددة للتصدير: {len(selected_map)}</span>
@@ -10716,7 +11267,9 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
       t_a = a.get("title", "")
       s_a = a.get("summary", "")
       r_a = a.get("raw_snippet", "")
-      src_a = a.get("source_name", "")
+      src_a = format_precise_source_with_domain(
+          a.get("source_name", ""), a.get("url", ""), a.get("platform", "الصحف"), title_hint=t_a
+      )
       cat_a = a.get("category", "")
       combined_hay = f"{t_a} {s_a} {r_a} {src_a} {cat_a}"
       if (
@@ -10738,7 +11291,11 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
         raw_t = clean_display_text(it_copy.get("title") or "")
         raw_s = clean_display_text(it_copy.get("summary") or "")
         plat = clean_display_text(it_copy.get("platform") or "الصحف")
-        src = clean_display_text(it_copy.get("source_name") or plat)
+        clean_u = clean_social_post_url(it_copy.get("url") or "")
+        src = format_precise_source_with_domain(
+            it_copy.get("source_name") or plat, clean_u, plat, title_hint=raw_t
+        )
+        it_copy["source_name"] = src
         if is_summary_just_title(raw_t, raw_s):
           it_copy["summary"] = build_extractive_arabic_summary(raw_t, clean_display_text(it_copy.get("raw_snippet") or ""), plat, src)
         selected_map[aid] = it_copy
@@ -10767,7 +11324,10 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
         f"""
         <div style="background:linear-gradient(135deg, rgba(6, 78, 59, 0.45) 0%, rgba(15, 23, 42, 0.92) 100%);border:1.5px solid rgba(52, 211, 153, 0.65);border-radius:16px;padding:14px 18px;margin:10px 0 14px 0;direction:rtl;text-align:right;">
             <div style="font-size:0.96rem;font-weight:900;color:#6ee7b7;margin-bottom:6px;">📥 سلة التجميع والتصدير جاهزة ({len(selected_items_list)} خبر محدد) — اختر صيغة التحميل:</div>
-            <div style="font-size:0.8rem;color:#cbd5e1;">يتم تضمين الأخبار المحددة في جدول رسمي منظم يحتوي على: <strong>العنوان • الملخص • المصدر • الصورة</strong></div>
+            <div style="font-size:0.81rem;color:#cbd5e1;line-height:1.6;">
+              • <strong>ملف Word (.docx):</strong> مصمم باتجاه عربي RTL من اليمين إلى اليسار بـ 3 أعمدة: <strong>(1) العنوان • (2) الملخص • (3) المصدر (رابط الخبر)</strong> (بدون عمود الصورة المصغرة).<br>
+              • <strong>ملف PDF (.pdf):</strong> يضم 4 أعمدة: <strong>(1) العنوان • (2) الملخص • (3) المصدر (رابط الخبر) • (4) الصورة المصغرة</strong>.
+            </div>
         </div>
         """
     )
@@ -10797,25 +11357,31 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
       if export_html_str:
         _render_client_side_pdf_printer(export_html_str, len(selected_items_list))
 
-    # معاينة مباشرة للجدول المنظم (العنوان | الملخص | المصدر | الصورة) داخل المنصة
+    # معاينة مباشرة للجدول المنظم داخل المنصة
     preview_rows_html = []
     for s_idx, s_it in enumerate(selected_items_list):
       s_t = clean_display_text(s_it.get("title") or "")
       s_plat = clean_display_text(s_it.get("platform") or "الصحف")
-      s_src = clean_display_text(s_it.get("source_name") or s_plat)
+      s_u = clean_social_post_url(s_it.get("url") or "#")
+      s_src = format_precise_source_with_domain(
+          s_it.get("source_name") or s_plat, s_u, s_plat, title_hint=s_t
+      )
       s_sum = clean_display_text(s_it.get("summary") or "")
       if is_summary_just_title(s_t, s_sum):
         s_sum = build_extractive_arabic_summary(s_t, clean_display_text(s_it.get("raw_snippet") or ""), s_plat, s_src)
       s_dt = clean_display_text(s_it.get("pub_date") or "")
-      s_u = clean_social_post_url(s_it.get("url") or "#")
       s_fb_svg = get_fallback_thumbnail_data_uri(s_plat, s_src)
-      s_img = (s_it.get("image_url") or "").strip() or extract_thumbnail_for_item(s_u, "", s_plat) or s_fb_svg
+      s_img = clean_and_validate_image_url((s_it.get("image_url") or "").strip(), s_u, s_plat) or extract_thumbnail_for_item(s_u, "", s_plat) or s_fb_svg
       preview_rows_html.append(
           f"""
           <tr style="border-bottom:1px solid rgba(148,163,184,0.2);">
               <td style="padding:10px;font-weight:800;color:#f8fafc;width:24%;vertical-align:middle;"><span style="color:#38bdf8;">[{s_idx + 1}]</span> <a href="{html.escape(s_u, quote=True)}" target="_blank" style="color:#f8fafc;text-decoration:none;">{html.escape(s_t)}</a></td>
-              <td style="padding:10px;color:#cbd5e1;font-size:0.86rem;line-height:1.65;width:42%;vertical-align:middle;">{html.escape(s_sum)}</td>
-              <td style="padding:10px;color:#e2e8f0;font-size:0.83rem;font-weight:700;width:19%;vertical-align:middle;">{html.escape(s_src)}<br><span style="color:#38bdf8;font-size:0.76rem;">{html.escape(s_plat)} • <span dir="ltr">{html.escape(s_dt)}</span></span></td>
+              <td style="padding:10px;color:#cbd5e1;font-size:0.86rem;line-height:1.65;width:40%;vertical-align:middle;">{html.escape(s_sum)}</td>
+              <td style="padding:10px;color:#e2e8f0;font-size:0.83rem;font-weight:700;width:21%;vertical-align:middle;">
+                {html.escape(s_src)}<br>
+                <span style="color:#94a3b8;font-size:0.76rem;">{html.escape(s_plat)} • <span dir="ltr">{html.escape(s_dt)}</span></span><br>
+                <a href="{html.escape(s_u, quote=True)}" target="_blank" style="color:#38bdf8;font-size:0.78rem;text-decoration:underline;">🔗 فتح رابط الخبر الأصلي</a>
+              </td>
               <td style="padding:8px;text-align:center;width:15%;vertical-align:middle;"><img src="{html.escape(s_img, quote=True)}" onerror="this.onerror=null;this.src='{html.escape(s_fb_svg, quote=True)}';" style="width:115px;height:74px;object-fit:cover;border-radius:8px;border:1px solid rgba(148,163,184,0.35);display:block;margin:0 auto;" /></td>
           </tr>
           """
@@ -10830,9 +11396,9 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
                   <thead>
                       <tr style="background:rgba(15,23,42,0.95);border-bottom:2px solid #38bdf8;">
                           <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:24%;">العنوان</th>
-                          <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:42%;">الملخص</th>
-                          <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:19%;">المصدر</th>
-                          <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:15%;">الصورة</th>
+                          <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:40%;">الملخص</th>
+                          <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:21%;">المصدر (رابط الخبر)</th>
+                          <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:15%;">الصورة (تظهر في PDF فقط)</th>
                       </tr>
                   </thead>
                   <tbody>
@@ -10861,15 +11427,17 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
         else "<span style='background:rgba(148,163,184,0.18);border:1px solid rgba(148,163,184,0.4);color:#cbd5e1;padding:2px 9px;border-radius:999px;font-size:0.74rem;font-weight:800;'>🗄️ مؤرشف</span>"
     )
     plat = clean_display_text(item.get("platform") or "الصحف")
-    raw_src = clean_display_text(item.get("source_name") or plat)
     raw_t = clean_display_text(item.get("title") or "")
+    clean_u = clean_social_post_url(item.get("url") or "#")
+    raw_src = format_precise_source_with_domain(
+        item.get("source_name") or plat, clean_u, plat, title_hint=raw_t
+    )
     raw_sum = clean_display_text(item.get("summary") or "")
     if is_summary_just_title(raw_t, raw_sum):
       raw_sum = build_extractive_arabic_summary(raw_t, clean_display_text(item.get("raw_snippet") or ""), plat, raw_src)
     pub_dt = clean_display_text(item.get("pub_date") or "")
-    clean_u = clean_social_post_url(item.get("url") or "#")
     fb_svg = get_fallback_thumbnail_data_uri(plat, raw_src)
-    raw_img = (item.get("image_url") or "").strip() or extract_thumbnail_for_item(clean_u, "", plat) or fb_svg
+    raw_img = clean_and_validate_image_url((item.get("image_url") or "").strip(), clean_u, plat) or extract_thumbnail_for_item(clean_u, "", plat) or fb_svg
 
     row_c1, row_c2 = st.columns([0.95, 5.05])
     with row_c1:
@@ -10882,6 +11450,8 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
         if new_sel_state:
           it_c = dict(item)
           it_c["summary"] = raw_sum
+          it_c["source_name"] = raw_src
+          it_c["url"] = clean_u
           selected_map[aid] = it_c
         else:
           selected_map.pop(aid, None)
@@ -10897,8 +11467,8 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
                   <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
                       {status_badge}
                       <span class="badge-plat">{html.escape(plat)}</span>
-                      <span style="font-weight:800;color:#e2e8f0;font-size:0.82rem;">{html.escape(raw_src)}</span>
-                      <span style="color:#38bdf8;font-size:0.78rem;font-weight:700;" dir="ltr">📅 {html.escape(pub_dt)}</span>
+                      <span style="font-weight:800;color:#38bdf8;font-size:0.82rem;">🌐 {html.escape(raw_src)}</span>
+                      <span style="color:#94a3b8;font-size:0.78rem;font-weight:700;" dir="ltr">📅 {html.escape(pub_dt)}</span>
                   </div>
                   <div style="font-weight:900;color:#f8fafc;font-size:0.96rem;margin-bottom:4px;"><a href="{html.escape(clean_u, quote=True)}" target="_blank" style="color:inherit;text-decoration:none;">{html.escape(raw_t)}</a></div>
                   <div style="color:#cbd5e1;font-size:0.84rem;line-height:1.55;">{html.escape(raw_sum[:260] + ('...' if len(raw_sum) > 260 else ''))}</div>
