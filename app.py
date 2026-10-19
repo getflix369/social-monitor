@@ -1873,7 +1873,7 @@ def get_fallback_thumbnail_data_uri(platform: str, source_name: str = "") -> str
       "أخرى": ("#4c1d95", "#a855f7", "SOCIAL", "🟪 تواصل اجتماعي"),
   }
   bg1, accent, en_lbl, ar_lbl = themes.get(
-      platform, ("#0f172a", "#38bdf8", "JUSTICE", "⚖️ رصد قضائي")
+      platform, ("#0f172a", "#38bdf8", "AL-MARSAD AL-QADAI", "⚖️ المرصد القضائي")
   )
   src_short = html.escape(clean_display_text(source_name or platform)[:18])
   svg = (
@@ -2658,7 +2658,7 @@ def _push_state_to_telegram_cloud_sync():
         pass
 
     new_file_id = ""
-    caption_txt = f"🗄️ [CLOUD_SYNC_STATE] النسخة السحابية التلقائية للمرصد والأرشيف ({len(articles_to_save)} خبر محفوظ)"
+    caption_txt = f"🗄️ [CLOUD_SYNC_STATE] النسخة السحابية التلقائية لمنصة المرصد القضائي ({len(articles_to_save)} خبر محفوظ)"
 
     # أ) إذا كانت رسالة السحابة المثبتة موجودة، نقوم بتحديث ملفها بصمت في مكانه عبر editMessageMedia دون إرسال أي رسالة جديدة
     if msg_id > 0:
@@ -2719,7 +2719,7 @@ def _push_state_to_telegram_cloud_sync():
       rt["last_cloud_push_ts"] = time.time()
       try:
         desc_payload = (
-            "⚖️ المرصد الوطني للعدالة والقضاء بالمغرب — نظام الرصد القضائي والأرشيف السحابي الدائم\n"
+            "⚖️ المرصد القضائي — نظام الرصد القضائي والأرشيف السحابي الدائم\n"
             f"[CLOUD_STATE:{msg_id}:{new_file_id}]"
         )
         requests.post(
@@ -7408,7 +7408,7 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
   ).strftime("%Y-%m-%d %H:%M")
   clean_u = clean_social_post_url(item.get("url", ""))
   msg = (
-      f"⚖️ *المرصد الوطني للعدالة والقضاء*\n"
+      f"⚖️ *المرصد القضائي*\n"
       f"{target_badge}"
       f"{icon} *المنصة:* {item.get('platform', 'الصحف')} | *المصدر:* {item.get('source_name', '')}\n"
       f"📅 *تاريخ النشر:* {item.get('pub_date', '')}\n"
@@ -7854,7 +7854,7 @@ if os.environ.get("CRON_MODE") == "1" or st is None:
 # 12. تهيئة واجهة Streamlit والتصميم الزجاجي المتجاوب مع فرض صارم لاتجاه RTL
 # =====================================================================
 st.set_page_config(
-    page_title="المرصد الوطني للعدالة والقضاء",
+    page_title="المرصد القضائي",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -8880,7 +8880,7 @@ monitor_state = load_monitor_state()
 rt_state = get_shared_runtime()
 
 with st.sidebar:
-  st.markdown("### ⚙️ إعدادات المنصة")
+  st.markdown("### ⚙️ إعدادات المرصد القضائي")
   gemini_key_in = st.text_input(
       "مفتاح Gemini API", value=cfg.get("gemini_api_key", ""), type="password"
   )
@@ -8925,7 +8925,7 @@ with st.sidebar:
   st.download_button(
       "⬇️ تحميل أرشيف البيانات (JSON)",
       data=json_export_str.encode("utf-8"),
-      file_name="justice_monitor_backup.json",
+      file_name="المرصد_القضائي_أرشيف.json",
       mime="application/json",
   )
 
@@ -8958,7 +8958,7 @@ auto_badge_text = (
 
 render_html(f"""
 <div class="hero-glass" dir="rtl">
-    <h1 class="hero-title">⚖️ المرصد الوطني للعدالة والقضاء</h1>
+    <h1 class="hero-title">⚖️ المرصد القضائي</h1>
     <div class="status-pill" dir="rtl">
         <span class="pulse-dot"></span>
         <span>{html.escape(auto_badge_text)}</span>
@@ -9745,7 +9745,7 @@ def _create_fallback_png_bytes(platform: str = "الصحف", source_name: str = 
     draw.rectangle([8, 8, 311, 191], outline=accent_rgb, width=3)
     draw.rectangle([18, 18, 301, 54], fill=accent_rgb)
     draw.text((85, 28), en_tag, fill=(255, 255, 255))
-    draw.text((75, 95), "MOROCCO JUSTICE HUB", fill=(241, 245, 249))
+    draw.text((65, 95), "AL-MARSAD AL-QADAI", fill=(241, 245, 249))
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -9844,8 +9844,8 @@ def _build_pure_python_openxml_docx(selected_items: list, img_map: dict, search_
   doc_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
-    <w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>المرصد الوطني للعدالة والقضاء بالمغرب — تقرير الأخبار المحددة ({len(selected_items)} خبر)</w:t></w:r></w:p>
-    <w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:sz w:val="21"/></w:rPr><w:t>تاريخ التصدير: {now_str} | الكلمة المفتاحية: {html.escape(search_kw or 'شامل')}</w:t></w:r></w:p>
+    <w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>المرصد القضائي — تقرير الأخبار المحددة ({len(selected_items)} خبر)</w:t></w:r></w:p>
+    <w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:sz w:val="21"/></w:rPr><w:t>المنصة: المرصد القضائي | تاريخ التصدير: {now_str} | الكلمة المفتاحية: {html.escape(search_kw or 'شامل')}</w:t></w:r></w:p>
     <w:tbl>
       <w:tblPr>
         <w:bidi/>
@@ -9899,6 +9899,15 @@ def generate_selected_articles_docx(selected_items: list, search_kw: str = "", i
       section.bottom_margin = Inches(0.65)
       section.left_margin = Inches(0.65)
       section.right_margin = Inches(0.65)
+      try:
+        ftr_p = section.footer.paragraphs[0]
+        ftr_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        ftr_run = ftr_p.add_run("⚖️ المرصد القضائي — تقرير الأخبار القضائية المرصودة")
+        ftr_run.font.name = "Cairo"
+        ftr_run.font.size = Pt(9.5)
+        ftr_run.font.color.rgb = RGBColor(100, 116, 139)
+      except Exception:
+        pass
 
     style_normal = doc.styles["Normal"]
     style_normal.font.name = "Cairo"
@@ -9913,7 +9922,7 @@ def generate_selected_articles_docx(selected_items: list, search_kw: str = "", i
     # عنوان التقرير الرئيسي
     title_p = doc.add_paragraph()
     _set_p_rtl(title_p, WD_ALIGN_PARAGRAPH.RIGHT)
-    t_run = title_p.add_run("⚖️ المرصد الوطني للعدالة والقضاء بالمغرب — تقرير تجميعي للأخبار القضائية المحددة")
+    t_run = title_p.add_run("⚖️ المرصد القضائي — تقرير تجميعي للأخبار القضائية المحددة")
     t_run.font.name = "Cairo"
     t_run.font.size = Pt(18)
     t_run.font.bold = True
@@ -9926,7 +9935,7 @@ def generate_selected_articles_docx(selected_items: list, search_kw: str = "", i
     meta_p = doc.add_paragraph()
     _set_p_rtl(meta_p, WD_ALIGN_PARAGRAPH.RIGHT)
     m_run = meta_p.add_run(
-        f"تاريخ التصدير: {now_str}   |   عدد الأخبار المجمعة: {len(selected_items)} خبر   |   الكلمة المفتاحية للبحث: {kw_label}"
+        f"المنصة: المرصد القضائي   |   تاريخ التصدير: {now_str}   |   عدد الأخبار المجمعة: {len(selected_items)} خبر   |   الكلمة المفتاحية للبحث: {kw_label}"
     )
     m_run.font.name = "Cairo"
     m_run.font.size = Pt(11)
@@ -10127,14 +10136,14 @@ def build_selected_articles_export_html(selected_items: list, search_kw: str = "
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <title>تقرير الأخبار القضائية المحددة</title>
+  <title>المرصد القضائي — تقرير الأخبار القضائية المحددة</title>
   <style>
     @page {{
       size: A4 landscape;
       margin: 14mm 12mm;
       background: #ffffff;
       @bottom-right {{
-        content: "صفحة " counter(page) " من " counter(pages);
+        content: "المرصد القضائي — صفحة " counter(page) " من " counter(pages);
         font-family: "Noto Sans Arabic", "Cairo", Arial, sans-serif;
         font-size: 8.5pt;
         color: #475569;
@@ -10242,8 +10251,9 @@ def build_selected_articles_export_html(selected_items: list, search_kw: str = "
 </head>
 <body>
   <div class="report-header">
-    <h1>⚖️ المرصد الوطني للعدالة والقضاء بالمغرب — جدول الأخبار القضائية المحددة</h1>
+    <h1>⚖️ المرصد القضائي — جدول الأخبار القضائية المحددة</h1>
     <div class="report-meta">
+      المنصة: المرصد القضائي &nbsp;|&nbsp;
       تاريخ التصدير: <span dir="ltr">{html.escape(now_str)}</span> &nbsp;|&nbsp;
       عدد الأخبار المجمعة: {len(selected_items)} خبر &nbsp;|&nbsp;
       الكلمة المفتاحية للبحث: {kw_label}
@@ -10649,7 +10659,7 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
           <div style="display:flex;align-items:center;gap:12px;direction:rtl;">
               <span style="width:44px;height:44px;min-width:44px;border-radius:13px;display:inline-flex;align-items:center;justify-content:center;font-size:1.35rem;background:rgba(56,189,248,0.2);border:1px solid rgba(56,189,248,0.55);">📑</span>
               <div>
-                  <div style="font-size:clamp(1.02rem, 1.8vw, 1.18rem);font-weight:900;color:#f0f9ff;line-height:1.3;">البحث في الأخبار المرصودة وتجميع وتصدير التقارير (Word & PDF)</div>
+                  <div style="font-size:clamp(1.02rem, 1.8vw, 1.18rem);font-weight:900;color:#f0f9ff;line-height:1.3;">المرصد القضائي — البحث في الأخبار المرصودة وتجميع وتصدير التقارير (Word & PDF)</div>
                   <div style="font-size:0.8rem;font-weight:700;color:#cbd5e1;margin-top:2px;">ابحث بالكلمة المفتاحية في الأخبار المعروضة حالياً أو المؤرشفة، وحدد الأخبار لتصديرها في جدول منظم يضم (العنوان، الملخص، المصدر، والصورة)</div>
               </div>
           </div>
@@ -10768,7 +10778,7 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
         st.download_button(
             label=f"📘 تحميل ملف وورد Word (.docx) [{len(selected_items_list)} خبر]",
             data=docx_bytes,
-            file_name=f"justice_news_report_{ts_file_tag}.docx",
+            file_name=f"المرصد_القضائي_تقرير_{ts_file_tag}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             key=f"{key_prefix}_dl_docx_btn",
             use_container_width=True,
@@ -10778,7 +10788,7 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
         st.download_button(
             label=f"📕 تحميل ملف PDF (.pdf) [{len(selected_items_list)} خبر]",
             data=pdf_bytes,
-            file_name=f"justice_news_report_{ts_file_tag}.pdf",
+            file_name=f"المرصد_القضائي_تقرير_{ts_file_tag}.pdf",
             mime="application/pdf",
             key=f"{key_prefix}_dl_pdf_btn",
             use_container_width=True,
@@ -10811,10 +10821,11 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
           """
       )
 
-    with st.expander(f"👁️ معاينة الجدول المنظم للأخبار المحددة للتصدير ({len(selected_items_list)} خبر)", expanded=True):
+    with st.expander(f"👁️ المرصد القضائي — معاينة الجدول المنظم للأخبار المحددة للتصدير ({len(selected_items_list)} خبر)", expanded=True):
       render_html(
           f"""
-          <div style="overflow-x:auto;background:rgba(9,13,22,0.85);border:1px solid rgba(56,189,248,0.35);border-radius:14px;padding:6px;direction:rtl;text-align:right;">
+          <div style="overflow-x:auto;background:rgba(9,13,22,0.85);border:1px solid rgba(56,189,248,0.35);border-radius:14px;padding:10px;direction:rtl;text-align:right;">
+              <div style="font-weight:900;color:#38bdf8;font-size:0.95rem;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(56,189,248,0.28);">⚖️ المرصد القضائي — جدول الأخبار القضائية المحددة ({len(selected_items_list)} خبر)</div>
               <table style="width:100%;border-collapse:collapse;direction:rtl;text-align:right;font-family:'Cairo',sans-serif;">
                   <thead>
                       <tr style="background:rgba(15,23,42,0.95);border-bottom:2px solid #38bdf8;">
