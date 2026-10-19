@@ -497,40 +497,71 @@ SEARCH_PERIOD_MAP = {
 
 ARABIC_MONTHS = {
     "يناير": 1,
+    "كانون الثاني": 1,
     "فبراير": 2,
+    "شباط": 2,
     "مارس": 3,
+    "آذار": 3,
+    "اذار": 3,
     "أبريل": 4,
     "ابريل": 4,
+    "نيسان": 4,
     "ماي": 5,
     "مايو": 5,
+    "أيار": 5,
+    "ايار": 5,
     "يونيو": 6,
+    "حزيران": 6,
     "يوليوز": 7,
     "يوليو": 7,
+    "تموز": 7,
     "غشت": 8,
     "أغسطس": 8,
+    "اغسطس": 8,
+    "آب": 8,
+    "اب": 8,
     "شتنبر": 9,
     "سبتمبر": 9,
+    "أيلول": 9,
+    "ايلول": 9,
     "أكتوبر": 10,
     "اكتوبر": 10,
+    "تشرين الأول": 10,
+    "تشرين الاول": 10,
     "نونبر": 11,
     "نوفمبر": 11,
+    "تشرين الثاني": 11,
     "دجنبر": 12,
     "ديسمبر": 12,
+    "كانون الأول": 12,
+    "كانون الاول": 12,
 }
 
 ENGLISH_MONTHS = {
     "jan": 1,
+    "janv": 1,
     "feb": 2,
+    "fevr": 2,
+    "févr": 2,
     "mar": 3,
+    "mars": 3,
     "apr": 4,
+    "avr": 4,
     "may": 5,
+    "mai": 5,
     "jun": 6,
+    "juin": 6,
     "jul": 7,
+    "juil": 7,
     "aug": 8,
+    "aout": 8,
+    "août": 8,
     "sep": 9,
+    "sept": 9,
     "oct": 10,
     "nov": 11,
     "dec": 12,
+    "déc": 12,
 }
 
 
@@ -2279,6 +2310,28 @@ def enrich_item_content_and_image(item: dict) -> dict:
   if not img_url:
     img_url = extract_thumbnail_for_item(url, "", plat)
 
+  # التحقق الصارم من تاريخ النشر الحقيقي لفيديوهات يوتيوب عبر بيانات الفيديو الرسمية (uploadDate / publishDate)
+  m_yt_enrich = re.search(
+      r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})",
+      clean_social_post_url(url),
+  )
+  if m_yt_enrich or plat == "يوتيوب":
+    vid_e = m_yt_enrich.group(1) if m_yt_enrich else ""
+    if vid_e:
+      yt_meta = fetch_youtube_video_exact_metadata(vid_e, rel_hint=str(item.get("pub_rel") or ""))
+      if yt_meta.get("has_exact_date") and float(yt_meta.get("pub_timestamp") or 0) > 0:
+        item["pub_date"] = yt_meta["pub_date"]
+        item["pub_timestamp"] = float(yt_meta["pub_timestamp"])
+        item["_yt_exact_verified"] = True
+      if yt_meta.get("short_desc") and len(yt_meta["short_desc"]) > len(raw_snip_full):
+        raw_snip_full = yt_meta["short_desc"]
+        raw_snip = clean_display_text(raw_snip_full)
+      if yt_meta.get("channel_name") and item.get("source_name") in ("", "يوتيوب", "YouTube", "يوتيوب (youtube.com)"):
+        ch_n = yt_meta["channel_name"]
+        ch_lbl = ch_n if ch_n.startswith("قناة") else f"قناة {ch_n}"
+        item["source_name"] = format_precise_source_with_domain(ch_lbl, url, "يوتيوب", title_hint=title)
+        src = item["source_name"]
+
   need_body = (
       not raw_snip_full
       or len(raw_snip_full) < 480
@@ -2692,10 +2745,48 @@ def _has_inappropriate_terms(title: str, snippet: str, url: str) -> bool:
 
 
 def purge_invalid_articles_from_db():
-  """تطهير الأخبار المخالفة فقط مع حماية الأرشيف التاريخي بالكامل من الحذف عند تحديث الكود أو تعديل الروابط المخصصة."""
+  """تطهير الأخبار المخالفة وتصحيح تواريخ نشر فيديوهات يوتيوب الحقيقية لضمان عدم عرض أي فيديو قديم على أنه منشور حديثاً."""
   lock = get_db_lock()
   current_targets = load_custom_targets()
   now_ts = time.time()
+  rt = get_shared_runtime()
+  verified_yt_ids_set = rt.setdefault("verified_db_yt_vids", set())
+
+  # استخراج معرفات فيديوهات يوتيوب غير المفحوصة بعد للتحقق المتوازي السريع من تاريخ نشرها الحقيقي
+  yt_candidates_to_verify = []
+  with lock:
+    try:
+      conn_pre = _open_sqlite_conn()
+      _ensure_schema_on_conn(conn_pre)
+      conn_pre.row_factory = sqlite3.Row
+      c_pre = conn_pre.cursor()
+      c_pre.execute("SELECT id, url, platform, pub_timestamp, created_at FROM articles WHERE platform = 'يوتيوب' OR url LIKE '%youtube.com%' OR url LIKE '%youtu.be%'")
+      for r_y in c_pre.fetchall():
+        u_y = clean_social_post_url(r_y["url"] or "")
+        m_vy = re.search(r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})", u_y)
+        if m_vy:
+          vid_y = m_vy.group(1)
+          if vid_y not in verified_yt_ids_set:
+            yt_candidates_to_verify.append((r_y["id"], vid_y, float(r_y["pub_timestamp"] or 0), float(r_y["created_at"] or 0)))
+      conn_pre.close()
+    except Exception:
+      pass
+
+  yt_verified_meta_map = {}
+  if yt_candidates_to_verify:
+    def _verify_one_db_yt(item_tuple):
+      row_id, vid_k, old_pts, old_cat = item_tuple
+      meta = fetch_youtube_video_exact_metadata(vid_k)
+      return row_id, vid_k, meta, old_pts, old_cat
+
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+        for row_id, vid_k, meta, old_pts, old_cat in pool.map(_verify_one_db_yt, yt_candidates_to_verify[:60]):
+          verified_yt_ids_set.add(vid_k)
+          yt_verified_meta_map[vid_k] = meta
+    except Exception:
+      pass
+
   with lock:
     removed_any = False
     try:
@@ -2708,6 +2799,7 @@ def purge_invalid_articles_from_db():
       )
       rows = c.fetchall()
       bad_ids = []
+      date_updates = []
       for r in rows:
         d = dict(r)
         snip = f"{d.get('summary') or ''} {d.get('raw_snippet') or ''}"
@@ -2716,8 +2808,26 @@ def purge_invalid_articles_from_db():
         if _has_inappropriate_terms(t_str, snip, u_str):
           bad_ids.append((d["id"],))
           continue
+
         pub_t = float(d.get("pub_timestamp") or 0)
         mon_t = float(d.get("created_at") or pub_t)
+
+        # تصحيح تاريخ النشر الفعلي لفيديوهات يوتيوب المخزنة في القاعدة
+        u_clean_y = clean_social_post_url(u_str)
+        m_vy = re.search(r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})", u_clean_y)
+        if m_vy:
+          vid_k = m_vy.group(1)
+          meta_y = yt_verified_meta_map.get(vid_k) or _YT_EXACT_META_CACHE.get(vid_k)
+          if meta_y and meta_y.get("has_exact_date") and float(meta_y.get("pub_timestamp") or 0) > 0:
+            real_pts = float(meta_y["pub_timestamp"])
+            real_pstr = meta_y["pub_date"]
+            if abs(real_pts - pub_t) > 900:
+              pub_t = real_pts
+              # إذا كان الفيديو قديماً في الحقيقة (منشور منذ أكثر من 24 ساعة)، نضبط وقت رصده على وقت نشره الحقيقي حتى لا يظهر كفيديو جديد اليوم
+              new_mon_t = real_pts if (now_ts - real_pts) >= 86400 else mon_t
+              mon_t = new_mon_t
+              date_updates.append((real_pstr, real_pts, new_mon_t, d["id"]))
+
         is_archived_item = ((now_ts - mon_t) >= 86400) or ((now_ts - pub_t) >= 86400 and abs(mon_t - pub_t) < 120)
         # لا نحذف العناصر المحفوظة في الأرشيف إطلاقاً طالما أنها نظيفة
         if is_archived_item:
@@ -2729,6 +2839,10 @@ def purge_invalid_articles_from_db():
           bad_ids.append((d["id"],))
         elif is_tgt and not belongs_to_any_custom_target(d, current_targets):
           bad_ids.append((d["id"],))
+      if date_updates:
+        c.executemany("UPDATE articles SET pub_date = ?, pub_timestamp = ?, created_at = ? WHERE id = ?", date_updates)
+        conn.commit()
+        removed_any = True
       if bad_ids:
         c.executemany("DELETE FROM articles WHERE id = ?", bad_ids)
         conn.commit()
@@ -2736,6 +2850,37 @@ def purge_invalid_articles_from_db():
       conn.close()
     except Exception:
       pass
+
+    # تحديث تواريخ يوتيوب المصححة داخل ملفات الأرشيف JSON أيضاً
+    if yt_verified_meta_map:
+      for arch_path in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
+        if os.path.exists(arch_path):
+          try:
+            with open(arch_path, "r", encoding="utf-8") as f:
+              arch_data = json.load(f)
+            if isinstance(arch_data, list):
+              changed_arch_dates = False
+              for item in arch_data:
+                if not isinstance(item, dict):
+                  continue
+                u_a = clean_social_post_url(item.get("url") or "")
+                m_va = re.search(r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})", u_a)
+                if m_va and m_va.group(1) in yt_verified_meta_map:
+                  meta_a = yt_verified_meta_map[m_va.group(1)]
+                  if meta_a.get("has_exact_date") and float(meta_a.get("pub_timestamp") or 0) > 0:
+                    r_pts = float(meta_a["pub_timestamp"])
+                    if abs(r_pts - float(item.get("pub_timestamp") or 0)) > 900:
+                      item["pub_date"] = meta_a["pub_date"]
+                      item["pub_timestamp"] = r_pts
+                      if (now_ts - r_pts) >= 86400:
+                        item["created_at"] = r_pts
+                      changed_arch_dates = True
+              if changed_arch_dates:
+                with open(arch_path, "w", encoding="utf-8") as f:
+                  json.dump(arch_data, f, ensure_ascii=False, indent=2)
+                removed_any = True
+          except Exception:
+            pass
 
     for arch_path in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
       if os.path.exists(arch_path):
@@ -3663,6 +3808,67 @@ def save_monitor_state(state):
 # =====================================================================
 # 7. استخراج ومعالجة تواريخ النشر الحقيقية وتاريخ الرصد
 # =====================================================================
+_EASTERN_ARABIC_DIGITS_MAP = str.maketrans(
+    "٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹",
+    "01234567890123456789",
+)
+
+_ARABIC_NUMBER_WORDS = {
+    "واحد": 1,
+    "واحدة": 1,
+    "واحده": 1,
+    "اثنين": 2,
+    "اثنان": 2,
+    "ثلاث": 3,
+    "ثلاثة": 3,
+    "ثلاثه": 3,
+    "اربع": 4,
+    "أربع": 4,
+    "اربعة": 4,
+    "أربعة": 4,
+    "اربعه": 4,
+    "خمس": 5,
+    "خمسة": 5,
+    "خمسه": 5,
+    "ست": 6,
+    "ستة": 6,
+    "سته": 6,
+    "سبع": 7,
+    "سبعة": 7,
+    "سبعه": 7,
+    "ثمان": 8,
+    "ثماني": 8,
+    "ثمانية": 8,
+    "ثمانيه": 8,
+    "تسع": 9,
+    "تسعة": 9,
+    "تسعه": 9,
+    "عشر": 10,
+    "عشرة": 10,
+    "عشره": 10,
+}
+
+
+def _normalize_date_input_text(raw_str: str) -> str:
+  """تنظيف وتطبيع نصوص التواريخ بإزالة التشكيل والتنوين (مثل: شهرًا -> شهرا، يومًا -> يوما) وعلامات الاتجاه الخفية وتحويل الأرقام الهندية إلى أرقام قياسية."""
+  if not raw_str:
+    return ""
+  s = html.unescape(str(raw_str)).strip()
+  s = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]", "", s)
+  s = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", s)
+  s = s.translate(_EASTERN_ARABIC_DIGITS_MAP)
+  s = re.sub(r"\s+", " ", s).strip()
+  return s
+
+
+def has_explicit_parseable_date(date_str: str) -> bool:
+  """التحقق مما إذا كان النص يحتوي فعلياً على تاريخ حقيقي أو وقت نسبي قابل للتحليل (دون اللجوء للتوقيت الافتراضي)."""
+  if not date_str or not str(date_str).strip():
+    return False
+  _, ts = parse_any_date(str(date_str).strip(), fallback_offset_sec=-1)
+  return bool(ts > 0)
+
+
 def extract_date_from_url_or_text(
     url: str,
     text_snippet: str = "",
@@ -3672,8 +3878,8 @@ def extract_date_from_url_or_text(
   now_ts = time.time()
 
   if raw_date and str(raw_date).strip():
-    d_str, d_ts = parse_any_date(str(raw_date).strip(), fallback_offset_sec=0)
-    if d_ts > 0 and abs(now_ts - d_ts) > 5:
+    d_str, d_ts = parse_any_date(str(raw_date).strip(), fallback_offset_sec=-1)
+    if d_ts > 0:
       return d_str, d_ts
 
   if url:
@@ -3709,7 +3915,7 @@ def extract_date_from_url_or_text(
       except Exception:
         pass
 
-    m_url_date = re.search(r"/(20\d{2})/(\d{1,2})/(\d{1,2})/", url)
+    m_url_date = re.search(r"/(20\d{2})/(\d{1,2})/(\d{1,2})(?:/|$|-)", url)
     if m_url_date:
       try:
         dt = datetime(
@@ -3726,9 +3932,11 @@ def extract_date_from_url_or_text(
         pass
 
   if text_snippet:
-    return parse_any_date(
-        text_snippet[:240], fallback_offset_sec=fallback_offset_sec
+    d_str, d_ts = parse_any_date(
+        text_snippet[:300], fallback_offset_sec=-1
     )
+    if d_ts > 0:
+      return d_str, d_ts
 
   return parse_any_date("", fallback_offset_sec=fallback_offset_sec)
 
@@ -3736,11 +3944,20 @@ def extract_date_from_url_or_text(
 def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
   now_ts = time.time()
   if not date_str or not str(date_str).strip():
+    if fallback_offset_sec < 0:
+      return "", 0.0
     ts = now_ts - fallback_offset_sec
     dt = datetime.fromtimestamp(ts, tz=timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M"), ts
 
-  raw = str(date_str).strip()
+  raw_orig = str(date_str).strip()
+  raw = _normalize_date_input_text(raw_orig)
+  if not raw:
+    if fallback_offset_sec < 0:
+      return "", 0.0
+    ts = now_ts - fallback_offset_sec
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M"), ts
 
   # 1) طابع زمني رقمي مباشر (مثل data-utime في فيسبوك)
   if raw.isdigit() and len(raw) >= 9:
@@ -3757,7 +3974,7 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
 
   # 2) صيغ RFC 2822 القياسية لـ RSS
   try:
-    dt = parsedate_to_datetime(raw)
+    dt = parsedate_to_datetime(raw_orig)
     if dt.tzinfo is None:
       dt = dt.replace(tzinfo=timezone.utc)
     ts = min(dt.timestamp(), now_ts)
@@ -3768,12 +3985,22 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
   except Exception:
     pass
 
-  # 3) صيغ ISO 8601 (مثل YouTube Atom XML: 2026-10-13T18:30:00+00:00)
+  # 3) صيغ ISO 8601 (مثل YouTube uploadDate / publishDate: 2026-10-13T18:30:00+00:00 أو 2024-05-12)
   try:
     iso_clean = raw.replace("Z", "+00:00")
-    dt = datetime.fromisoformat(iso_clean)
-    if dt.tzinfo is None:
-      dt = dt.replace(tzinfo=timezone.utc)
+    if re.match(r"^20\d{2}-\d{2}-\d{2}$", iso_clean):
+      dt = datetime(
+          int(iso_clean[0:4]),
+          int(iso_clean[5:7]),
+          int(iso_clean[8:10]),
+          12,
+          0,
+          tzinfo=timezone.utc,
+      )
+    else:
+      dt = datetime.fromisoformat(iso_clean)
+      if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     ts = min(dt.timestamp(), now_ts)
     return (
         datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
@@ -3784,9 +4011,12 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
 
   rel_lower = raw.lower()
 
-  # 4) التواريخ الصريحة بالشهور العربية (مثل: 17 يوليوز 2026)
+  # 4) التواريخ الصريحة بالشهور العربية (مثل: 17 يوليوز 2026 أو 15 اكتوبر، 2023)
   for ar_m, m_idx in ARABIC_MONTHS.items():
-    m_ar = re.search(rf"(\d{{1,2}})\s+{ar_m}\s*,?\s*(20\d{{2}})", raw)
+    ar_m_norm = _normalize_date_input_text(ar_m)
+    m_ar1 = re.search(rf"(\d{{1,2}})\s+{re.escape(ar_m_norm)}\s*[،,]?\s*(20\d{{2}})", raw)
+    m_ar2 = re.search(rf"{re.escape(ar_m_norm)}\s+(\d{{1,2}})\s*[،,]?\s*(20\d{{2}})", raw)
+    m_ar = m_ar1 or m_ar2
     if m_ar:
       try:
         dt = datetime(
@@ -3802,13 +4032,13 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
       except Exception:
         pass
 
-  # 5) التواريخ الصريحة بالشهور الإنجليزية/الفرنسية (مثل: Oct 2, 2026 أو July 03 2026)
+  # 5) التواريخ الصريحة بالشهور الإنجليزية/الفرنسية (مثل: Oct 2, 2026 أو 15 févr. 2024)
   for en_m, m_idx in ENGLISH_MONTHS.items():
     m_en1 = re.search(
-        rf"\b{en_m}[a-z]*\s+(\d{{1,2}}),?\s+(20\d{{2}})", rel_lower
+        rf"\b{re.escape(en_m)}[a-z\.]*\s+(\d{{1,2}}),?\s+(20\d{{2}})", rel_lower
     )
     m_en2 = re.search(
-        rf"\b(\d{{1,2}})\s+{en_m}[a-z]*,?\s+(20\d{{2}})", rel_lower
+        rf"\b(\d{{1,2}})\s+{re.escape(en_m)}[a-z\.]*,?\s+(20\d{{2}})", rel_lower
     )
     m_en = m_en1 or m_en2
     if m_en:
@@ -3826,8 +4056,8 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
       except Exception:
         pass
 
-  # 6) التواريخ الرقمية الصريحة YYYY-MM-DD أو DD-MM-YYYY
-  m_ymd = re.search(r"\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", raw)
+  # 6) التواريخ الرقمية الصريحة YYYY-MM-DD أو DD-MM-YYYY أو DD/MM/YYYY
+  m_ymd = re.search(r"\b(20\d{2})[-/\.](0?[1-9]|1[0-2])[-/\.](0?[1-9]|[12]\d|3[01])\b", raw)
   if m_ymd:
     try:
       dt = datetime(
@@ -3843,7 +4073,7 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
     except Exception:
       pass
 
-  m_dmy = re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](20\d{2})\b", raw)
+  m_dmy = re.search(r"\b(0?[1-9]|[12]\d|3[01])[-/\.](0?[1-9]|1[0-2])[-/\.](20\d{2})\b", raw)
   if m_dmy:
     try:
       dt = datetime(
@@ -3859,13 +4089,14 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
     except Exception:
       pass
 
-  # 7) صيغ الوقت النسبي الإنجليزية والفرنسية الصريحة (مثل: 3 days ago أو Streamed 18h ago أو il y a 2 jours)
+  # 7) صيغ الوقت النسبي الفرنسية الصريحة (مثل: il y a 2 jours / il y a un an / il y a 6 mois / il y a une semaine)
   m_fr_rel = re.search(
-      r"il y a\s+(\d+)\s*(seconde|secondes|minute|minutes|heure|heures|jour|jours|semaine|semaines|mois|an|ans)\b",
+      r"il y a\s+(?:environ\s+)?(\d+|un|une)\s*(seconde|secondes|minute|minutes|heure|heures|jour|jours|semaine|semaines|mois|an|ans|annee|annees|année|années)\b",
       rel_lower,
   )
   if m_fr_rel:
-    n_fr = int(m_fr_rel.group(1))
+    num_tok_fr = m_fr_rel.group(1)
+    n_fr = 1 if num_tok_fr in ("un", "une") else int(num_tok_fr)
     u_fr = m_fr_rel.group(2)
     if u_fr.startswith("sec"):
       ts = now_ts - n_fr
@@ -3886,75 +4117,106 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
         ts,
     )
 
-  m_short_rel = re.search(
-      r"(?:^|\b)(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks|mo|month|months|y|yr|yrs|year|years)\b(?:\s*ago|\s*·)?",
-      rel_lower,
-  )
-  if m_short_rel and (
-      "ago" in rel_lower
-      or "·" in rel_lower[:25]
-      or len(raw) <= 28
-  ):
-    n = int(m_short_rel.group(1))
-    u = m_short_rel.group(2)
-    if u.startswith("s"):
-      ts = now_ts - n
-    elif u.startswith("mo"):
-      ts = now_ts - n * 30 * 86400
-    elif u.startswith("m"):
-      ts = now_ts - n * 60
-    elif u.startswith("h"):
-      ts = now_ts - n * 3600
-    elif u.startswith("d"):
-      ts = now_ts - n * 86400
-    elif u.startswith("w"):
-      ts = now_ts - n * 7 * 86400
-    else:
-      ts = now_ts - n * 365 * 86400
+  if re.search(r"\b(yesterday|hier)\b", rel_lower):
+    ts = now_ts - 86400
     return (
         datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
         ts,
     )
 
-  # 8) صيغ الوقت النسبي العربية الصريحة فقط (مسبوقة بـ "منذ" أو "قبل" أو نص قصير مثل "قبل 3 ساعات" حتى لا تلتبس مع كلمات مثل "النيابة العامة" أو "اليوم")
-  m_ar_rel = re.search(
-      r"(?:منذ|قبل)\s*(?:حوالي\s*|أكثر من\s*|أقل من\s*)?(?:(\d+)\s*)?(ثانية|ثواني|دقيقة|دقائق|دقيقتين|ساعة|ساعات|ساعتين|يوم|أيام|يومين|أسبوع|أسابيع|اسبوع|أسبوعين|شهر|أشهر|شهور|شهرين|سنة|سنوات|عام|أعوام|سنتين|عامين|لحظات)\b",
+  # 8) صيغ الوقت النسبي الإنجليزية الصريحة (مثل: 3 days ago / a year ago / an hour ago / Streamed 5 months ago)
+  m_en_ago = re.search(
+      r"(?:^|\b)(\d+|a|an)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks|mo|mos|month|months|y|yr|yrs|year|years)\b(?:\s+ago)?",
       rel_lower,
   )
-  if not m_ar_rel and len(raw) <= 26:
+  if m_en_ago and (
+      "ago" in rel_lower
+      or "streamed" in rel_lower
+      or "premiered" in rel_lower
+      or "·" in rel_lower[:25]
+      or len(raw) <= 28
+  ):
+    tok_en = m_en_ago.group(1)
+    u = m_en_ago.group(2)
+    # إذا كان الرمز a/an بدون كلمة ago فلا نقبله إلا مع وجود ago لمنع التباس الحرف a في النصوص العادية
+    if tok_en in ("a", "an") and "ago" not in rel_lower:
+      pass
+    else:
+      n = 1 if tok_en in ("a", "an") else int(tok_en)
+      if u.startswith("s"):
+        ts = now_ts - n
+      elif u.startswith("mo"):
+        ts = now_ts - n * 30 * 86400
+      elif u.startswith("m"):
+        ts = now_ts - n * 60
+      elif u.startswith("h"):
+        ts = now_ts - n * 3600
+      elif u.startswith("d"):
+        ts = now_ts - n * 86400
+      elif u.startswith("w"):
+        ts = now_ts - n * 7 * 86400
+      else:
+        ts = now_ts - n * 365 * 86400
+      return (
+          datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
+          ts,
+      )
+
+  # 9) صيغ الوقت النسبي العربية الصريحة (بما فيها التنوين مثل: قبل 11 شهرًا / قبل 15 يومًا / قبل 12 عامًا / قبل سنتين / قبل شهرين)
+  ar_units_pat = (
+      r"(ثواني|ثوان|ثانية|ثانيه|لحظات|لحظة|لحظه|الآن|الان|"
+      r"دقيقتين|دقيقتان|دقائق|دقيقة|دقيقه|"
+      r"ساعتين|ساعتان|ساعات|ساعة|ساعه|"
+      r"يومين|يومان|يوما|أيام|ايام|يوم|أمس|امس|البارحة|البارحه|"
+      r"أسبوعين|اسبوعين|أسبوعان|اسبوعان|أسبوعا|اسبوعا|أسابيع|اسابيع|أسبوع|اسبوع|"
+      r"شهرين|شهران|شهرا|أشهر|اشهر|شهور|شهر|"
+      r"سنتين|سنتان|سنوات|سنة|سنه|عامين|عامان|أعوام|اعوام|عاما|عام)"
+  )
+  ar_num_words_pat = "|".join(_ARABIC_NUMBER_WORDS.keys())
+  m_ar_rel = re.search(
+      rf"(?:منذ|قبل)\s*(?:حوالي\s*|اكثر من\s*|أكثر من\s*|اقل من\s*|أقل من\s*|قرابة\s*)?(?:(\d+|{ar_num_words_pat})\s*)?{ar_units_pat}\b",
+      rel_lower,
+  )
+  if not m_ar_rel and len(raw) <= 32:
     m_ar_rel = re.search(
-        r"^(?:(\d+)\s*)?(ثانية|ثواني|دقيقة|دقائق|دقيقتين|ساعة|ساعات|ساعتين|يوم|أيام|يومين|أسبوع|أسابيع|اسبوع|أسبوعين|شهر|أشهر|شهور|شهرين|سنة|سنوات|عام|أعوام|سنتين|عامين|أمس|الآن)\b",
+        rf"^(?:تم البث\s+|بث مباشر\s+|العرض الاول\s+|العرض الأول\s+)?(?:منذ\s+|قبل\s+)?(?:(\d+|{ar_num_words_pat})\s*)?{ar_units_pat}\b",
         rel_lower,
     )
   if m_ar_rel:
-    num = int(m_ar_rel.group(1)) if m_ar_rel.group(1) else 1
+    num_tok = (m_ar_rel.group(1) or "").strip()
+    if num_tok.isdigit():
+      num = int(num_tok)
+    elif num_tok in _ARABIC_NUMBER_WORDS:
+      num = _ARABIC_NUMBER_WORDS[num_tok]
+    else:
+      num = 1
     unit_ar = m_ar_rel.group(2)
-    if unit_ar in ("ثانية", "ثواني", "لحظات", "الآن"):
+    if unit_ar in ("ثانية", "ثانيه", "ثواني", "ثوان", "لحظة", "لحظه", "لحظات", "الآن", "الان"):
       ts = now_ts - 60
-    elif unit_ar in ("دقيقة", "دقائق", "دقيقتين"):
-      if unit_ar == "دقيقتين":
+    elif unit_ar in ("دقيقة", "دقيقه", "دقائق", "دقيقتين", "دقيقتان"):
+      if unit_ar in ("دقيقتين", "دقيقتان"):
         num = 2
       ts = now_ts - (num * 60)
-    elif unit_ar in ("ساعة", "ساعات", "ساعتين"):
-      if unit_ar == "ساعتين":
+    elif unit_ar in ("ساعة", "ساعه", "ساعات", "ساعتين", "ساعتان"):
+      if unit_ar in ("ساعتين", "ساعتان"):
         num = 2
       ts = now_ts - (num * 3600)
-    elif unit_ar in ("يوم", "أيام", "يومين", "أمس"):
-      if unit_ar == "يومين":
+    elif unit_ar in ("يوم", "يوما", "أيام", "ايام", "يومين", "يومان", "أمس", "امس", "البارحة", "البارحه"):
+      if unit_ar in ("يومين", "يومان"):
         num = 2
-      elif unit_ar == "أمس":
+      elif unit_ar in ("أمس", "امس", "البارحة", "البارحه"):
         num = 1
       ts = now_ts - (num * 86400)
-    elif unit_ar in ("أسبوع", "أسابيع", "اسبوع", "أسبوعين"):
-      if unit_ar == "أسبوعين":
+    elif unit_ar in ("أسبوع", "اسبوع", "أسبوعا", "اسبوعا", "أسابيع", "اسابيع", "أسبوعين", "اسبوعين", "أسبوعان", "اسبوعان"):
+      if unit_ar in ("أسبوعين", "اسبوعين", "أسبوعان", "اسبوعان"):
         num = 2
       ts = now_ts - (num * 7 * 86400)
-    elif unit_ar in ("شهر", "أشهر", "شهور", "شهرين"):
-      if unit_ar == "شهرين":
+    elif unit_ar in ("شهر", "شهرا", "أشهر", "اشهر", "شهور", "شهرين", "شهران"):
+      if unit_ar in ("شهرين", "شهران"):
         num = 2
       ts = now_ts - (num * 30 * 86400)
     else:
-      if unit_ar in ("سنتين", "عامين"):
+      if unit_ar in ("سنتين", "سنتان", "عامين", "عامان"):
         num = 2
       ts = now_ts - (num * 365 * 86400)
     return (
@@ -3962,6 +4224,8 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
         ts,
     )
 
+  if fallback_offset_sec < 0:
+    return "", 0.0
   ts = now_ts - fallback_offset_sec
   dt_fmt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
   return dt_fmt, ts
@@ -3975,7 +4239,12 @@ def format_relative_arabic(pub_ts: float) -> str:
     return f"منذ {diff // 60} دقيقة"
   if diff < 86400:
     return f"منذ {diff // 3600} ساعة"
-  return f"منذ {diff // 86400} يوم"
+  days = diff // 86400
+  if days < 30:
+    return f"منذ {days} يوم"
+  if days < 365:
+    return f"منذ {max(1, days // 30)} شهر"
+  return f"منذ {max(1, days // 365)} سنة"
 
 
 # =====================================================================
@@ -4380,34 +4649,200 @@ def build_youtube_judicial_queries(keywords_input: str) -> list:
   ]
 
 
+_YT_EXACT_META_CACHE = {}
+
+
 def _extract_yt_relative_time_from_text(text: str) -> str:
-  """استخراج عبارة الوقت النسبي (مثل: قبل 3 أيام / قبل يومين / 2 days ago / il y a 3 jours) من نصوص يوتيوب أو accessibilityData."""
+  """استخراج عبارة الوقت النسبي أو التاريخ الصريح (بما في ذلك صيغ التنوين مثل: قبل 11 شهرًا / قبل 15 يومًا / قبل سنتين / 2 days ago / il y a un an) من نصوص يوتيوب."""
   if not text:
     return ""
+  norm_t = _normalize_date_input_text(text)
+  if not norm_t:
+    return ""
+
+  ar_units = (
+      r"(?:ثواني|ثوان|ثانية|ثانيه|دقيقتين|دقيقتان|دقائق|دقيقة|دقيقه|"
+      r"ساعتين|ساعتان|ساعات|ساعة|ساعه|يومين|يومان|يوما|أيام|ايام|يوم|أمس|امس|"
+      r"أسبوعين|اسبوعين|أسبوعان|اسبوعان|أسبوعا|اسبوعا|أسابيع|اسابيع|أسبوع|اسبوع|"
+      r"شهرين|شهران|شهرا|أشهر|اشهر|شهور|شهر|"
+      r"سنتين|سنتان|سنوات|سنة|سنه|عامين|عامان|أعوام|اعوام|عاما|عام)"
+  )
+  ar_num_w = "|".join(sorted(_ARABIC_NUMBER_WORDS.keys(), key=len, reverse=True))
   m_ar = re.search(
-      r"((?:تم البث\s+|بث مباشر\s+)?(?:قبل|منذ)\s+(?:حوالي\s+)?(?:\d+\s+)?(?:ثانية|ثواني|دقيقة|دقائق|دقيقتين|ساعة|ساعات|ساعتين|يوم|أيام|يومين|أسبوع|أسابيع|اسبوع|أسبوعين|شهر|أشهر|شهور|شهرين|سنة|سنوات|عام|أعوام|سنتين|عامين)(?:\s+واحد|\s+واحدة)?)",
-      text,
+      rf"((?:تم البث\s+|بث مباشر\s+|العرض الاول\s+|العرض الأول\s+)?(?:قبل|منذ)\s+(?:حوالي\s+|اكثر من\s+|أكثر من\s+|اقل من\s+|أقل من\s+)?(?:(?:\d+|{ar_num_w})\s+)?{ar_units}\b(?:\s+واحد|\s+واحدة|\s+واحده)?)",
+      norm_t,
       re.IGNORECASE,
   )
   if m_ar:
     return m_ar.group(1).strip()
 
   m_en = re.search(
-      r"((?:Streamed\s+|Premiered\s+)?\d+\s+(?:second|seconds|minute|minutes|hour|hours|day|days|week|weeks|month|months|year|years)\s+ago)",
-      text,
+      r"((?:Streamed\s+|Premiered\s+)?(?:\d+|a|an)\s+(?:second|seconds|minute|minutes|hour|hours|day|days|week|weeks|month|months|year|years)\s+ago)",
+      norm_t,
       re.IGNORECASE,
   )
   if m_en:
     return m_en.group(1).strip()
 
   m_fr = re.search(
-      r"(il y a\s+\d+\s+(?:seconde|secondes|minute|minutes|heure|heures|jour|jours|semaine|semaines|mois|an|ans))",
-      text,
+      r"((?:Diffusé\s+|Première\s+)?il y a\s+(?:environ\s+)?(?:\d+|un|une)\s+(?:seconde|secondes|minute|minutes|heure|heures|jour|jours|semaine|semaines|mois|an|ans|année|années|annee|annees))",
+      norm_t,
       re.IGNORECASE,
   )
   if m_fr:
     return m_fr.group(1).strip()
+
+  if len(norm_t) <= 32 and has_explicit_parseable_date(norm_t):
+    return norm_t
+
   return ""
+
+
+def fetch_youtube_video_exact_metadata(vid_id: str, rel_hint: str = "") -> dict:
+  """استخراج التاريخ الحقيقي الدقيق لنشر فيديو يوتيوب (uploadDate / publishDate / startTimestamp) مباشرة من بيانات الفيديو الرسمية لمنع أي التباس في التوقيت."""
+  vid = str(vid_id or "").strip()
+  if not vid or len(vid) != 11:
+    return {"vid": vid, "has_exact_date": False, "pub_date": "", "pub_timestamp": 0.0}
+
+  cached = _YT_EXACT_META_CACHE.get(vid)
+  if isinstance(cached, dict) and cached.get("has_exact_date"):
+    return cached
+
+  pub_iso = ""
+  watch_date_text = ""
+  watch_rel_text = ""
+  title = ""
+  author = ""
+  channel_id = ""
+  short_desc = ""
+
+  # 1) فحص واجهة YouTube InnerTube v1/player السريعة للحصول على microformat (publishDate / uploadDate / startTimestamp)
+  player_url = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+  payload = {
+      "context": {
+          "client": {
+              "clientName": "WEB",
+              "clientVersion": "2.20240726.00.00",
+              "hl": "ar",
+              "gl": "MA",
+          }
+      },
+      "videoId": vid,
+  }
+  headers_json = dict(DEFAULT_HEADERS)
+  headers_json["Content-Type"] = "application/json"
+  try:
+    rp = requests.post(
+        player_url,
+        json=payload,
+        headers=headers_json,
+        cookies=YT_BYPASS_COOKIES,
+        timeout=4.2,
+    )
+    if rp.status_code == 200 and rp.text:
+      p_data = rp.json()
+      mf = p_data.get("microformat", {}).get("playerMicroformatRenderer", {})
+      vd = p_data.get("videoDetails", {})
+      if isinstance(mf, dict):
+        live_b = mf.get("liveBroadcastDetails", {})
+        if isinstance(live_b, dict):
+          pub_iso = str(live_b.get("startTimestamp") or live_b.get("endTimestamp") or "").strip()
+        if not pub_iso:
+          pub_iso = str(mf.get("publishDate") or mf.get("uploadDate") or "").strip()
+        author = clean_display_text(mf.get("ownerChannelName") or "")
+        channel_id = str(mf.get("externalChannelId") or "").strip()
+        title = clean_display_text((mf.get("title") or {}).get("simpleText") or "")
+        short_desc = clean_full_article_text((mf.get("description") or {}).get("simpleText") or "")
+      if isinstance(vd, dict):
+        if not title:
+          title = clean_display_text(vd.get("title") or "")
+        if not author:
+          author = clean_display_text(vd.get("author") or "")
+        if not channel_id:
+          channel_id = str(vd.get("channelId") or "").strip()
+        if not short_desc and vd.get("shortDescription"):
+          short_desc = clean_full_article_text(vd.get("shortDescription") or "")
+  except Exception:
+    pass
+
+  # 2) فحص صفحة الفيديو المباشرة (watch?v=...) إذا لم يتوفر طابع زمني كامل أو لاستخراج dateText / uploadDate الدقيق
+  if not pub_iso or len(pub_iso) <= 10:
+    try:
+      rw = requests.get(
+          f"https://www.youtube.com/watch?v={vid}",
+          headers=DEFAULT_HEADERS,
+          cookies=YT_BYPASS_COOKIES,
+          timeout=4.5,
+      )
+      if rw.status_code == 200 and rw.text:
+        w_html = rw.text
+        m_full_iso = re.search(
+            r'(?:itemprop=["\'](?:datePublished|uploadDate)["\'][^>]+content=["\']|"(?:publishDate|uploadDate|startTimestamp)"\s*:\s*")(20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^"\'>]*)',
+            w_html,
+        )
+        if m_full_iso:
+          pub_iso = m_full_iso.group(1).strip()
+        elif not pub_iso:
+          m_date_iso = re.search(
+              r'(?:itemprop=["\'](?:datePublished|uploadDate)["\'][^>]+content=["\']|"(?:publishDate|uploadDate)"\s*:\s*")(20\d{2}-\d{2}-\d{2})',
+              w_html,
+          )
+          if m_date_iso:
+            pub_iso = m_date_iso.group(1).strip()
+
+        m_dt = re.search(r'"dateText"\s*:\s*\{"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"\}', w_html)
+        if m_dt:
+          watch_date_text = decode_js_escaped_text(m_dt.group(1))
+        m_pt = re.search(r'"publishedTimeText"\s*:\s*\{"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"\}', w_html)
+        if m_pt:
+          watch_rel_text = decode_js_escaped_text(m_pt.group(1))
+        if not author:
+          m_au = re.search(r'"ownerChannelName"\s*:\s*"((?:[^"\\]|\\.)*)"', w_html)
+          if m_au:
+            author = decode_js_escaped_text(m_au.group(1))
+        if not short_desc:
+          m_sd = re.search(r'"shortDescription"\s*:\s*"((?:[^"\\]|\\.){15,8000})"', w_html)
+          if m_sd:
+            short_desc = clean_full_article_text(decode_js_escaped_text(m_sd.group(1)))
+    except Exception:
+      pass
+
+  final_str = ""
+  final_ts = 0.0
+
+  if pub_iso:
+    iso_str, iso_ts = parse_any_date(pub_iso, fallback_offset_sec=-1)
+    if iso_ts > 0:
+      final_str, final_ts = iso_str, iso_ts
+      # إذا كان التاريخ المستخرج بصيغة يوم فقط (YYYY-MM-DD) ولدينا توقيت نسبي بالساعات أو الدقائق في نفس اليوم، ندمج دقة الساعات/الدقائق
+      if "T" not in pub_iso:
+        cand_rel = watch_rel_text or watch_date_text or rel_hint
+        if cand_rel:
+          r_str, r_ts = parse_any_date(cand_rel, fallback_offset_sec=-1)
+          if r_ts > 0 and abs(r_ts - iso_ts) <= 36 * 3600:
+            final_str, final_ts = r_str, r_ts
+
+  if final_ts <= 0:
+    for cand_txt in (watch_date_text, watch_rel_text):
+      if cand_txt:
+        c_str, c_ts = parse_any_date(cand_txt, fallback_offset_sec=-1)
+        if c_ts > 0:
+          final_str, final_ts = c_str, c_ts
+          break
+
+  res = {
+      "vid": vid,
+      "has_exact_date": bool(final_ts > 0),
+      "pub_date": final_str,
+      "pub_timestamp": float(final_ts),
+      "title": title,
+      "channel_name": author,
+      "channel_id": channel_id,
+      "short_desc": short_desc,
+  }
+  if res["has_exact_date"]:
+    _YT_EXACT_META_CACHE[vid] = res
+  return res
 
 
 def _extract_yt_renderers_from_html(
@@ -4419,11 +4854,11 @@ def _extract_yt_renderers_from_html(
     return results
 
   chunks = re.split(
-      r'"(?:videoRenderer|gridVideoRenderer|compactVideoRenderer|reelItemRenderer|shortsLockupViewModel|lockupViewModel)"\s*:',
+      r'"(?:videoRenderer|gridVideoRenderer|compactVideoRenderer|reelItemRenderer|shortsLockupViewModel|lockupViewModel|playlistRenderer|channelRenderer|shelfRenderer|reelShelfRenderer|richItemRenderer)"\s*:',
       html_text,
   )[1:]
-  for chunk in chunks[:85]:
-    window = chunk[:15000]
+  for chunk in chunks[:90]:
+    window = chunk[:12000]
     vid_m = re.search(
         r'"(?:videoId|contentId)"\s*:\s*"([a-zA-Z0-9_-]{11})"', window[:3500]
     )
@@ -4435,7 +4870,7 @@ def _extract_yt_renderers_from_html(
 
     title = ""
     acc_label_full = ""
-    m_acc = re.search(r'"accessibilityData"\s*:\s*\{"label"\s*:\s*"((?:[^"\\]|\\.)*)"', window[:6000])
+    m_acc = re.search(r'"accessibilityData"\s*:\s*\{"label"\s*:\s*"((?:[^"\\]|\\.)*)"', window[:6500])
     if m_acc:
       acc_label_full = decode_js_escaped_text(m_acc.group(1))
 
@@ -4456,7 +4891,6 @@ def _extract_yt_renderers_from_html(
           break
 
     if not title and acc_label_full:
-      # تنظيف العنوان من لاحقة الوقت والمشاهدات في accessibilityData
       title = re.sub(r"\s+(?:قبل|منذ)\s+\d+.*$", "", acc_label_full).strip()
 
     if not title or len(title) < 4:
@@ -4466,17 +4900,17 @@ def _extract_yt_renderers_from_html(
     for p_pat in [
         r'"publishedTimeText"\s*:\s*\{"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"',
         r'"publishedTimeText"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        r'"dateText"\s*:\s*\{"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"',
     ]:
       pub_m = re.search(p_pat, window)
       if pub_m:
         pub_rel = decode_js_escaped_text(pub_m.group(1))
         break
 
-    # استخراج التاريخ النسبي واسم القناة من metadataParts في قوالب lockupViewModel الحديثة
+    # استخراج جميع نصوص content داخل metadataParts في قوالب lockupViewModel الحديثة دون الانقطاع عند الأقواس المتداخلة
     meta_parts_texts = [
         decode_js_escaped_text(mp)
-        for mp in re.findall(r'"metadataParts"\s*:\s*\[(.*?)\]', window[:9000])
-        for mp in re.findall(r'"content"\s*:\s*"((?:[^"\\]|\\.)*)"', mp)
+        for mp in re.findall(r'"content"\s*:\s*"((?:[^"\\]|\\.){2,90})"', window[:9000])
     ]
     if not pub_rel:
       for mp_txt in meta_parts_texts:
@@ -4499,9 +4933,10 @@ def _extract_yt_renderers_from_html(
     if not channel_name and meta_parts_texts:
       for mp_txt in meta_parts_texts:
         if (
-            len(mp_txt) >= 2
+            2 <= len(mp_txt) <= 45
+            and mp_txt != title
             and not _extract_yt_relative_time_from_text(mp_txt)
-            and not any(w in mp_txt.lower() for w in ("مشاهدة", "views", "vues", "ألف", "مليون"))
+            and not any(w in mp_txt.lower() for w in ("مشاهدة", "views", "vues", "ألف", "مليون", "قبل ", "منذ ", "ago", "il y a"))
         ):
           channel_name = mp_txt
           break
@@ -4566,7 +5001,6 @@ def _search_youtube_via_innertube_api(query: str, sp_params: str = "") -> list:
       "query": query,
   }
   if sp_params:
-    # InnerTube يتوقع قيمة params بصيغة Base64 صافية غير مهربة بـ %3D
     payload["params"] = urllib.parse.unquote(sp_params)
 
   headers = dict(DEFAULT_HEADERS)
@@ -4587,8 +5021,8 @@ def _search_youtube_via_innertube_api(query: str, sp_params: str = "") -> list:
 
 
 def _fetch_single_youtube_query_bundle(args_tuple: tuple) -> list:
-  """تنفيذ استعلام بحث يوتيوب واحد عبر InnerTube API + صفحة نتائج يوتيوب مع فلاتر الفترة الزمنية والترتيب بالأحدث."""
-  q, yt_sp, yt_date_sp, yt_raw, yt_date_raw, include_date_sort = args_tuple
+  """تنفيذ استعلام بحث يوتيوب واحد عبر InnerTube API + صفحة نتائج يوتيوب مع التقيد الصارم بفلتر الفترة الزمنية المحددة."""
+  q, yt_sp, yt_date_sp, yt_raw, yt_date_raw, _ = args_tuple
   if is_stop_requested():
     return []
   bundle_renderers = []
@@ -4601,19 +5035,26 @@ def _fetch_single_youtube_query_bundle(args_tuple: tuple) -> list:
         seen_local_vids.add(vid)
         bundle_renderers.append(v)
 
-  # 1) البحث عبر واجهة YouTube InnerTube JSON API بفلتر الفترة الزمنية + الترتيب بالأحدث
-  for raw_p in ([yt_raw, yt_date_raw, "CAISAhAB"] if include_date_sort else [yt_raw, yt_date_raw]):
+  # 1) البحث عبر واجهة YouTube InnerTube JSON API بفلتر الفترة الزمنية المحددة حصراً (مرتبة بالأحدث ثم بالصلة ضمن نفس الفترة)
+  raw_params_list = []
+  for rp in (yt_date_raw, yt_raw):
+    if rp and rp not in raw_params_list:
+      raw_params_list.append(rp)
+
+  for raw_p in raw_params_list:
     if is_stop_requested():
       break
     _collect(_search_youtube_via_innertube_api(q, raw_p))
     if len(bundle_renderers) >= 18:
       break
 
-  # 2) البحث عبر صفحة نتائج يوتيوب HTML بفلتر الفترة المحددة وبدون فلتر مقيد كاحتياطي
-  sp_candidates = [yt_sp, yt_date_sp]
-  if include_date_sort and "CAI%3D" not in sp_candidates:
-    sp_candidates.append("CAI%3D")
-  for sp_val in sp_candidates[:2]:
+  # 2) البحث عبر صفحة نتائج يوتيوب HTML بفلتر الفترة المحددة حصراً
+  sp_candidates = []
+  for sp_c in (yt_date_sp, yt_sp):
+    if sp_c and sp_c not in sp_candidates:
+      sp_candidates.append(sp_c)
+
+  for sp_val in sp_candidates:
     if is_stop_requested() or len(bundle_renderers) >= 24:
       break
     search_url = (
@@ -4661,26 +5102,20 @@ def _search_single_moroccan_yt_channel_judicial(args_tuple: tuple) -> list:
 def scrape_youtube_platform(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ):
-  """محرك رصد يوتيوب القضائي المتطور (4 طبقات متوازية):
-  1) واجهة YouTube InnerTube v1 Search API + بحث يوتيوب HTML بفلاتر (آخر يوم / آخر أسبوع / آخر شهر + الأحدث).
-  2) مسح شامل لاستعلامات المجلس الأعلى للسلطة القضائية، رئاسة النيابة العامة، الشؤون القضائية، القضاة، والعدالة بالمغرب.
-  3) البحث المباشر داخل القنوات المغربية المعتمدة على يوتيوب (هسبريس، 2M، SNRTnews، مدي 1 تيفي، العمق، اليوم 24، مدار 21...).
-  4) البحث الموازي عبر محركات الويب والفيديو وخلاصات الأخبار لروابط youtube.com القضائية."""
+  """محرك رصد يوتيوب القضائي المتطور مع التحقق الصارم من تاريخ النشر الفعلي (uploadDate / publishDate) لكل فيديو والالتزام التام بفترة البحث المحددة."""
   items = []
   seen_vids = set()
+  pending_candidates = []
   queries = build_youtube_judicial_queries(keywords_input)
   p_cfg = get_period_config(search_period)
   max_age = p_cfg["sec"]
-  # هامش مرونة 15% لتعويض تقريب يوتيوب للتواريخ النسبية (مثل: "قبل يوم واحد" لفيديو عمره 22 ساعة، أو "قبل أسبوع واحد" لفيديو عمره 7 أيام)
-  effective_max_age = int(max_age * 1.15) + 7200 if max_age > 0 else 0
   yt_sp = p_cfg.get("yt", "EgIIAw%3D%3D")
   yt_date_sp = p_cfg.get("yt_date", "CAISBAgDEAE%3D")
   yt_raw = p_cfg.get("yt_raw", "EgIIAw==")
   yt_date_raw = p_cfg.get("yt_date_raw", "CAISBAgDEAE=")
-  when_tag = p_cfg.get("gnews", "7d")
   now_ts = time.time()
 
-  def _process_and_add_yt_candidate(v: dict, fallback_offset: int = 1800):
+  def _stage_yt_candidate(v: dict):
     vid = (v.get("vid") or "").strip()
     if not vid or vid in seen_vids:
       return
@@ -4691,7 +5126,6 @@ def scrape_youtube_platform(
     if not v_title or len(v_title) < 5:
       return
 
-    # نمرر اسم القناة مع الوصف حتى يتعرف الفلتر على الهوية المغربية للقنوات الوطنية مثل هسبريس و2M وSNRTnews
     combined_snip_for_check = f"{v_desc} {v_ch}"
     if not is_strictly_judicial_and_clean(
         v_title, combined_snip_for_check, v_url, keywords_input
@@ -4699,39 +5133,36 @@ def scrape_youtube_platform(
       return
 
     pub_rel_raw = (v.get("pub_rel") or "").strip()
-    if pub_rel_raw:
-      pub_str, pub_ts = parse_any_date(pub_rel_raw, fallback_offset_sec=fallback_offset)
-    else:
-      # إذا لم يظهر نص الوقت النسبي في البطاقة المختصرة، لا نأخذ تواريخ القوانين القديمة من الوصف بل نتحقق من الوقت النسبي فقط أو نعتمد وقت الرصد القريب
-      rel_in_desc = _extract_yt_relative_time_from_text(v_desc)
-      if rel_in_desc:
-        pub_str, pub_ts = parse_any_date(rel_in_desc, fallback_offset_sec=fallback_offset)
-      else:
-        pub_str, pub_ts = parse_any_date("", fallback_offset_sec=fallback_offset)
+    if not pub_rel_raw:
+      pub_rel_raw = _extract_yt_relative_time_from_text(v_desc)
 
-    if effective_max_age > 0 and (now_ts - pub_ts) > effective_max_age:
-      return
+    prelim_str, prelim_ts = "", 0.0
+    if pub_rel_raw:
+      prelim_str, prelim_ts = parse_any_date(pub_rel_raw, fallback_offset_sec=-1)
+      # استبعاد فوري لأي فيديو يظهر من نصه النسبي أنه أقدم من فترة البحث المختارة
+      if prelim_ts > 0 and max_age > 0 and (now_ts - prelim_ts) > max_age:
+        seen_vids.add(vid)
+        return
 
     seen_vids.add(vid)
-    ch_clean = v_ch if v_ch.startswith("قناة") else f"قناة {v_ch}"
-    items.append({
-        "title": v_title,
+    pending_candidates.append({
+        "vid": vid,
         "url": v_url,
-        "raw_snippet": v_desc if len(v_desc) >= len(v_title) else v_title,
-        "source_name": format_precise_source_with_domain(ch_clean, v_url, "يوتيوب", title_hint=v_title),
-        "platform": "يوتيوب",
-        "pub_date": pub_str,
-        "pub_timestamp": pub_ts,
-        "image_url": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
+        "title": v_title,
+        "desc": v_desc,
+        "channel_name": v_ch,
+        "pub_rel": pub_rel_raw,
+        "prelim_str": prelim_str,
+        "prelim_ts": prelim_ts,
     })
 
-  # الطبقة 1 و 2: المسح المتوازي للاستعلامات القضائية عبر InnerTube API + YouTube Search HTML
+  # الطبقة 1 و 2: المسح المتوازي للاستعلامات القضائية عبر InnerTube API + YouTube Search HTML المقيدة بفترة البحث
   if progress_cb:
     progress_cb(0.15, f"مسح يوتيوب للمواضيع القضائية والمجلس الأعلى للسلطة القضائية ({search_period})...")
 
   query_tasks = [
-      (q, yt_sp, yt_date_sp, yt_raw, yt_date_raw, idx < 6)
-      for idx, q in enumerate(queries)
+      (q, yt_sp, yt_date_sp, yt_raw, yt_date_raw, False)
+      for q in queries
   ]
   try:
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
@@ -4740,18 +5171,18 @@ def scrape_youtube_platform(
           break
         if progress_cb:
           progress_cb(
-              min(0.55, 0.15 + 0.40 * ((q_idx + 1) / max(1, len(query_tasks)))),
+              min(0.50, 0.15 + 0.35 * ((q_idx + 1) / max(1, len(query_tasks)))),
               f"فحص نتائج يوتيوب القضائية: {queries[q_idx]}",
           )
         for v_item in rendered_list:
-          _process_and_add_yt_candidate(v_item, fallback_offset=1800)
+          _stage_yt_candidate(v_item)
   except Exception:
     pass
 
   # الطبقة 3: البحث القضائي المباشر داخل القنوات الإخبارية والمؤسساتية المغربية الكبرى على يوتيوب
   if not is_stop_requested():
     if progress_cb:
-      progress_cb(0.72, "فحص الفيديوهات القضائية داخل القنوات المغربية المعتمدة على يوتيوب...")
+      progress_cb(0.65, "فحص الفيديوهات القضائية داخل القنوات المغربية المعتمدة على يوتيوب...")
     ch_kw = (
         keywords_input.strip().split(",")[0].strip()
         if (keywords_input and keywords_input.strip())
@@ -4768,15 +5199,15 @@ def scrape_youtube_platform(
         for ch_vids in pool.map(_search_single_moroccan_yt_channel_judicial, ch_tasks):
           if is_stop_requested():
             break
-          for v_ch_item in ch_vids[:10]:
-            _process_and_add_yt_candidate(v_ch_item, fallback_offset=2400)
+          for v_ch_item in ch_vids[:8]:
+            _stage_yt_candidate(v_ch_item)
     except Exception:
       pass
 
-  # الطبقة 4: البحث الموازي في فهارس الفيديو والويب (Bing / Yahoo / DuckDuckGo) عن فيديوهات يوتيوب القضائية بالمغرب
-  if not is_stop_requested():
+  # الطبقة 4: البحث الموازي في فهارس الفيديو والويب مع إخضاع كل فيديو للتحقق الإلزامي من تاريخ النشر الحقيقي
+  if not is_stop_requested() and len(pending_candidates) < 25:
     if progress_cb:
-      progress_cb(0.88, "تعزيز الرصد عبر فهارس الفيديو لمحركات البحث...")
+      progress_cb(0.78, "تعزيز الرصد عبر فهارس الفيديو لمحركات البحث...")
     if keywords_input and keywords_input.strip():
       web_yt_queries = [
           f'site:youtube.com "{keywords_input.strip()}" القضاء المغرب',
@@ -4787,13 +5218,12 @@ def scrape_youtube_platform(
           'site:youtube.com "المجلس الأعلى للسلطة القضائية" المغرب',
           'site:youtube.com "رئاسة النيابة العامة" المغرب',
           'site:youtube.com ("الشؤون القضائية" OR "القضاة" OR "منظومة العدالة" OR "محكمة النقض") المغرب',
-          'site:youtube.com ("نادي قضاة المغرب" OR "الودادية الحسنية للقضاة" OR "المعهد العالي للقضاء")',
       ]
 
     for wq in web_yt_queries:
       if is_stop_requested():
         break
-      for sr in _multi_engine_web_search(wq, platform="يوتيوب", default_source="يوتيوب", max_results=12):
+      for sr in _multi_engine_web_search(wq, platform="يوتيوب", default_source="يوتيوب", max_results=10):
         u_sr = clean_social_post_url(sr.get("url", ""))
         m_v = re.search(
             r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})",
@@ -4807,16 +5237,60 @@ def scrape_youtube_platform(
         t_sr = clean_display_text(sr.get("title") or "")
         t_sr = re.sub(r"\s*-\s*YouTube.*$", "", t_sr, flags=re.IGNORECASE).strip()
         s_sr = clean_display_text(sr.get("raw_snippet") or "")
-        _process_and_add_yt_candidate(
-            {
-                "vid": vid_w,
-                "title": t_sr,
-                "desc": s_sr or t_sr,
-                "pub_rel": _extract_yt_relative_time_from_text(f"{t_sr} {s_sr}"),
-                "channel_name": "يوتيوب",
-            },
-            fallback_offset=3600,
-        )
+        _stage_yt_candidate({
+            "vid": vid_w,
+            "title": t_sr,
+            "desc": s_sr or t_sr,
+            "pub_rel": _extract_yt_relative_time_from_text(f"{t_sr} {s_sr}"),
+            "channel_name": "يوتيوب",
+        })
+
+  # المرحلة الحاسمة: التحقق المتوازي من تاريخ النشر الفعلي (uploadDate / publishDate) لكل فيديو مرشح ورفض أي فيديو قديم خارج فترة البحث
+  if pending_candidates and not is_stop_requested():
+    if progress_cb:
+      progress_cb(0.88, f"التحقق الدقيق من توقيت النشر الحقيقي لفيديوهات يوتيوب ({len(pending_candidates[:45])} فيديو)...")
+
+    def _verify_cand(cand_obj: dict):
+      meta = fetch_youtube_video_exact_metadata(cand_obj["vid"], rel_hint=cand_obj.get("pub_rel", ""))
+      return cand_obj, meta
+
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+        for cand, exact_meta in pool.map(_verify_cand, pending_candidates[:45]):
+          if is_stop_requested():
+            break
+          if exact_meta.get("has_exact_date") and float(exact_meta.get("pub_timestamp") or 0) > 0:
+            final_pub_str = exact_meta["pub_date"]
+            final_pub_ts = float(exact_meta["pub_timestamp"])
+          elif float(cand.get("prelim_ts") or 0) > 0:
+            final_pub_str = cand["prelim_str"]
+            final_pub_ts = float(cand["prelim_ts"])
+          else:
+            # رفض قاطع لأي فيديو مجهول تاريخ النشر لمنع إعطائه تاريخ اليوم بالخطأ
+            continue
+
+          # تطبيق صارم ودقيق لفترة البحث المحددة من طرف المستخدم
+          if max_age > 0 and (now_ts - final_pub_ts) > max_age:
+            continue
+
+          v_title = clean_display_text(exact_meta.get("title") or cand["title"])
+          v_desc = clean_full_article_text(exact_meta.get("short_desc") or cand["desc"]) or v_title
+          v_ch = clean_display_text(exact_meta.get("channel_name") or cand["channel_name"] or "يوتيوب")
+          ch_clean = v_ch if v_ch.startswith("قناة") else f"قناة {v_ch}"
+
+          items.append({
+              "title": v_title,
+              "url": cand["url"],
+              "raw_snippet": v_desc if len(v_desc) >= len(v_title) else v_title,
+              "source_name": format_precise_source_with_domain(ch_clean, cand["url"], "يوتيوب", title_hint=v_title),
+              "platform": "يوتيوب",
+              "pub_date": final_pub_str,
+              "pub_timestamp": final_pub_ts,
+              "image_url": f"https://i.ytimg.com/vi/{cand['vid']}/hqdefault.jpg",
+              "_yt_exact_verified": True,
+          })
+    except Exception:
+      pass
 
   items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
   return items
@@ -6025,7 +6499,7 @@ def _scrape_youtube_custom_channel(
 
   source_badge = f"🎯 {channel_title}"
 
-  # 5) الجلب من خلاصة XML الرسمية للقناة (تتحدث بالثانية فور رفع أي فيديو جديد دون انتظار أرشفة محركات البحث)
+  # 5) الجلب من خلاصة XML الرسمية للقناة (تحتوي على تاريخ النشر الدقيق بصيغة ISO-8601)
   if cid:
     xml_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}"
     try:
@@ -6035,7 +6509,7 @@ def _scrape_youtube_custom_channel(
             rx.content,
             "يوتيوب",
             default_source=source_badge,
-            max_age_sec=0,
+            max_age_sec=max_age_sec,
         ):
           u_clean_v = clean_social_post_url(entry.get("url", ""))
           if not is_direct_social_post_url(u_clean_v, "يوتيوب"):
@@ -6051,12 +6525,13 @@ def _scrape_youtube_custom_channel(
           if u_clean_v not in seen_channel_vids:
             seen_channel_vids.add(u_clean_v)
             entry["url"] = u_clean_v
+            entry["_yt_exact_verified"] = True
             _tag_custom_target_item(entry, t_info, source_badge)
             all_channel_videos.append(entry)
     except Exception:
       pass
 
-  # 6) دمج الفيديوهات المستخرجة من InnerTube Browse ومن تبويب /videos ومن بحث يوتيوب الحي المفلتر بملكية القناة
+  # 6) دمج الفيديوهات المستخرجة من InnerTube Browse ومن تبويب /videos ومن بحث يوتيوب الحي المفلتر بملكية القناة مع التحقق الدقيق من تاريخ نشرها
   direct_renderers = list(innertube_vids)
   if page_html:
     direct_renderers.extend(
@@ -6064,6 +6539,7 @@ def _scrape_youtube_custom_channel(
     )
   direct_renderers.extend(live_search_videos)
 
+  unverified_channel_cands = []
   for v in direct_renderers:
     v_url = f"https://www.youtube.com/watch?v={v['vid']}"
     if v_url in seen_channel_vids or not is_direct_social_post_url(
@@ -6074,27 +6550,53 @@ def _scrape_youtube_custom_channel(
         v["title"], v["desc"], v_url, t_kw, is_target=True
     ):
       continue
-    pub_str, pub_ts = extract_date_from_url_or_text(
-        v_url, v["desc"], v["pub_rel"], fallback_offset_sec=3600
-    )
-    v_badge = (
-        f"🎯 {v['channel_name']}"
-        if v.get("channel_name") and v["channel_name"] != "YouTube"
-        else source_badge
-    )
-    entry = {
-        "title": v["title"],
-        "url": v_url,
-        "raw_snippet": v["desc"],
-        "source_name": v_badge,
-        "platform": "يوتيوب",
-        "pub_date": pub_str,
-        "pub_timestamp": pub_ts,
-        "image_url": f"https://i.ytimg.com/vi/{v['vid']}/hqdefault.jpg",
-    }
+    pub_rel_v = (v.get("pub_rel") or "").strip() or _extract_yt_relative_time_from_text(v.get("desc") or "")
+    p_str_v, p_ts_v = ("", 0.0)
+    if pub_rel_v:
+      p_str_v, p_ts_v = parse_any_date(pub_rel_v, fallback_offset_sec=-1)
+      if p_ts_v > 0 and max_age_sec > 0 and (now_ts - p_ts_v) > max_age_sec:
+        seen_channel_vids.add(v_url)
+        continue
     seen_channel_vids.add(v_url)
-    _tag_custom_target_item(entry, t_info, v_badge)
-    all_channel_videos.append(entry)
+    unverified_channel_cands.append((v, v_url, pub_rel_v, p_str_v, p_ts_v))
+
+  if unverified_channel_cands:
+    def _verify_ch_vid(c_tuple):
+      v_obj, v_u, p_rel, p_s, p_t = c_tuple
+      meta = fetch_youtube_video_exact_metadata(v_obj["vid"], rel_hint=p_rel)
+      return v_obj, v_u, meta, p_s, p_t
+
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        for v_obj, v_u, meta, p_s, p_t in pool.map(_verify_ch_vid, unverified_channel_cands[:25]):
+          if meta.get("has_exact_date") and float(meta.get("pub_timestamp") or 0) > 0:
+            pub_str, pub_ts = meta["pub_date"], float(meta["pub_timestamp"])
+          elif p_t > 0:
+            pub_str, pub_ts = p_s, float(p_t)
+          else:
+            continue
+          if max_age_sec > 0 and (now_ts - pub_ts) > max_age_sec:
+            continue
+          v_badge = (
+              f"🎯 {v_obj['channel_name']}"
+              if v_obj.get("channel_name") and v_obj["channel_name"] != "YouTube"
+              else source_badge
+          )
+          entry = {
+              "title": clean_display_text(meta.get("title") or v_obj["title"]),
+              "url": v_u,
+              "raw_snippet": clean_full_article_text(meta.get("short_desc") or v_obj["desc"]),
+              "source_name": v_badge,
+              "platform": "يوتيوب",
+              "pub_date": pub_str,
+              "pub_timestamp": pub_ts,
+              "image_url": f"https://i.ytimg.com/vi/{v_obj['vid']}/hqdefault.jpg",
+              "_yt_exact_verified": True,
+          }
+          _tag_custom_target_item(entry, t_info, v_badge)
+          all_channel_videos.append(entry)
+    except Exception:
+      pass
 
   # 6-ب) إذا حجب يوتيوب صفحة القناة على السحابة ولم يظهر معرف UC بعد، نستخرجه من أول فيديو موثق للقناة عبر oEmbed ثم نسحب خلاصة XML الرسمية الفورية
   if not cid and (handle or name_hint):
@@ -6134,7 +6636,7 @@ def _scrape_youtube_custom_channel(
               rx2.content,
               "يوتيوب",
               default_source=source_badge,
-              max_age_sec=0,
+              max_age_sec=max_age_sec,
           ):
             u_clean_v = clean_social_post_url(entry.get("url", ""))
             if not is_direct_social_post_url(u_clean_v, "يوتيوب"):
@@ -6146,12 +6648,13 @@ def _scrape_youtube_custom_channel(
             if u_clean_v not in seen_channel_vids:
               seen_channel_vids.add(u_clean_v)
               entry["url"] = u_clean_v
+              entry["_yt_exact_verified"] = True
               _tag_custom_target_item(entry, t_info, source_badge)
               all_channel_videos.append(entry)
       except Exception:
         pass
 
-  # 7) احتياطي أخير عبر محركات البحث مقيد بتحقق oEmbed
+  # 7) احتياطي أخير عبر محركات البحث مقيد بتحقق oEmbed والتحقق الإلزامي من تاريخ النشر الحقيقي (uploadDate)
   if not all_channel_videos and (handle or cid or name_hint):
     yt_ident = name_hint or (f"@{handle.lstrip('@')}" if handle else cid)
     q_web_yt = f'site:youtube.com "{yt_ident}" {t_kw}'.strip()
@@ -6166,13 +6669,26 @@ def _scrape_youtube_custom_channel(
           u_w, "يوتيوب"
       ):
         continue
+      m_vw = re.search(r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})", u_w)
+      if not m_vw:
+        continue
       is_owner, real_v_title, real_author = _verify_youtube_video_owner(
           u_w, handle=handle, cid=cid, channel_title=channel_title
       )
       if not is_owner:
         continue
-      if real_v_title:
-        item_w["title"] = real_v_title
+      meta_w = fetch_youtube_video_exact_metadata(m_vw.group(1))
+      if not meta_w.get("has_exact_date") or float(meta_w.get("pub_timestamp") or 0) <= 0:
+        continue
+      w_pub_ts = float(meta_w["pub_timestamp"])
+      if max_age_sec > 0 and (now_ts - w_pub_ts) > max_age_sec:
+        continue
+      item_w["pub_date"] = meta_w["pub_date"]
+      item_w["pub_timestamp"] = w_pub_ts
+      if real_v_title or meta_w.get("title"):
+        item_w["title"] = real_v_title or meta_w["title"]
+      if meta_w.get("short_desc"):
+        item_w["raw_snippet"] = meta_w["short_desc"]
       if not is_strictly_judicial_and_clean(
           item_w["title"], item_w["raw_snippet"], u_w, t_kw, is_target=True
       ):
@@ -6193,7 +6709,7 @@ def _scrape_youtube_custom_channel(
       if max_age_sec <= 0
       or (now_ts - float(e.get("pub_timestamp", 0))) <= max_age_sec
   ]
-  chosen_list = in_window if in_window else all_channel_videos[:12]
+  chosen_list = in_window if max_age_sec > 0 else all_channel_videos[:12]
   for entry in chosen_list:
     if entry["url"] not in seen_urls:
       seen_urls.add(entry["url"])
@@ -8512,15 +9028,20 @@ def quick_process_and_save(
             except Exception:
               pass
     pre_keys = {f"{p_scope}::{t_scope}::{k}" for k in base_pre_keys}
-    # إذا كان الفيديو على يوتيوب موجوداً في الأرشيف بسبب تاريخ نشره السابق ولكن المستخدم يبحث في فترة تشمله، نقوم بتنشيطه ليظهر في تبويب يوتيوب
-    if p_scope == "يوتيوب":
+    # إذا كان الفيديو على يوتيوب موجوداً في الأرشيف وكان تاريخ نشره الحقيقي يقع فعلياً ضمن فترة البحث المختارة حالياً، نقوم بتنشيطه وتحديث تاريخه
+    max_age_qps = get_period_config(cfg.get("search_period", "آخر 7 أيام"))["sec"]
+    it_pub_ts_pre = float(it.get("pub_timestamp") or 0)
+    if p_scope == "يوتيوب" and it_pub_ts_pre > 0 and (max_age_qps <= 0 or (time.time() - it_pub_ts_pre) <= max_age_qps):
       matched_arch_keys = [ pk for pk in pre_keys if pk in archived_id_map ]
       if matched_arch_keys:
         with lock:
           try:
             conn_act = _open_sqlite_conn()
             for mak in matched_arch_keys:
-              conn_act.execute("UPDATE articles SET created_at = ? WHERE id = ?", (time.time(), archived_id_map[mak]))
+              conn_act.execute(
+                  "UPDATE articles SET created_at = ?, pub_date = ?, pub_timestamp = ? WHERE id = ?",
+                  (time.time(), it.get("pub_date", ""), it_pub_ts_pre, archived_id_map[mak]),
+              )
             conn_act.commit()
             conn_act.close()
           except Exception:
@@ -8587,9 +9108,17 @@ def quick_process_and_save(
     pub_str = it.get("pub_date") or ""
     pub_ts = float(it.get("pub_timestamp") or 0)
     if pub_ts <= 0 or not pub_str:
+      if plat == "يوتيوب":
+        # عدم السماح إطلاقاً لأي فيديو يوتيوب بدون تاريخ نشر حقيقي موثق بأن يأخذ تاريخ اليوم الافتراضي
+        continue
       pub_str, pub_ts = extract_date_from_url_or_text(
           it.get("url", ""), raw_snip, pub_str, fallback_offset_sec=3600
       )
+
+    # التحقق النهائي الصارم بعد الإثراء من أن تاريخ النشر الحقيقي للفيديو يقع ضمن فترة البحث المحددة
+    max_age_final = get_period_config(cfg.get("search_period", "آخر 7 أيام"))["sec"]
+    if plat == "يوتيوب" and max_age_final > 0 and (time.time() - pub_ts) > max_age_final:
+      continue
 
     record = {
         "title": it["title"],
@@ -10240,14 +10769,10 @@ for a in all_articles:
   mon_t = float(a.get("created_at") or pub_t)
   if mon_t <= 0:
     mon_t = pub_t
-  # يبقى الخبر المرصود في الواجهة النشطة لمدة 24 ساعة من وقت رصده الأول (created_at)، كما تظهر فيديوهات يوتيوب المطابقة لفترة البحث المختارة (آخر يوم / أسبوع / شهر)
+  # التقيد الصارم بفترة البحث المختارة (selected_period_sec): لا يُعرض في التبويبات النشطة أي فيديو أو خبر يتجاوز تاريخ نشره الحقيقي فترة البحث المحددة
+  is_within_selected_period = (selected_period_sec <= 0) or ((now_ts - pub_t) <= selected_period_sec)
   is_monitored_within_24h = (now_ts - mon_t) < 86400
-  is_yt_in_selected_period = (
-      a.get("platform") == "يوتيوب"
-      and selected_period_sec > 0
-      and (now_ts - pub_t) <= (selected_period_sec * 1.15 + 7200)
-  )
-  if is_monitored_within_24h or is_yt_in_selected_period:
+  if is_within_selected_period and (is_monitored_within_24h or a.get("platform") == "يوتيوب"):
     live_articles.append(a)
   else:
     archive_articles.append(a)
