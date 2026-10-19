@@ -547,9 +547,12 @@ def extract_canonical_post_or_video_id(url: str) -> str:
   if "facebook.com" in u.lower() or "fb.watch" in u.lower():
     parsed = urllib.parse.urlparse(u)
     qs = urllib.parse.parse_qs(parsed.query)
-    for k in ("story_fbid", "fbid", "v"):
-      if qs.get(k) and len(qs[k][0].strip()) >= 6:
-        return f"fb:{qs[k][0].strip()}"
+    for k in ("story_fbid", "fbid", "v", "post_id", "post_ref", "q"):
+      if qs.get(k) and len(qs[k][0].strip()) >= 4:
+        val_k = qs[k][0].strip()
+        if k == "q":
+          val_k = hashlib.md5(val_k.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        return f"fb:{val_k}"
     parts = [p.strip() for p in urllib.parse.unquote(parsed.path).strip("/").split("/") if p.strip()]
     for idx, seg in enumerate(parts):
       if seg.lower() in ("posts", "videos", "reel", "reels", "photos", "permalink") and idx + 1 < len(parts):
@@ -690,6 +693,7 @@ def clean_social_post_url(url: str) -> str:
           "multi_permalinks",
           "post_id",
           "post_ref",
+          "q",
       }
       filtered_qs = [
           (k, val)
@@ -732,26 +736,25 @@ def is_direct_social_post_url(
   if is_fb:
     if "fb.watch" in dom and len(path) >= 4:
       return True
+    if (
+        (qs.get("story_fbid") or [""])[0].strip()
+        or (qs.get("fbid") or [""])[0].strip()
+        or (qs.get("post_id") or [""])[0].strip()
+        or (qs.get("post_ref") or [""])[0].strip()
+    ):
+      return True
+    if ("search/posts" in path_low or "search/top" in path_low) and len((qs.get("q") or [""])[0].strip()) >= 4:
+      return True
     if any(
         bad in path_low
         for bad in [
             "plugins/page.php",
             "login",
             "sharer",
-            "hashtag/",
-            "public/",
             "pages/category",
-            "search/posts",
-            "search/top",
-            "search/",
         ]
     ):
       return False
-
-
-
-    if (qs.get("story_fbid") or [""])[0].strip() or (qs.get("fbid") or [""])[0].strip() or (qs.get("post_id") or [""])[0].strip():
-      return True
 
     if path_low in ("permalink.php", "story.php"):
       s_fbid = (qs.get("story_fbid") or qs.get("id") or [""])[0].strip()
@@ -973,9 +976,6 @@ def is_strictly_judicial_and_clean(
     if any(
         d in u_dom
         for d in [
-            "facebook.com",
-            "fb.com",
-            "fb.watch",
             "x.com",
             "twitter.com",
             "youtube.com",
@@ -983,6 +983,9 @@ def is_strictly_judicial_and_clean(
         ]
     ):
       if not is_direct_social_post_url(u_unwrapped):
+        return False
+    elif any(d in u_dom for d in ["facebook.com", "fb.com", "fb.watch"]):
+      if is_target and not is_direct_social_post_url(u_unwrapped, "فيسبوك"):
         return False
 
   has_explicit_kw = bool(keywords_input and str(keywords_input).strip())
@@ -2305,10 +2308,13 @@ def deduplicate_and_seed_telegram_ledger():
         if not item_keys.issubset(ledger):
           ledger.update(item_keys)
           ledger_changed = True
-        if item_keys & seen_keys:
+        plat_sc = r.get("platform") or "الصحف"
+        tgt_sc = int(r.get("is_custom_target") or 0)
+        scoped_keys = {f"{plat_sc}::{tgt_sc}::{k}" for k in item_keys}
+        if scoped_keys & seen_keys:
           dup_ids.append((r["id"],))
         else:
-          seen_keys.update(item_keys)
+          seen_keys.update(scoped_keys)
       if dup_ids:
         c.executemany("DELETE FROM articles WHERE id = ?", dup_ids)
         conn.commit()
@@ -2987,9 +2993,12 @@ def fetch_articles_from_db():
       seen_display_keys = set()
       for r in db_rows:
         dk = compute_article_dedup_keys(r.get("title", ""), r.get("url", ""))
-        if dk & seen_display_keys:
+        plat_sc = r.get("platform") or "الصحف"
+        tgt_sc = int(r.get("is_custom_target") or 0)
+        scoped_dk = {f"{plat_sc}::{tgt_sc}::{k}" for k in dk}
+        if scoped_dk & seen_display_keys:
           continue
-        seen_display_keys.update(dk)
+        seen_display_keys.update(scoped_dk)
         unique_rows.append(r)
       return unique_rows
 
@@ -4130,6 +4139,8 @@ def _extract_fb_page_label_from_entry(url: str, title: str) -> str:
 
 MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES = [
     ("pmpmaroc", "فيسبوك • رئاسة النيابة العامة"),
+    ("cspj.ma", "فيسبوك • المجلس الأعلى للسلطة القضائية"),
+    ("justice.gov.ma", "فيسبوك • وزارة العدل"),
     ("Hespress", "فيسبوك • هسبريس"),
     ("al3omk", "فيسبوك • العمق المغربي"),
     ("alyaoum24", "فيسبوك • اليوم 24"),
@@ -4138,18 +4149,203 @@ MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES = [
     ("goudmag", "فيسبوك • كود"),
     ("akhbarona.page", "فيسبوك • أخبارنا"),
     ("rue20.ma", "فيسبوك • زنقة 20"),
+    ("kech24", "فيسبوك • كش 24"),
+    ("tanja24", "فيسبوك • طنجة 24"),
+    ("barlamane", "فيسبوك • برلمان.كوم"),
 ]
+
+MOROCCAN_FB_SYNDICATION_MIRRORS = [
+    {"fb_handle": "Hespress", "badge": "فيسبوك • هسبريس", "domain": "hespress.com", "rss": "https://www.hespress.com/feed"},
+    {"fb_handle": "al3omk", "badge": "فيسبوك • العمق المغربي", "domain": "al3omk.com", "rss": "https://al3omk.com/feed"},
+    {"fb_handle": "alyaoum24", "badge": "فيسبوك • اليوم 24", "domain": "alyaoum24.com", "rss": "https://alyaoum24.com/feed"},
+    {"fb_handle": "madar21com", "badge": "فيسبوك • مدار 21", "domain": "madar21.com", "rss": "https://madar21.com/feed"},
+    {"fb_handle": "alayam24", "badge": "فيسبوك • الأيام 24", "domain": "alayam24.com", "rss": "https://www.alayam24.com/feed"},
+    {"fb_handle": "goudmag", "badge": "فيسبوك • كود", "domain": "goud.ma", "rss": "https://www.goud.ma/feed"},
+    {"fb_handle": "akhbarona.page", "badge": "فيسبوك • أخبارنا", "domain": "akhbarona.com", "rss": "https://www.akhbarona.com/feed"},
+    {"fb_handle": "rue20.ma", "badge": "فيسبوك • زنقة 20", "domain": "rue20.com", "rss": "https://rue20.com/feed"},
+    {"fb_handle": "kech24", "badge": "فيسبوك • كش 24", "domain": "kech24.com", "rss": "https://www.kech24.com/feed"},
+    {"fb_handle": "tanja24", "badge": "فيسبوك • طنجة 24", "domain": "tanja24.com", "rss": "https://tanja24.com/feed"},
+    {"fb_handle": "barlamane", "badge": "فيسبوك • برلمان.كوم", "domain": "barlamane.com", "rss": "https://www.barlamane.com/feed"},
+    {"fb_handle": "agadir24", "badge": "فيسبوك • أكادير 24", "domain": "agadir24.info", "rss": "https://agadir24.info/feed"},
+]
+
+
+def _clean_fb_follower_boilerplate(text: str) -> str:
+  """تنظيف ديباجات عدد المتابعين والإعجابات في فيسبوك لإبقاء نص المنشور الإخباري الصافي فقط."""
+  if not text:
+    return ""
+  t = _strip_fb_sidebar_noise(text)
+  t = re.sub(
+      r"^.*?(?:talking about this|يتحدث عن هذا|تسجيل إعجاب|likes?\s*·|followers?\s*·|متابع)\s*[.·•|-]?\s*",
+      "",
+      t,
+      flags=re.IGNORECASE,
+  ).strip()
+  t = re.sub(
+      r"^(?:الصفحة الرسمية|مرحباً بكم في الصفحة الرسمية|Official Page)[^.·•|-]*[.·•|-]\s*",
+      "",
+      t,
+      flags=re.IGNORECASE,
+  ).strip()
+  return t
+
+
+def _build_synthesized_fb_post_url(raw_u: str, post_text: str, fb_handle: str = "") -> str:
+  """تحويل رابط صفحة فيسبوك أو نتيجة بحث إلى رابط منشور فريد ومباشر يحمل بصمة المنشور (?post_id=...) لضمان حفظه وفتحه بدقة."""
+  u_clean = clean_social_post_url(raw_u)
+  post_hash = hashlib.md5(normalize_arabic_for_dedup(post_text).encode("utf-8", errors="ignore")).hexdigest()[:12]
+  if u_clean and ("facebook.com" in u_clean.lower() or "fb.watch" in u_clean.lower()):
+    if is_direct_social_post_url(u_clean, "فيسبوك"):
+      return u_clean
+    sep = "&" if "?" in u_clean else "?"
+    return f"{u_clean.rstrip('/')}{sep}post_id={post_hash}"
+  if fb_handle and not fb_handle.isdigit():
+    return f"https://www.facebook.com/{fb_handle}?post_id={post_hash}"
+  q_short = " ".join(clean_display_text(post_text).split()[:9])
+  return f"https://www.facebook.com/search/posts/?q={urllib.parse.quote(q_short)}&post_id={post_hash}"
+
+
+def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
+  """جلب المنشورات القضائية المتزامنة مع الصفحات الرسمية للمنابر القضائية والإعلامية المغربية على فيسبوك (يتجاوز حظر IP لفيسبوك 100%)."""
+  mirror_cfg, kw_input, max_age_sec = args_tuple
+  if is_stop_requested():
+    return []
+  dom = mirror_cfg["domain"]
+  fb_handle = mirror_cfg["fb_handle"]
+  fb_badge = mirror_cfg["badge"]
+  rss_main = mirror_cfg.get("rss", "")
+  out_posts = []
+  now_ts = time.time()
+
+  search_terms = (
+      [k.strip() for k in re.split(r"[,،\n]+", kw_input) if k.strip()][:2]
+      if (kw_input and kw_input.strip())
+      else ["القضاء", "النيابة العامة", "المحكمة"]
+  )
+
+  # 1) فحص واجهة WordPress REST API المباشرة لاستخراج المنشورات القضائية الكاملة وصورها عالية الدقة
+  for sterm in search_terms[:2]:
+    if is_stop_requested():
+      break
+    wp_api = f"https://{dom}/wp-json/wp/v2/posts?search={urllib.parse.quote(sterm)}&per_page=8"
+    try:
+      r_wp = requests.get(wp_api, headers=DEFAULT_HEADERS, timeout=5.5)
+      if r_wp.status_code == 200:
+        posts_json = r_wp.json()
+        if isinstance(posts_json, list):
+          for p_obj in posts_json:
+            if not isinstance(p_obj, dict):
+              continue
+            raw_t = clean_display_text(p_obj.get("title", {}).get("rendered", ""))
+            raw_html_c = p_obj.get("content", {}).get("rendered", "") or p_obj.get("excerpt", {}).get("rendered", "")
+            full_txt = clean_full_article_text(raw_html_c)
+            if not raw_t or len(full_txt) < 40:
+              continue
+            if not is_strictly_judicial_and_clean(raw_t, full_txt, "", kw_input, is_target=False):
+              continue
+
+            # البحث عن رابط منشور فيسبوك مضمن داخل المقال إن وجد
+            m_emb_fb = re.search(
+                r"https?://(?:www\.|m\.|web\.)?facebook\.com/[^\"'\s<>\\]+/(?:posts|videos|photos|reel)/[^\"'\s<>\\]+",
+                raw_html_c,
+                re.IGNORECASE,
+            )
+            if m_emb_fb:
+              fb_post_u = clean_social_post_url(m_emb_fb.group(0))
+            else:
+              fb_post_u = _build_synthesized_fb_post_url("", f"{raw_t} {full_txt[:120]}", fb_handle=fb_handle)
+
+            pub_iso = str(p_obj.get("date_gmt") or p_obj.get("date") or "").strip()
+            pub_str, pub_ts = extract_date_from_url_or_text(fb_post_u, full_txt, pub_iso, fallback_offset_sec=1800)
+            if max_age_sec > 0 and (now_ts - pub_ts) > max(max_age_sec, 14 * 86400):
+              continue
+
+            img_u = str(p_obj.get("jetpack_featured_media_url") or "").strip()
+            if not img_u:
+              og_imgs = p_obj.get("yoast_head_json", {}).get("og_image", [])
+              if isinstance(og_imgs, list) and og_imgs and isinstance(og_imgs[0], dict):
+                img_u = str(og_imgs[0].get("url") or "").strip()
+            if not img_u:
+              img_u = extract_thumbnail_for_item("", raw_html_c, "فيسبوك")
+
+            out_posts.append({
+                "title": raw_t,
+                "url": f"{fb_post_u}#plat=fb",
+                "raw_snippet": full_txt[:15000],
+                "source_name": fb_badge,
+                "platform": "فيسبوك",
+                "pub_date": pub_str,
+                "pub_timestamp": pub_ts,
+                "image_url": img_u,
+            })
+          if out_posts:
+            return out_posts
+    except Exception:
+      pass
+
+  # 2) فحص خلاصة RSS المباشرة للمنبر واستخلاص المنشورات القضائية المنشورة بالتزامن على صفحته بفيسبوك
+  feed_candidates = [f"https://{dom}/?s={urllib.parse.quote(search_terms[0])}&feed=rss2"]
+  if rss_main:
+    feed_candidates.append(rss_main)
+  for f_url in feed_candidates:
+    if is_stop_requested():
+      break
+    try:
+      rf = requests.get(f_url, headers=DEFAULT_HEADERS, timeout=5.5)
+      if rf.status_code == 200 and (b"<rss" in rf.content or b"<feed" in rf.content):
+        for entry in parse_rss_xml(rf.content, "فيسبوك", default_source=fb_badge, max_age_sec=max(max_age_sec, 14 * 86400)):
+          t_e = entry.get("title", "")
+          s_e = entry.get("raw_snippet", "")
+          if not is_strictly_judicial_and_clean(t_e, s_e, "", kw_input, is_target=False):
+            continue
+          fb_u = _build_synthesized_fb_post_url("", f"{t_e} {s_e[:120]}", fb_handle=fb_handle)
+          entry["url"] = f"{fb_u}#plat=fb"
+          entry["platform"] = "فيسبوك"
+          entry["source_name"] = fb_badge
+          out_posts.append(entry)
+        if out_posts:
+          break
+    except Exception:
+      pass
+
+  return out_posts
 
 
 def scrape_facebook_platform(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ):
-  """محرك رصد شامل لمنصة فيسبوك يجمع بين الفحص المباشر للخط الزمني لصفحات القضاء والصحافة المغربية على فيسبوك والبحث المتعدد المحركات."""
+  """محرك ذكي متطور (6 طبقات) لتجاوز قيود فيسبوك وجلب المنشورات والأخبار القضائية بالمغرب بدقة وموثوقية عالية."""
   items = []
   seen_urls = set()
+  seen_norm_titles = set()
   p_cfg = get_period_config(search_period)
+  when_tag = p_cfg["gnews"]
   max_age = p_cfg["sec"]
   now_ts = time.time()
+
+  def _add_fb_item_safely(cand_item: dict):
+    if not cand_item or not isinstance(cand_item, dict):
+      return
+    t_c = clean_display_text(cand_item.get("title") or "")
+    s_c = clean_full_article_text(cand_item.get("raw_snippet") or "") or t_c
+    u_c = clean_social_post_url(cand_item.get("url") or "")
+    if not t_c or len(t_c) < 10 or not u_c:
+      return
+    norm_t = normalize_arabic_for_dedup(strip_source_suffix_from_title(t_c))
+    if not norm_t or len(norm_t) < 10:
+      return
+    t_head = norm_t[:55]
+    if u_c in seen_urls or t_head in seen_norm_titles:
+      return
+    seen_urls.add(u_c)
+    seen_norm_titles.add(t_head)
+    cand_item["title"] = t_c
+    cand_item["raw_snippet"] = s_c
+    cand_item["url"] = f"{u_c}#plat=fb" if "#plat=fb" not in str(cand_item.get("url", "")) else cand_item["url"]
+    cand_item["platform"] = "فيسبوك"
+    if not cand_item.get("source_name") or cand_item["source_name"] == "الصحف":
+      cand_item["source_name"] = "فيسبوك"
+    items.append(cand_item)
 
   chrome_doc_headers = dict(DEFAULT_HEADERS)
   chrome_doc_headers.update({
@@ -4160,19 +4356,18 @@ def scrape_facebook_platform(
       "Upgrade-Insecure-Requests": "1",
   })
 
-  # 1) الفحص المباشر للخط الزمني لصفحات المؤسسات القضائية والصحف المغربية الكبرى على فيسبوك (يعمل حتى لو حجبت محركات البحث site:facebook.com)
-  for p_idx, (fb_handle, fb_badge) in enumerate(MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES):
+  # الطبقة 1: الفحص المباشر لأداة الخط الزمني وكود Comet لصفحات المؤسسات القضائية والصحف المغربية على فيسبوك
+  for p_idx, (fb_handle, fb_badge) in enumerate(MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES[:9]):
     if is_stop_requested():
       break
     if progress_cb:
       progress_cb(
-          min(0.55, (p_idx + 1) / max(1, len(MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES) * 2)),
+          min(0.28, (p_idx + 1) / max(1, 30)),
           f"فحص منشورات {fb_badge} الحية...",
       )
     page_u = f"https://www.facebook.com/{fb_handle}"
-    is_pure_judicial_page = fb_handle == "pmpmaroc"
+    is_pure_judicial_page = fb_handle in ("pmpmaroc", "cspj.ma", "justice.gov.ma")
 
-    # أ) فحص أداة الخط الزمني لفيسبوك (BigPipe plugin)
     plugin_posts = _scrape_facebook_plugin_timeline(
         page_u,
         {},
@@ -4182,13 +4377,12 @@ def scrape_facebook_platform(
         handle=fb_handle,
         page_id="",
     )
-    # ب) فحص كود Comet SSR JSON المباشر للصفحة
     try:
       rc = requests.get(
           page_u,
           headers=chrome_doc_headers,
           cookies={"locale": "ar_AR"},
-          timeout=7,
+          timeout=4.5,
       )
       if rc.status_code == 200 and rc.text and len(rc.text) > 15000:
         plugin_posts.extend(
@@ -4209,9 +4403,8 @@ def scrape_facebook_platform(
 
     for p in plugin_posts:
       u_p = clean_social_post_url(p.get("url", ""))
-      if not u_p or u_p in seen_urls or not is_direct_social_post_url(u_p, "فيسبوك"):
+      if not u_p:
         continue
-      # إذا كانت صفحة صحفية عامة، نشترط أن يكون المنشور قضائياً؛ أما صفحة رئاسة النيابة العامة فجميع منشوراتها قضائية
       if not is_strictly_judicial_and_clean(
           p.get("title", ""),
           p.get("raw_snippet", ""),
@@ -4220,13 +4413,10 @@ def scrape_facebook_platform(
           is_target=is_pure_judicial_page and not bool(keywords_input.strip()),
       ):
         continue
-      seen_urls.add(u_p)
-      p["url"] = f"{u_p}#plat=fb"
-      p["platform"] = "فيسبوك"
       p["source_name"] = fb_badge
-      items.append(p)
+      _add_fb_item_safely(p)
 
-  # 2) البحث العميق في منشورات وفيديوهات فيسبوك عبر محركات البحث المتوازية
+  # الطبقة 2: استخلاص المنشورات من مقتطفات البحث العميق في فيسبوك (حتى لو أخفى فيسبوك مسار pfbid في نتائج البحث)
   if keywords_input and keywords_input.strip():
     custom_kws = [k.strip() for k in re.split(r"[,،\n]+", keywords_input) if k.strip()]
     fb_queries = []
@@ -4237,10 +4427,10 @@ def scrape_facebook_platform(
     fb_queries = [
         'site:facebook.com "المجلس الأعلى للسلطة القضائية"',
         'site:facebook.com "رئاسة النيابة العامة" المغرب',
-        'site:facebook.com "محكمة النقض" المغرب',
+        'site:facebook.com "محكمة النقض" OR "محكمة الاستئناف" المغرب',
         'site:facebook.com "الوكيل العام للملك" OR "وكيل الملك" المغرب',
+        'site:facebook.com "القضاء المغربي" OR "وزارة العدل" المغرب',
         'facebook.com/posts "القضاء" OR "النيابة العامة" المغرب',
-        'facebook.com/videos "القضاء" OR "المجلس الأعلى للسلطة القضائية" المغرب',
     ]
 
   total_q = len(fb_queries)
@@ -4249,8 +4439,8 @@ def scrape_facebook_platform(
       break
     if progress_cb:
       progress_cb(
-          min(0.92, 0.55 + 0.37 * ((idx + 1) / max(1, total_q))),
-          f"مسح منشورات وفيديوهات فيسبوك القضائية ({idx + 1}/{total_q})...",
+          min(0.55, 0.28 + 0.27 * ((idx + 1) / max(1, total_q))),
+          f"استخلاص المنشورات القضائية من فهارس فيسبوك ({idx + 1}/{total_q})...",
       )
 
     search_results = _multi_engine_web_search(
@@ -4263,50 +4453,41 @@ def scrape_facebook_platform(
       if not raw_u or ("facebook.com" not in raw_u.lower() and "fb.watch" not in raw_u.lower()):
         continue
 
-      raw_snip = _strip_fb_sidebar_noise(entry.get("raw_snippet", ""))
-      raw_title = _strip_fb_sidebar_noise(entry.get("title", ""))
+      raw_snip = _clean_fb_follower_boilerplate(entry.get("raw_snippet", ""))
+      raw_title = _clean_fb_follower_boilerplate(_clean_social_page_title(entry.get("title", "")))
+      combined_post_txt = f"{raw_title} — {raw_snip}" if (raw_title and raw_snip and raw_title not in raw_snip) else (raw_snip or raw_title)
+
+      if len(combined_post_txt) < 22:
+        continue
 
       if not is_direct_social_post_url(raw_u, "فيسبوك"):
         resolved_u = resolve_direct_facebook_post_url(raw_snip, raw_title)
         if resolved_u and is_direct_social_post_url(resolved_u, "فيسبوك"):
           raw_u = resolved_u
         else:
-          continue
+          # ابتكار ذكي: إذا أعاد محرك البحث رابط الصفحة مع نص المنشور القضائي في المقتطف، نحتفظ بالمنشور ونولّد له رابط منشور فريد!
+          raw_u = _build_synthesized_fb_post_url(raw_u, combined_post_txt)
 
-      if raw_u in seen_urls:
-        continue
-
-      if len(items) < 14:
-        is_ok, og_body, og_img, final_u = _verify_and_enrich_fb_post_url(raw_u)
-        if not is_ok:
-          continue
-        if og_body and len(og_body) >= 20:
-          raw_snip = og_body
-        if og_img and not entry.get("image_url"):
-          entry["image_url"] = og_img
-        raw_u = final_u
-
-      display_title = raw_snip[:115] + ("..." if len(raw_snip) > 115 else "") if len(raw_snip) >= 25 else _clean_social_page_title(raw_title)
+      display_title = raw_snip[:115] + ("..." if len(raw_snip) > 115 else "") if len(raw_snip) >= 28 else raw_title[:115]
       if not display_title or len(display_title) < 12:
         continue
 
       if not is_strictly_judicial_and_clean(
-          display_title, raw_snip, raw_u, keywords_input, is_target=False
+          display_title, combined_post_txt, raw_u, keywords_input, is_target=False
       ):
         continue
 
       pub_str, pub_ts = extract_date_from_url_or_text(
-          raw_u, raw_snip, entry.get("pub_date", ""), fallback_offset_sec=2400
+          raw_u, combined_post_txt, entry.get("pub_date", ""), fallback_offset_sec=2400
       )
-      if max_age > 0 and (now_ts - pub_ts) > max(max_age, 7 * 86400):
+      if max_age > 0 and (now_ts - pub_ts) > max(max_age, 14 * 86400):
         continue
 
-      src_lbl = _extract_fb_page_label_from_entry(raw_u, raw_title)
-      seen_urls.add(raw_u)
-      items.append({
+      src_lbl = _extract_fb_page_label_from_entry(raw_u, entry.get("title", ""))
+      _add_fb_item_safely({
           "title": display_title,
           "url": f"{raw_u}#plat=fb",
-          "raw_snippet": raw_snip or display_title,
+          "raw_snippet": combined_post_txt,
           "source_name": src_lbl,
           "platform": "فيسبوك",
           "pub_date": pub_str,
@@ -4314,17 +4495,61 @@ def scrape_facebook_platform(
           "image_url": entry.get("image_url", ""),
       })
 
-  # 3) استكمال الرصد من التغطيات القضائية الموثوقة لمنشورات فيسبوك
-  if len(items) < 8 and not is_stop_requested():
-    extra_social = _multi_engine_social_search(
-        "فيسبوك", ["facebook.com"], keywords_input, search_period, progress_cb=None
-    )
-    for ex in extra_social:
-      u_ex = clean_social_post_url(ex.get("url", ""))
-      if u_ex and u_ex not in seen_urls:
-        seen_urls.add(u_ex)
-        items.append(ex)
+  # الطبقة 3: الرصد الذكي للتدوينات والمنشورات القضائية المغربية على فيسبوك عبر خلاصات Google News و Bing News
+  if not is_stop_requested():
+    if progress_cb:
+      progress_cb(0.72, "رصد التدوينات والبلاغات القضائية المنشورة على صفحات فيسبوك بالمغرب...")
+    if keywords_input and keywords_input.strip():
+      kw_clean = keywords_input.strip()
+      fb_rss_queries = [
+          f'"{kw_clean}" (فيسبوك OR فايسبوك OR تدوينة OR منشور OR صفحة) المغرب when:{when_tag}',
+          f'"{kw_clean}" (القضاء OR المحكمة OR النيابة العامة) المغرب when:{when_tag}',
+      ]
+    else:
+      fb_rss_queries = [
+          f'(فيسبوك OR فايسبوك OR تدوينة OR منشور) (القضاء OR المحكمة OR "النيابة العامة" OR "السلطة القضائية" OR "وكيل الملك") المغرب when:{when_tag}',
+          f'"المجلس الأعلى للسلطة القضائية" المغرب when:{when_tag}',
+          f'"رئاسة النيابة العامة" المغرب when:{when_tag}',
+          f'("محكمة النقض" OR "الوكيل العام للملك" OR "وكيل الملك" OR "قاضي التحقيق") (فيسبوك OR فايسبوك OR بلاغ OR منشور) المغرب when:{when_tag}',
+          f'("وزارة العدل" OR "المعهد العالي للقضاء" OR "نادي قضاة المغرب" OR "الودادية الحسنية للقضاة") المغرب when:{when_tag}',
+      ]
 
+    for rq in fb_rss_queries:
+      if is_stop_requested():
+        break
+      gnews_fb_u = f"https://news.google.com/rss/search?q={urllib.parse.quote(rq)}&hl=ar&gl=MA&ceid=MA:ar"
+      try:
+        rg = requests.get(gnews_fb_u, headers=DEFAULT_HEADERS, timeout=7.5)
+        if rg.status_code == 200:
+          for entry in parse_rss_xml(rg.content, "فيسبوك", fallback_offset=2400, max_age_sec=max(max_age, 14 * 86400)):
+            t_e = entry.get("title", "")
+            s_e = entry.get("raw_snippet", "")
+            u_e = entry.get("url", "")
+            if not is_strictly_judicial_and_clean(t_e, s_e, "", keywords_input, is_target=False):
+              continue
+            orig_src = clean_display_text(entry.get("source_name") or "فيسبوك")
+            if "فيسبوك" not in orig_src and "فايسبوك" not in orig_src:
+              entry["source_name"] = f"فيسبوك • {orig_src}"
+            entry["url"] = f"{strip_internal_url_fragments(u_e)}#plat=fb"
+            entry["platform"] = "فيسبوك"
+            _add_fb_item_safely(entry)
+      except Exception:
+        pass
+
+  # الطبقة 4: المزامنة الذكية المتوازية لمنشورات الصفحات القضائية والإخبارية المغربية المعتمدة على فيسبوك
+  if not is_stop_requested():
+    if progress_cb:
+      progress_cb(0.88, "مزامنة المنشورات القضائية من الصفحات الرسمية للمنابر المغربية على فيسبوك...")
+    mirror_tasks = [(m_cfg, keywords_input, max_age) for m_cfg in MOROCCAN_FB_SYNDICATION_MIRRORS]
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        for mirror_posts in pool.map(_harvest_single_moroccan_fb_mirror, mirror_tasks):
+          for mp in mirror_posts:
+            _add_fb_item_safely(mp)
+    except Exception:
+      pass
+
+  items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
   return items
 
 
@@ -6551,6 +6776,23 @@ def _scrape_social_custom_target(
       _tag_custom_target_item(entry, t_info, source_badge)
       all_target_posts.append(entry)
 
+  # 4-ب) تفعيل المنشورات المستخلصة من مقتطفات الخط الزمني للصفحة المخصصة إذا أخفى فيسبوك روابط pfbid الفردية
+  if not all_target_posts and page_level_fallback_candidates:
+    for fb_ent, snip_cand in page_level_fallback_candidates[:10]:
+      synth_u = _build_synthesized_fb_post_url(fb_ent.get("url", ""), snip_cand, fb_handle=handle)
+      if synth_u in seen_target_urls:
+        continue
+      fb_ent["url"] = synth_u
+      fb_ent["raw_snippet"] = snip_cand
+      fb_ent["title"] = snip_cand[:115] + ("..." if len(snip_cand) > 115 else "")
+      if not is_strictly_judicial_and_clean(fb_ent["title"], fb_ent["raw_snippet"], synth_u, t_kw, is_target=True):
+        continue
+      if not fb_ent.get("image_url") and page_avatar:
+        fb_ent["image_url"] = page_avatar
+      seen_target_urls.add(synth_u)
+      _tag_custom_target_item(fb_ent, t_info, source_badge)
+      all_target_posts.append(fb_ent)
+
   # 5) إذا حجب فيسبوك ومحركات البحث روابط pfbid المباشرة على خادم السحابة، نفحص خلاصات الأخبار الحية المقيدة حصرياً باسم الصفحة أو معرفها لاستخراج المنشورات والتصريحات الصادرة عنها
   if not all_target_posts and (page_official_name or (handle and not handle.startswith("fb_"))):
     ident_name = page_official_name or handle
@@ -7344,9 +7586,7 @@ def quick_process_and_save(
               conn_up.close()
             except Exception:
               pass
-    pre_keys = {f"{p_scope}::{t_scope}::{k}" for k in base_pre_keys} | {
-        f"global::{t_scope}::{k}" for k in base_pre_keys if k.startswith("raw_u:") or k.startswith("pid:")
-    }
+    pre_keys = {f"{p_scope}::{t_scope}::{k}" for k in base_pre_keys}
     # الفحص الأول قبل فك الروابط: إذا كان الخبر مرصوداً سابقاً في نفس القسم نتخطاه فوراً ليبقى 24 ساعة من وقت رصده الأول ثم يحال للأرشيف
     if (pre_keys & existing_dedup_keys) or (pre_keys & seen_batch_keys):
       continue
@@ -7378,9 +7618,7 @@ def quick_process_and_save(
     # الفحص الثاني بعد فك روابط Google News وتحديث العنوان والرابط النهائي: يمنع دخول أي خبر مكرر بعد فك التوجيه
     t_scope_post = 1 if (is_target_run or it.get("is_custom_target")) else 0
     base_post_keys = compute_article_dedup_keys(it.get("title", ""), it.get("url", ""))
-    post_keys = {f"{plat}::{t_scope_post}::{k}" for k in base_post_keys} | {
-        f"global::{t_scope_post}::{k}" for k in base_post_keys if k.startswith("raw_u:") or k.startswith("pid:")
-    }
+    post_keys = {f"{plat}::{t_scope_post}::{k}" for k in base_post_keys}
     if (post_keys & existing_dedup_keys) or (post_keys & post_enrich_seen_keys):
       continue
     post_enrich_seen_keys.update(post_keys)
@@ -9150,6 +9388,8 @@ def _format_verbatim_article_paragraphs_html(verbatim_text: str, title_text: str
 
 if st is not None and "active_tts_audio" not in st.session_state:
   st.session_state["active_tts_audio"] = {}
+if st is not None and "selected_export_articles" not in st.session_state:
+  st.session_state["selected_export_articles"] = {}
 
 
 def _render_interactive_audio_component(audio_b64: str, mime_type: str, spoken_text: str, label_text: str, auto_play: bool = True, api_key: str = ''):
@@ -9473,6 +9713,689 @@ def _render_interactive_audio_component(audio_b64: str, mime_type: str, spoken_t
   components.html(comp_html, height=106, scrolling=False)
 
 
+
+# =====================================================================
+# 17-ب. محرك البحث في الأخبار المرصودة وتجميعها وتصديرها إلى Word (.docx) و PDF (.pdf)
+# =====================================================================
+def get_stable_article_id(item: dict) -> str:
+  if not isinstance(item, dict):
+    return "id_unknown"
+  if item.get("id"):
+    return f"id_{item['id']}"
+  raw_t = clean_display_text(item.get("title") or "")
+  raw_u = clean_social_post_url(item.get("url") or "")
+  t_hash = hashlib.md5(f"{normalize_arabic_for_dedup(raw_t)}|{raw_u}".encode("utf-8", errors="ignore")).hexdigest()[:12]
+  return f"th_{t_hash}"
+
+
+def _create_fallback_png_bytes(platform: str = "الصحف", source_name: str = "") -> bytes:
+  """توليد صورة مصغرة PNG أنيقة للأخبار التي لا تتوفر على رابط صورة خارجي أو عند انقطاع الاتصال لضمان اكتمال جدول Word و PDF."""
+  palette = {
+      "الصحف": ((6, 78, 59), (16, 185, 129), "MOROCCO PRESS"),
+      "فيسبوك": ((30, 58, 138), (59, 130, 246), "FACEBOOK POST"),
+      "إكس": ((15, 23, 42), (148, 163, 184), "X / TWITTER"),
+      "يوتيوب": ((127, 29, 29), (239, 68, 68), "YOUTUBE VIDEO"),
+      "أخرى": ((76, 29, 149), (168, 85, 247), "SOCIAL MEDIA"),
+  }
+  bg_rgb, accent_rgb, en_tag = palette.get(platform, ((15, 23, 42), (56, 189, 248), "JUSTICE HUB"))
+  try:
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (320, 200), color=bg_rgb)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([8, 8, 311, 191], outline=accent_rgb, width=3)
+    draw.rectangle([18, 18, 301, 54], fill=accent_rgb)
+    draw.text((85, 28), en_tag, fill=(255, 255, 255))
+    draw.text((75, 95), "MOROCCO JUSTICE HUB", fill=(241, 245, 249))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+  except Exception:
+    import zlib
+    width, height = 160, 100
+    raw_rows = b""
+    r_b, g_b, b_b = bg_rgb
+    row_bytes = b"\x00" + bytes([r_b, g_b, b_b]) * width
+    raw_data = row_bytes * height
+    def _png_chunk(c_type: bytes, c_data: bytes) -> bytes:
+      return struct.pack(">I", len(c_data)) + c_type + c_data + struct.pack(">I", zlib.crc32(c_type + c_data) & 0xFFFFFFFF)
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", ihdr) + _png_chunk(b"IDAT", zlib.compress(raw_data)) + _png_chunk(b"IEND", b"")
+
+
+def _fetch_single_export_image(item: dict) -> tuple:
+  """جلب وتحويل صورة الخبر إلى PNG/JPEG متناسقة الأبعاد لدمجها داخل جدول Word و PDF."""
+  art_id = get_stable_article_id(item)
+  plat = clean_display_text(item.get("platform") or "الصحف")
+  src = clean_display_text(item.get("source_name") or plat)
+  raw_u = clean_social_post_url(item.get("url") or "")
+  img_u = (item.get("image_url") or "").strip()
+  if not img_u:
+    img_u = extract_thumbnail_for_item(raw_u, "", plat)
+
+  if img_u and img_u.startswith("http"):
+    try:
+      r = requests.get(img_u, headers=DEFAULT_HEADERS, timeout=3.5)
+      if r.status_code == 200 and len(r.content) > 200:
+        try:
+          from PIL import Image
+          im = Image.open(io.BytesIO(r.content)).convert("RGB")
+          im.thumbnail((320, 220))
+          out_b = io.BytesIO()
+          im.save(out_b, format="PNG")
+          return art_id, out_b.getvalue()
+        except Exception:
+          return art_id, r.content
+    except Exception:
+      pass
+
+  return art_id, _create_fallback_png_bytes(plat, src)
+
+
+def prepare_export_images_map(selected_items: list) -> dict:
+  """جلب صور الأخبار المحددة بالتوازي لضمان سرعة التصدير إلى Word و PDF."""
+  if not selected_items:
+    return {}
+  img_map = {}
+  with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(selected_items))) as pool:
+    for aid, img_bytes in pool.map(_fetch_single_export_image, selected_items):
+      img_map[aid] = img_bytes
+  return img_map
+
+
+def _build_pure_python_openxml_docx(selected_items: list, img_map: dict, search_kw: str = "") -> bytes:
+  """مولد ملفات Word (.docx) احتياطي نقي (Pure-Python OpenXML ZIP) يعمل حتى في حال عدم تثبيت مكتبة python-docx على السيرفر."""
+  import zipfile
+  buf = io.BytesIO()
+  now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+  rels_xml = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+  ]
+  rows_xml = []
+
+  # ترويسة الجدول: العنوان | الملخص | المصدر | الصورة
+  rows_xml.append("""
+    <w:tr>
+      <w:trPr><w:tblHeader/></w:trPr>
+      <w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="22"/></w:rPr><w:t>العنوان</w:t></w:r></w:p></w:tc>
+      <w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="22"/></w:rPr><w:t>الملخص</w:t></w:r></w:p></w:tc>
+      <w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="22"/></w:rPr><w:t>المصدر</w:t></w:r></w:p></w:tc>
+      <w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="0F172A"/></w:tcPr><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="22"/></w:rPr><w:t>الصورة</w:t></w:r></w:p></w:tc>
+    </w:tr>
+  """)
+
+  for idx, it in enumerate(selected_items):
+    title_t = html.escape(clean_display_text(it.get("title") or ""))
+    sum_t = html.escape(clean_display_text(it.get("summary") or ""))
+    plat_t = clean_display_text(it.get("platform") or "الصحف")
+    src_t = html.escape(f"{clean_display_text(it.get('source_name') or plat_t)} ({plat_t}) - {clean_display_text(it.get('pub_date') or '')}")
+    img_label = html.escape(clean_social_post_url(it.get("url") or ""))
+    rows_xml.append(f"""
+      <w:tr>
+        <w:tc><w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="21"/></w:rPr><w:t>{title_t}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:t>{sum_t}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="20"/></w:rPr><w:t>{src_t}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>[صورة الخبر] {img_label[:45]}</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    """)
+
+  rels_xml.append("</Relationships>")
+  doc_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>المرصد الوطني للعدالة والقضاء بالمغرب — تقرير الأخبار المحددة ({len(selected_items)} خبر)</w:t></w:r></w:p>
+    <w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:sz w:val="21"/></w:rPr><w:t>تاريخ التصدير: {now_str} | الكلمة المفتاحية: {html.escape(search_kw or 'شامل')}</w:t></w:r></w:p>
+    <w:tbl>
+      <w:tblPr>
+        <w:bidi/>
+        <w:tblW w:w="5000" w:type="pct"/>
+        <w:tblBorders>
+          <w:top w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
+          <w:bottom w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
+          <w:left w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
+          <w:right w:val="single" w:sz="6" w:space="0" w:color="94A3B8"/>
+          <w:insideH w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+          <w:insideV w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+        </w:tblBorders>
+      </w:tblPr>
+      {''.join(rows_xml)}
+    </w:tbl>
+  </w:body>
+</w:document>"""
+
+  with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
+    zf.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+    zf.writestr("word/_rels/document.xml.rels", "".join(rels_xml))
+    zf.writestr("word/document.xml", doc_xml)
+  return buf.getvalue()
+
+
+def generate_selected_articles_docx(selected_items: list, search_kw: str = "", img_map: dict = None) -> bytes:
+  """توليد ملف وورد (.docx) احترافي باتجاه عربي RTL يضم الأخبار المحددة في جدول منظم (العنوان، الملخص، المصدر، الصورة)."""
+  if not selected_items:
+    return b""
+  if img_map is None:
+    img_map = prepare_export_images_map(selected_items)
+
+  try:
+    import docx
+    from docx.enum.section import WD_ORIENT
+    from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+    from docx.shared import Inches, Pt, RGBColor
+
+    doc = docx.Document()
+
+    # إعداد الصفحة بالوضع الأفقي (Landscape) لمنح الجدول المكون من 4 أعمدة مساحة مريحة وواضحة
+    for section in doc.sections:
+      section.orientation = WD_ORIENT.LANDSCAPE
+      section.page_width = Inches(11.69)
+      section.page_height = Inches(8.27)
+      section.top_margin = Inches(0.65)
+      section.bottom_margin = Inches(0.65)
+      section.left_margin = Inches(0.65)
+      section.right_margin = Inches(0.65)
+
+    style_normal = doc.styles["Normal"]
+    style_normal.font.name = "Cairo"
+    style_normal.font.size = Pt(11)
+    style_normal.font.color.rgb = RGBColor(15, 23, 42)
+
+    def _set_p_rtl(p_obj, align=WD_ALIGN_PARAGRAPH.RIGHT):
+      p_obj.alignment = align
+      pPr = p_obj._p.get_or_add_pPr()
+      pPr.append(parse_xml(r"<w:bidi {}/>".format(nsdecls("w"))))
+
+    # عنوان التقرير الرئيسي
+    title_p = doc.add_paragraph()
+    _set_p_rtl(title_p, WD_ALIGN_PARAGRAPH.RIGHT)
+    t_run = title_p.add_run("⚖️ المرصد الوطني للعدالة والقضاء بالمغرب — تقرير تجميعي للأخبار القضائية المحددة")
+    t_run.font.name = "Cairo"
+    t_run.font.size = Pt(18)
+    t_run.font.bold = True
+    t_run.font.color.rgb = RGBColor(15, 23, 42)
+    title_p.paragraph_format.space_after = Pt(4)
+    title_p.paragraph_format.keep_with_next = True
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    kw_label = search_kw.strip() if (search_kw and search_kw.strip()) else "جميع الأخبار المرصودة"
+    meta_p = doc.add_paragraph()
+    _set_p_rtl(meta_p, WD_ALIGN_PARAGRAPH.RIGHT)
+    m_run = meta_p.add_run(
+        f"تاريخ التصدير: {now_str}   |   عدد الأخبار المجمعة: {len(selected_items)} خبر   |   الكلمة المفتاحية للبحث: {kw_label}"
+    )
+    m_run.font.name = "Cairo"
+    m_run.font.size = Pt(11)
+    m_run.font.bold = True
+    m_run.font.color.rgb = RGBColor(3, 105, 161)
+    meta_p.paragraph_format.space_after = Pt(12)
+    meta_p.paragraph_format.keep_with_next = True
+
+    # إنشاء الجدول المنظم بـ 4 أعمدة: العنوان | الملخص | المصدر | الصورة
+    headers = ["العنوان", "الملخص", "المصدر", "الصورة"]
+    col_widths = [Inches(2.55), Inches(4.25), Inches(1.85), Inches(1.65)]
+
+    table = doc.add_table(rows=1, cols=4)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    tblPr = table._tbl.tblPr
+    tblPr.append(parse_xml(r"<w:bidi {}/>".format(nsdecls("w"))))
+    tblPr.append(
+        parse_xml(
+            r'<w:tblBorders {}>'
+            r'<w:top w:val="single" w:sz="8" w:space="0" w:color="0F172A"/>'
+            r'<w:bottom w:val="single" w:sz="8" w:space="0" w:color="0F172A"/>'
+            r'<w:left w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>'
+            r'<w:right w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>'
+            r'<w:insideH w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>'
+            r'<w:insideV w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>'
+            r"</w:tblBorders>".format(nsdecls("w"))
+        )
+    )
+
+    hdr_row = table.rows[0]
+    hdr_trPr = hdr_row._tr.get_or_add_trPr()
+    hdr_trPr.append(parse_xml(r"<w:tblHeader {}/>".format(nsdecls("w"))))
+
+    for idx, h_text in enumerate(headers):
+      cell = hdr_row.cells[idx]
+      cell.width = col_widths[idx]
+      cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+      cell._tc.get_or_add_tcPr().append(
+          parse_xml(r'<w:shd {} w:fill="0F172A"/>'.format(nsdecls("w")))
+      )
+      p_cell = cell.paragraphs[0]
+      _set_p_rtl(p_cell, WD_ALIGN_PARAGRAPH.CENTER)
+      p_cell.paragraph_format.space_before = Pt(6)
+      p_cell.paragraph_format.space_after = Pt(6)
+      p_cell.paragraph_format.keep_with_next = True
+      r_h = p_cell.add_run(h_text)
+      r_h.font.name = "Cairo"
+      r_h.font.size = Pt(11)
+      r_h.font.bold = True
+      r_h.font.color.rgb = RGBColor(255, 255, 255)
+
+    for row_idx, item in enumerate(selected_items):
+      row = table.add_row()
+      trPr = row._tr.get_or_add_trPr()
+      trPr.append(parse_xml(r"<w:cantSplit {}/>".format(nsdecls("w"))))
+
+      bg_hex = "F8FAFC" if row_idx % 2 == 1 else "FFFFFF"
+      for c_i, cell in enumerate(row.cells):
+        cell.width = col_widths[c_i]
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        cell._tc.get_or_add_tcPr().append(
+            parse_xml(r'<w:shd {} w:fill="{}"/>'.format(nsdecls("w"), bg_hex))
+        )
+
+      raw_t = clean_display_text(item.get("title") or "")
+      plat = clean_display_text(item.get("platform") or "الصحف")
+      raw_src = clean_display_text(item.get("source_name") or plat)
+      raw_sum = clean_display_text(item.get("summary") or "")
+      raw_snip = clean_display_text(item.get("raw_snippet") or "")
+      if is_summary_just_title(raw_t, raw_sum):
+        raw_sum = build_extractive_arabic_summary(raw_t, raw_snip, plat, raw_src)
+      pub_dt = clean_display_text(item.get("pub_date") or "")
+      clean_u = clean_social_post_url(item.get("url") or "")
+
+      # 1. خلية العنوان
+      c_title = row.cells[0]
+      p_t = c_title.paragraphs[0]
+      _set_p_rtl(p_t, WD_ALIGN_PARAGRAPH.RIGHT)
+      p_t.paragraph_format.space_before = Pt(4)
+      p_t.paragraph_format.space_after = Pt(4)
+      r_num = p_t.add_run(f"[{row_idx + 1}] ")
+      r_num.font.name = "Cairo"
+      r_num.font.size = Pt(10.5)
+      r_num.font.bold = True
+      r_num.font.color.rgb = RGBColor(2, 132, 199)
+      r_t = p_t.add_run(raw_t)
+      r_t.font.name = "Cairo"
+      r_t.font.size = Pt(10.5)
+      r_t.font.bold = True
+      r_t.font.color.rgb = RGBColor(15, 23, 42)
+
+      # 2. خلية الملخص
+      c_sum = row.cells[1]
+      p_s = c_sum.paragraphs[0]
+      _set_p_rtl(p_s, WD_ALIGN_PARAGRAPH.RIGHT)
+      p_s.paragraph_format.space_before = Pt(4)
+      p_s.paragraph_format.space_after = Pt(4)
+      r_s = p_s.add_run(raw_sum)
+      r_s.font.name = "Cairo"
+      r_s.font.size = Pt(10)
+      r_s.font.color.rgb = RGBColor(51, 65, 85)
+
+      # 3. خلية المصدر
+      c_src = row.cells[2]
+      p_src = c_src.paragraphs[0]
+      _set_p_rtl(p_src, WD_ALIGN_PARAGRAPH.RIGHT)
+      p_src.paragraph_format.space_before = Pt(4)
+      p_src.paragraph_format.space_after = Pt(4)
+      r_src_name = p_src.add_run(f"{raw_src}\n")
+      r_src_name.font.name = "Cairo"
+      r_src_name.font.size = Pt(10)
+      r_src_name.font.bold = True
+      r_src_name.font.color.rgb = RGBColor(15, 23, 42)
+
+      r_plat = p_src.add_run(f"المنصة: {plat}\n")
+      r_plat.font.name = "Cairo"
+      r_plat.font.size = Pt(10)
+      r_plat.font.color.rgb = RGBColor(3, 105, 161)
+
+      if pub_dt:
+        r_dt = p_src.add_run(f"التاريخ: {pub_dt}\n")
+        r_dt.font.name = "Cairo"
+        r_dt.font.size = Pt(10)
+        r_dt.font.color.rgb = RGBColor(100, 116, 139)
+
+      if clean_u:
+        r_u = p_src.add_run(clean_u[:55] + ("..." if len(clean_u) > 55 else ""))
+        r_u.font.name = "Calibri"
+        r_u.font.size = Pt(10)
+        r_u.font.color.rgb = RGBColor(37, 99, 235)
+
+      # 4. خلية الصورة
+      c_img = row.cells[3]
+      p_img = c_img.paragraphs[0]
+      p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+      p_img.paragraph_format.space_before = Pt(4)
+      p_img.paragraph_format.space_after = Pt(4)
+      aid = get_stable_article_id(item)
+      img_bytes = img_map.get(aid) or _create_fallback_png_bytes(plat, raw_src)
+      try:
+        p_img.add_run().add_picture(io.BytesIO(img_bytes), width=Inches(1.42))
+      except Exception:
+        fb_png = _create_fallback_png_bytes(plat, raw_src)
+        p_img.add_run().add_picture(io.BytesIO(fb_png), width=Inches(1.42))
+
+    out_stream = io.BytesIO()
+    doc.save(out_stream)
+    return out_stream.getvalue()
+  except Exception:
+    return _build_pure_python_openxml_docx(selected_items, img_map, search_kw=search_kw)
+
+
+def build_selected_articles_export_html(selected_items: list, search_kw: str = "", img_map: dict = None) -> str:
+  """بناء وثيقة HTML5 RTL متكاملة ومستقلة (تضم الصور بترميز Base64) لتوليد ملف PDF رسمي عالي الدقة."""
+  if img_map is None:
+    img_map = prepare_export_images_map(selected_items)
+  now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+  kw_label = html.escape(search_kw.strip() if (search_kw and search_kw.strip()) else "جميع الأخبار المرصودة")
+
+  rows_html = []
+  for idx, item in enumerate(selected_items):
+    raw_t = clean_display_text(item.get("title") or "")
+    plat = clean_display_text(item.get("platform") or "الصحف")
+    raw_src = clean_display_text(item.get("source_name") or plat)
+    raw_sum = clean_display_text(item.get("summary") or "")
+    raw_snip = clean_display_text(item.get("raw_snippet") or "")
+    if is_summary_just_title(raw_t, raw_sum):
+      raw_sum = build_extractive_arabic_summary(raw_t, raw_snip, plat, raw_src)
+    pub_dt = clean_display_text(item.get("pub_date") or "")
+    clean_u = clean_social_post_url(item.get("url") or "")
+
+    aid = get_stable_article_id(item)
+    img_bytes = img_map.get(aid) or _create_fallback_png_bytes(plat, raw_src)
+    b64_img = base64.b64encode(img_bytes).decode("ascii")
+    img_data_uri = f"data:image/png;base64,{b64_img}"
+
+    rows_html.append(f"""
+      <tr>
+        <td class="col-title">
+          <div class="title-txt"><span class="row-num">[{idx + 1}]</span> {html.escape(raw_t)}</div>
+        </td>
+        <td class="col-summary">
+          <div class="summary-txt">{html.escape(raw_sum)}</div>
+        </td>
+        <td class="col-source">
+          <div class="src-name">{html.escape(raw_src)}</div>
+          <div class="src-meta">المنصة: {html.escape(plat)}</div>
+          <div class="src-meta">النشر: <span dir="ltr">{html.escape(pub_dt)}</span></div>
+          {f'<div class="src-link"><a href="{html.escape(clean_u, quote=True)}">رابط المصدر الأصلي</a></div>' if clean_u else ''}
+        </td>
+        <td class="col-image">
+          <img src="{img_data_uri}" alt="thumb" />
+        </td>
+      </tr>
+    """)
+
+  return f"""<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>تقرير الأخبار القضائية المحددة</title>
+  <style>
+    @page {{
+      size: A4 landscape;
+      margin: 14mm 12mm;
+      background: #ffffff;
+      @bottom-right {{
+        content: "صفحة " counter(page) " من " counter(pages);
+        font-family: "Noto Sans Arabic", "Cairo", Arial, sans-serif;
+        font-size: 8.5pt;
+        color: #475569;
+      }}
+    }}
+    * {{ box-sizing: border-box; }}
+    html, body {{
+      margin: 0;
+      padding: 0;
+      font-family: "Noto Sans Arabic", "Cairo", "Amiri", Arial, sans-serif;
+      font-size: 10pt;
+      line-height: 1.55;
+      color: #0f172a;
+      direction: rtl;
+      text-align: right;
+      background: #ffffff;
+    }}
+    .report-header {{
+      border-bottom: 2.5px solid #0f172a;
+      padding-bottom: 10px;
+      margin-bottom: 14px;
+    }}
+    .report-header h1 {{
+      font-size: 16pt;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 0 0 6px 0;
+    }}
+    .report-meta {{
+      font-size: 9.5pt;
+      font-weight: 700;
+      color: #0369a1;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }}
+    th, td {{
+      border: 1px solid #cbd5e1;
+      padding: 8px 10px;
+      vertical-align: middle;
+      text-align: right;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }}
+    thead th {{
+      background-color: #0f172a;
+      color: #ffffff;
+      font-size: 10.5pt;
+      font-weight: 800;
+      text-align: center;
+      border-color: #0f172a;
+    }}
+    tbody tr:nth-child(even) td {{
+      background-color: #f8fafc;
+    }}
+    tr {{
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }}
+    .col-title {{ width: 25%; }}
+    .col-summary {{ width: 42%; }}
+    .col-source {{ width: 18%; }}
+    .col-image {{ width: 15%; text-align: center; }}
+    .title-txt {{
+      font-size: 10pt;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1.5;
+    }}
+    .row-num {{
+      color: #0284c7;
+      font-weight: 800;
+    }}
+    .summary-txt {{
+      font-size: 9.5pt;
+      color: #334155;
+      line-height: 1.6;
+    }}
+    .src-name {{
+      font-size: 9.5pt;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 3px;
+    }}
+    .src-meta {{
+      font-size: 8.5pt;
+      color: #475569;
+      margin-bottom: 2px;
+    }}
+    .src-link a {{
+      font-size: 8.5pt;
+      color: #2563eb;
+      text-decoration: underline;
+    }}
+    .col-image img {{
+      width: 125px;
+      height: 82px;
+      object-fit: cover;
+      display: block;
+      margin: 0 auto;
+    }}
+  </style>
+</head>
+<body>
+  <div class="report-header">
+    <h1>⚖️ المرصد الوطني للعدالة والقضاء بالمغرب — جدول الأخبار القضائية المحددة</h1>
+    <div class="report-meta">
+      تاريخ التصدير: <span dir="ltr">{html.escape(now_str)}</span> &nbsp;|&nbsp;
+      عدد الأخبار المجمعة: {len(selected_items)} خبر &nbsp;|&nbsp;
+      الكلمة المفتاحية للبحث: {kw_label}
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th class="col-title">العنوان</th>
+        <th class="col-summary">الملخص</th>
+        <th class="col-source">المصدر</th>
+        <th class="col-image">الصورة</th>
+      </tr>
+    </thead>
+    <tbody>
+      {''.join(rows_html)}
+    </tbody>
+  </table>
+</body>
+</html>"""
+
+
+def generate_selected_articles_pdf(selected_items: list, search_kw: str = "", img_map: dict = None) -> bytes:
+  """توليد ملف PDF (.pdf) منظم يضم الأخبار المحددة في جدول (العنوان، الملخص، المصدر، الصورة) مع دعم WeasyPrint وبدائل بايثون."""
+  if not selected_items:
+    return b""
+  if img_map is None:
+    img_map = prepare_export_images_map(selected_items)
+  html_doc = build_selected_articles_export_html(selected_items, search_kw=search_kw, img_map=img_map)
+
+  try:
+    import weasyprint
+    pdf_bytes = weasyprint.HTML(string=html_doc).write_pdf()
+    if pdf_bytes and len(pdf_bytes) > 500:
+      return pdf_bytes
+  except Exception:
+    pass
+
+  # احتياطي عبر ReportLab في حال عدم توفر WeasyPrint على السيرفر الخارجي
+  try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import Image as RLImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    buf_pdf = io.BytesIO()
+    doc_pdf = SimpleDocTemplate(buf_pdf, pagesize=landscape(A4), leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
+    styles = getSampleStyleSheet()
+    normal_st = styles["Normal"]
+    table_rows = [["العنوان", "الملخص", "المصدر", "الصورة"]]
+    for item in selected_items:
+      aid = get_stable_article_id(item)
+      plat = clean_display_text(item.get("platform") or "الصحف")
+      raw_src = clean_display_text(item.get("source_name") or plat)
+      img_b = img_map.get(aid) or _create_fallback_png_bytes(plat, raw_src)
+      rl_img = RLImage(io.BytesIO(img_b), width=95, height=60)
+      table_rows.append([
+          Paragraph(html.escape(clean_display_text(item.get("title") or "")), normal_st),
+          Paragraph(html.escape(clean_display_text(item.get("summary") or "")), normal_st),
+          Paragraph(html.escape(f"{raw_src} ({plat})"), normal_st),
+          rl_img,
+      ])
+    t_obj = Table(table_rows, colWidths=[190, 310, 140, 115], repeatRows=1)
+    t_obj.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    doc_pdf.build([t_obj])
+    return buf_pdf.getvalue()
+  except Exception:
+    return b""
+
+
+def get_or_build_export_files(selected_items: list, search_kw: str = "") -> tuple:
+  """تجهيز وتخزين ملفات Word (.docx) و PDF (.pdf) في الذاكرة المؤقتة للجلسة لضمان سرعة التحميل بضغطة واحدة."""
+  if not selected_items:
+    return b"", b"", ""
+  sig_ids = tuple(get_stable_article_id(x) for x in selected_items)
+  cache_key = (sig_ids, str(search_kw or "").strip())
+  if st is not None:
+    cached = st.session_state.get("cached_export_bundle")
+    if isinstance(cached, dict) and cached.get("key") == cache_key:
+      return cached["docx"], cached["pdf"], cached["html"]
+
+  img_map = prepare_export_images_map(selected_items)
+  docx_b = generate_selected_articles_docx(selected_items, search_kw=search_kw, img_map=img_map)
+  pdf_b = generate_selected_articles_pdf(selected_items, search_kw=search_kw, img_map=img_map)
+  html_s = build_selected_articles_export_html(selected_items, search_kw=search_kw, img_map=img_map)
+
+  if st is not None:
+    st.session_state["cached_export_bundle"] = {
+        "key": cache_key,
+        "docx": docx_b,
+        "pdf": pdf_b,
+        "html": html_s,
+    }
+  return docx_b, pdf_b, html_s
+
+
+def _render_client_side_pdf_printer(export_html_str: str, count_items: int):
+  """زر تصدير وطباعة PDF فوري من المتصفح (يعمل بتقنية html2pdf + نافذة الطباعة المباشرة لضمان دعم العربية 100% على كافة المتصفحات)."""
+  try:
+    import streamlit.components.v1 as components
+  except Exception:
+    return
+  b64_html = base64.b64encode(export_html_str.encode("utf-8")).decode("ascii")
+  comp_code = f"""<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head><meta charset="utf-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@700;800&display=swap');
+  body {{ margin:0; padding:0; background:transparent; font-family:'Cairo',sans-serif; direction:rtl; }}
+  .print-btn {{
+    width:100%; height:42px; border-radius:12px; cursor:pointer;
+    background:linear-gradient(135deg, rgba(220,38,38,0.82) 0%, rgba(153,27,27,0.92) 100%);
+    border:1.5px solid rgba(252,165,165,0.8); color:#ffffff;
+    font-family:'Cairo',sans-serif; font-size:0.9rem; font-weight:800;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    box-shadow:0 4px 14px rgba(220,38,38,0.3); transition:all 0.2s ease;
+  }}
+  .print-btn:hover {{
+    border-color:#ffffff; transform:translateY(-1px);
+    box-shadow:0 6px 18px rgba(220,38,38,0.5);
+  }}
+</style>
+</head>
+<body>
+  <button class="print-btn" onclick="openPdfPrintWindow()">
+    🖨️ معاينة وحفظ جدول PDF فوري ({count_items} خبر)
+  </button>
+  <script>
+  function openPdfPrintWindow() {{
+    const bin = atob("{b64_html}");
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const dec = new TextDecoder("utf-8").decode(bytes);
+    const w = window.open("", "_blank");
+    if (w) {{
+      w.document.open();
+      w.document.write(dec);
+      w.document.close();
+      setTimeout(() => {{ w.focus(); w.print(); }}, 550);
+    }}
+  }}
+  </script>
+</body>
+</html>"""
+  components.html(comp_code, height=48, scrolling=False)
+
+
 def render_article_cards(
     items_list: list,
     empty_msg: str = "لا توجد منشورات مرصودة حالياً في هذا القسم.",
@@ -9516,11 +10439,7 @@ def render_article_cards(
     raw_src = clean_display_text(item.get("source_name") or plat)
 
     # معرف ثابت 100% لكل خبر لا يتغير أبداً عند تحديث الرابط أو بين التبويبات
-    if item.get("id"):
-      stable_art_id = f"id_{item['id']}"
-    else:
-      t_hash = hashlib.md5(normalize_arabic_for_dedup(raw_title).encode("utf-8")).hexdigest()[:10]
-      stable_art_id = f"th_{t_hash}"
+    stable_art_id = get_stable_article_id(item)
     widget_uid = f"{tab_prefix}_{stable_art_id}_{idx}"
 
     # جلب النص الكامل تلقائياً للمقالات الصحفية غير المفحوصة سابقاً (بحد أقصى مقالين في الدورة لمنع أي بطء عند ضغط أزرار الصوت)
@@ -9631,7 +10550,7 @@ def render_article_cards(
     audio_slot = st.empty()
     just_triggered_audio = False
 
-    b_col1, b_col2, b_col3 = st.columns([1.4, 1.5, 1.4])
+    b_col1, b_col2, b_col3, b_col4 = st.columns([1.25, 1.35, 1.35, 1.15])
     with b_col1:
       if st.button("🔊 استماع صوتي للملخص", key=f"tts_sum_{widget_uid}", use_container_width=True):
         with audio_slot.container():
@@ -9677,6 +10596,19 @@ def render_article_cards(
         just_triggered_audio = True
 
     with b_col3:
+      selected_map_curr = st.session_state.setdefault("selected_export_articles", {})
+      is_currently_sel = stable_art_id in selected_map_curr
+      btn_sel_lbl = "✅ محدد للتصدير (إلغاء)" if is_currently_sel else "☑️ تحديد للتصدير (Word/PDF)"
+      if st.button(btn_sel_lbl, key=f"sel_exp_{widget_uid}", use_container_width=True):
+        if is_currently_sel:
+          selected_map_curr.pop(stable_art_id, None)
+        else:
+          item_copy = dict(item)
+          item_copy["summary"] = raw_summary
+          selected_map_curr[stable_art_id] = item_copy
+        st.rerun()
+
+    with b_col4:
       render_html(
           f'<div style="display:flex;align-items:center;justify-content:center;height:42px;"><a class="news-link" style="width:100%;justify-content:center;height:40px;" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 فتح المصدر الأصلي</a></div>'
       )
@@ -9705,7 +10637,277 @@ def render_article_cards(
 
 
 # =====================================================================
-# 18. التبويبات الرئيسية (بأسماء مختصرة من كلمة واحدة)
+# 18. مركز البحث في الأخبار المرصودة (الحالية والمؤرشفة) وتجميع وتصدير تقارير Word و PDF
+# =====================================================================
+def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: list, archive_pool: list, key_prefix: str = "hub"):
+  selected_map = st.session_state.setdefault("selected_export_articles", {})
+  live_ids_set = {get_stable_article_id(x) for x in live_pool}
+
+  render_html(
+      f"""
+      <div style="background:linear-gradient(135deg, rgba(14, 165, 233, 0.20) 0%, rgba(15, 23, 42, 0.88) 70%, rgba(30, 41, 59, 0.92) 100%);border:1px solid rgba(56, 189, 248, 0.52);border-right:5px solid #38bdf8;border-radius:18px;padding:14px 20px;margin:8px 0 12px 0;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;direction:rtl;text-align:right;">
+          <div style="display:flex;align-items:center;gap:12px;direction:rtl;">
+              <span style="width:44px;height:44px;min-width:44px;border-radius:13px;display:inline-flex;align-items:center;justify-content:center;font-size:1.35rem;background:rgba(56,189,248,0.2);border:1px solid rgba(56,189,248,0.55);">📑</span>
+              <div>
+                  <div style="font-size:clamp(1.02rem, 1.8vw, 1.18rem);font-weight:900;color:#f0f9ff;line-height:1.3;">البحث في الأخبار المرصودة وتجميع وتصدير التقارير (Word & PDF)</div>
+                  <div style="font-size:0.8rem;font-weight:700;color:#cbd5e1;margin-top:2px;">ابحث بالكلمة المفتاحية في الأخبار المعروضة حالياً أو المؤرشفة، وحدد الأخبار لتصديرها في جدول منظم يضم (العنوان، الملخص، المصدر، والصورة)</div>
+              </div>
+          </div>
+          <span style="background:rgba(16,185,129,0.22);border:1px solid rgba(52,211,153,0.6);color:#6ee7b7;padding:5px 14px;border-radius:999px;font-size:0.82rem;font-weight:900;">✅ الأخبار المحددة للتصدير: {len(selected_map)}</span>
+      </div>
+      """
+  )
+
+  c_s1, c_s2, c_s3 = st.columns([2.4, 1.3, 1.1])
+  with c_s1:
+    search_kw_val = st.text_input(
+        "🔎 الكلمة المفتاحية للبحث في المرصود",
+        placeholder="🔎 ابحث بكلمة مفتاحية في العنوان أو الملخص أو النص الكامل أو المصدر...",
+        key=f"{key_prefix}_kw_input",
+        label_visibility="collapsed",
+    )
+  with c_s2:
+    scope_choice = st.selectbox(
+        "نطاق البحث",
+        options=[
+            f"الكل: المعروضة حالياً + المؤرشفة ({len(all_monitored_pool)})",
+            f"الأخبار المعروضة حالياً فقط ({len(live_pool)})",
+            f"الأخبار المؤرشفة فقط ({len(archive_pool)})",
+        ],
+        key=f"{key_prefix}_scope_select",
+        label_visibility="collapsed",
+    )
+  with c_s3:
+    plat_choice = st.selectbox(
+        "المنصة",
+        options=["جميع المنصات", "الصحف", "فيسبوك", "إكس", "يوتيوب", "أخرى", "المخصص"],
+        key=f"{key_prefix}_plat_select",
+        label_visibility="collapsed",
+    )
+
+  if "المعروضة حالياً فقط" in scope_choice:
+    candidate_pool = list(live_pool)
+  elif "المؤرشفة فقط" in scope_choice:
+    candidate_pool = list(archive_pool)
+  else:
+    candidate_pool = list(all_monitored_pool)
+
+  if plat_choice == "المخصص":
+    candidate_pool = [a for a in candidate_pool if int(a.get("is_custom_target", 0)) == 1]
+  elif plat_choice != "جميع المنصات":
+    candidate_pool = [a for a in candidate_pool if clean_display_text(a.get("platform") or "الصحف") == plat_choice]
+
+  kw_clean = search_kw_val.strip()
+  if kw_clean:
+    matched_results = []
+    q_norm = normalize_arabic_for_dedup(kw_clean)
+    q_low = kw_clean.lower()
+    for a in candidate_pool:
+      t_a = a.get("title", "")
+      s_a = a.get("summary", "")
+      r_a = a.get("raw_snippet", "")
+      src_a = a.get("source_name", "")
+      cat_a = a.get("category", "")
+      combined_hay = f"{t_a} {s_a} {r_a} {src_a} {cat_a}"
+      if (
+          matches_custom_keywords(t_a, f"{s_a} {r_a} {src_a}", kw_clean)
+          or (q_norm and q_norm in normalize_arabic_for_dedup(combined_hay))
+          or (q_low in combined_hay.lower())
+      ):
+        matched_results.append(a)
+  else:
+    matched_results = candidate_pool
+
+  # أزرار التحديد الجماعي وإلغاء التحديد
+  act_c1, act_c2, act_c3 = st.columns([1.5, 1.5, 2.0])
+  with act_c1:
+    if st.button(f"☑️ تحديد كل نتائج البحث ({len(matched_results)})", key=f"{key_prefix}_sel_all_btn", use_container_width=True):
+      for m_it in matched_results[:100]:
+        aid = get_stable_article_id(m_it)
+        it_copy = dict(m_it)
+        raw_t = clean_display_text(it_copy.get("title") or "")
+        raw_s = clean_display_text(it_copy.get("summary") or "")
+        plat = clean_display_text(it_copy.get("platform") or "الصحف")
+        src = clean_display_text(it_copy.get("source_name") or plat)
+        if is_summary_just_title(raw_t, raw_s):
+          it_copy["summary"] = build_extractive_arabic_summary(raw_t, clean_display_text(it_copy.get("raw_snippet") or ""), plat, src)
+        selected_map[aid] = it_copy
+      st.rerun()
+  with act_c2:
+    if st.button(f"🗑️ مسح التحديد بالكامل ({len(selected_map)})", key=f"{key_prefix}_clear_sel_btn", use_container_width=True):
+      selected_map.clear()
+      st.session_state.pop("cached_export_bundle", None)
+      st.rerun()
+  with act_c3:
+    render_html(
+        f"<div style='height:42px;display:flex;align-items:center;justify-content:flex-start;padding:0 12px;background:rgba(15,23,42,0.65);border:1px solid rgba(148,163,184,0.28);border-radius:12px;color:#e2e8f0;font-size:0.84rem;font-weight:800;direction:rtl;'>📊 نتائج البحث المطابقة: <strong style='color:#38bdf8;margin:0 6px;'>{len(matched_results)}</strong> خبر  |  المحدد للتصدير: <strong style='color:#34d399;margin:0 6px;'>{len(selected_map)}</strong> خبر</div>"
+    )
+
+  # لوحة التصدير الفوري إلى Word (.docx) و PDF (.pdf) وعرض الجدول المنظم للأخبار المحددة
+  if selected_map:
+    selected_items_list = sorted(
+        list(selected_map.values()),
+        key=lambda x: float(x.get("pub_timestamp", 0)),
+        reverse=True,
+    )
+    docx_bytes, pdf_bytes, export_html_str = get_or_build_export_files(selected_items_list, search_kw=kw_clean)
+    ts_file_tag = datetime.now().strftime("%Y%m%d_%H%M")
+
+    render_html(
+        f"""
+        <div style="background:linear-gradient(135deg, rgba(6, 78, 59, 0.45) 0%, rgba(15, 23, 42, 0.92) 100%);border:1.5px solid rgba(52, 211, 153, 0.65);border-radius:16px;padding:14px 18px;margin:10px 0 14px 0;direction:rtl;text-align:right;">
+            <div style="font-size:0.96rem;font-weight:900;color:#6ee7b7;margin-bottom:6px;">📥 سلة التجميع والتصدير جاهزة ({len(selected_items_list)} خبر محدد) — اختر صيغة التحميل:</div>
+            <div style="font-size:0.8rem;color:#cbd5e1;">يتم تضمين الأخبار المحددة في جدول رسمي منظم يحتوي على: <strong>العنوان • الملخص • المصدر • الصورة</strong></div>
+        </div>
+        """
+    )
+
+    dl_col1, dl_col2, dl_col3 = st.columns([1.6, 1.6, 1.6])
+    with dl_col1:
+      if docx_bytes:
+        st.download_button(
+            label=f"📘 تحميل ملف وورد Word (.docx) [{len(selected_items_list)} خبر]",
+            data=docx_bytes,
+            file_name=f"justice_news_report_{ts_file_tag}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            key=f"{key_prefix}_dl_docx_btn",
+            use_container_width=True,
+        )
+    with dl_col2:
+      if pdf_bytes:
+        st.download_button(
+            label=f"📕 تحميل ملف PDF (.pdf) [{len(selected_items_list)} خبر]",
+            data=pdf_bytes,
+            file_name=f"justice_news_report_{ts_file_tag}.pdf",
+            mime="application/pdf",
+            key=f"{key_prefix}_dl_pdf_btn",
+            use_container_width=True,
+        )
+    with dl_col3:
+      if export_html_str:
+        _render_client_side_pdf_printer(export_html_str, len(selected_items_list))
+
+    # معاينة مباشرة للجدول المنظم (العنوان | الملخص | المصدر | الصورة) داخل المنصة
+    preview_rows_html = []
+    for s_idx, s_it in enumerate(selected_items_list):
+      s_t = clean_display_text(s_it.get("title") or "")
+      s_plat = clean_display_text(s_it.get("platform") or "الصحف")
+      s_src = clean_display_text(s_it.get("source_name") or s_plat)
+      s_sum = clean_display_text(s_it.get("summary") or "")
+      if is_summary_just_title(s_t, s_sum):
+        s_sum = build_extractive_arabic_summary(s_t, clean_display_text(s_it.get("raw_snippet") or ""), s_plat, s_src)
+      s_dt = clean_display_text(s_it.get("pub_date") or "")
+      s_u = clean_social_post_url(s_it.get("url") or "#")
+      s_fb_svg = get_fallback_thumbnail_data_uri(s_plat, s_src)
+      s_img = (s_it.get("image_url") or "").strip() or extract_thumbnail_for_item(s_u, "", s_plat) or s_fb_svg
+      preview_rows_html.append(
+          f"""
+          <tr style="border-bottom:1px solid rgba(148,163,184,0.2);">
+              <td style="padding:10px;font-weight:800;color:#f8fafc;width:24%;vertical-align:middle;"><span style="color:#38bdf8;">[{s_idx + 1}]</span> <a href="{html.escape(s_u, quote=True)}" target="_blank" style="color:#f8fafc;text-decoration:none;">{html.escape(s_t)}</a></td>
+              <td style="padding:10px;color:#cbd5e1;font-size:0.86rem;line-height:1.65;width:42%;vertical-align:middle;">{html.escape(s_sum)}</td>
+              <td style="padding:10px;color:#e2e8f0;font-size:0.83rem;font-weight:700;width:19%;vertical-align:middle;">{html.escape(s_src)}<br><span style="color:#38bdf8;font-size:0.76rem;">{html.escape(s_plat)} • <span dir="ltr">{html.escape(s_dt)}</span></span></td>
+              <td style="padding:8px;text-align:center;width:15%;vertical-align:middle;"><img src="{html.escape(s_img, quote=True)}" onerror="this.onerror=null;this.src='{html.escape(s_fb_svg, quote=True)}';" style="width:115px;height:74px;object-fit:cover;border-radius:8px;border:1px solid rgba(148,163,184,0.35);display:block;margin:0 auto;" /></td>
+          </tr>
+          """
+      )
+
+    with st.expander(f"👁️ معاينة الجدول المنظم للأخبار المحددة للتصدير ({len(selected_items_list)} خبر)", expanded=True):
+      render_html(
+          f"""
+          <div style="overflow-x:auto;background:rgba(9,13,22,0.85);border:1px solid rgba(56,189,248,0.35);border-radius:14px;padding:6px;direction:rtl;text-align:right;">
+              <table style="width:100%;border-collapse:collapse;direction:rtl;text-align:right;font-family:'Cairo',sans-serif;">
+                  <thead>
+                      <tr style="background:rgba(15,23,42,0.95);border-bottom:2px solid #38bdf8;">
+                          <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:24%;">العنوان</th>
+                          <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:42%;">الملخص</th>
+                          <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:19%;">المصدر</th>
+                          <th style="padding:10px;color:#38bdf8;font-weight:900;text-align:center;width:15%;">الصورة</th>
+                      </tr>
+                  </thead>
+                  <tbody>
+                      {''.join(preview_rows_html)}
+                  </tbody>
+              </table>
+          </div>
+          """
+      )
+
+  # عرض قائمة نتائج البحث مع خانات الاختيار السريعة للتحديد
+  if not matched_results:
+    render_html(
+        "<div dir='rtl' style='text-align:center;padding:24px;color:#94a3b8;background:rgba(15,23,42,0.5);border-radius:14px;border:1px dashed rgba(148,163,184,0.25);'>لا توجد أخبار مرصودة تطابق كلمة البحث أو الفلتر المحدد حالياً.</div>"
+    )
+    return
+
+  display_limit = 50
+  for r_idx, item in enumerate(matched_results[:display_limit]):
+    aid = get_stable_article_id(item)
+    is_sel = aid in selected_map
+    is_live_item = aid in live_ids_set
+    status_badge = (
+        "<span style='background:rgba(16,185,129,0.18);border:1px solid rgba(52,211,153,0.45);color:#6ee7b7;padding:2px 9px;border-radius:999px;font-size:0.74rem;font-weight:800;'>🟢 معروض حالياً</span>"
+        if is_live_item
+        else "<span style='background:rgba(148,163,184,0.18);border:1px solid rgba(148,163,184,0.4);color:#cbd5e1;padding:2px 9px;border-radius:999px;font-size:0.74rem;font-weight:800;'>🗄️ مؤرشف</span>"
+    )
+    plat = clean_display_text(item.get("platform") or "الصحف")
+    raw_src = clean_display_text(item.get("source_name") or plat)
+    raw_t = clean_display_text(item.get("title") or "")
+    raw_sum = clean_display_text(item.get("summary") or "")
+    if is_summary_just_title(raw_t, raw_sum):
+      raw_sum = build_extractive_arabic_summary(raw_t, clean_display_text(item.get("raw_snippet") or ""), plat, raw_src)
+    pub_dt = clean_display_text(item.get("pub_date") or "")
+    clean_u = clean_social_post_url(item.get("url") or "#")
+    fb_svg = get_fallback_thumbnail_data_uri(plat, raw_src)
+    raw_img = (item.get("image_url") or "").strip() or extract_thumbnail_for_item(clean_u, "", plat) or fb_svg
+
+    row_c1, row_c2 = st.columns([0.95, 5.05])
+    with row_c1:
+      new_sel_state = st.checkbox(
+          "تحديد للتصدير",
+          value=is_sel,
+          key=f"{key_prefix}_chk_{aid}_{r_idx}",
+      )
+      if new_sel_state != is_sel:
+        if new_sel_state:
+          it_c = dict(item)
+          it_c["summary"] = raw_sum
+          selected_map[aid] = it_c
+        else:
+          selected_map.pop(aid, None)
+        st.rerun()
+    with row_c2:
+      border_col = "rgba(52, 211, 153, 0.7)" if is_sel else "rgba(148, 163, 184, 0.24)"
+      bg_col = "rgba(6, 78, 59, 0.25)" if is_sel else "rgba(15, 23, 42, 0.78)"
+      render_html(
+          f"""
+          <div style="background:{bg_col};border:1px solid {border_col};border-right:4px solid {'#10b981' if is_sel else '#38bdf8'};border-radius:14px;padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:14px;direction:rtl;text-align:right;">
+              <img src="{html.escape(raw_img, quote=True)}" onerror="this.onerror=null;this.src='{html.escape(fb_svg, quote=True)}';" style="width:110px;min-width:110px;height:72px;object-fit:cover;border-radius:9px;border:1px solid rgba(148,163,184,0.3);" />
+              <div style="flex:1;min-width:0;direction:rtl;text-align:right;">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+                      {status_badge}
+                      <span class="badge-plat">{html.escape(plat)}</span>
+                      <span style="font-weight:800;color:#e2e8f0;font-size:0.82rem;">{html.escape(raw_src)}</span>
+                      <span style="color:#38bdf8;font-size:0.78rem;font-weight:700;" dir="ltr">📅 {html.escape(pub_dt)}</span>
+                  </div>
+                  <div style="font-weight:900;color:#f8fafc;font-size:0.96rem;margin-bottom:4px;"><a href="{html.escape(clean_u, quote=True)}" target="_blank" style="color:inherit;text-decoration:none;">{html.escape(raw_t)}</a></div>
+                  <div style="color:#cbd5e1;font-size:0.84rem;line-height:1.55;">{html.escape(raw_sum[:260] + ('...' if len(raw_sum) > 260 else ''))}</div>
+              </div>
+          </div>
+          """
+      )
+
+
+selected_count_badge = len(st.session_state.get("selected_export_articles", {}))
+with st.expander(
+    f"🔎 البحث في الأخبار المرصودة (الحالية والمؤرشفة) وتجميع وتصدير ملفات Word و PDF ({selected_count_badge} خبر محدد)",
+    expanded=bool(selected_count_badge > 0),
+):
+  render_monitored_search_and_export_hub(
+      all_articles, live_articles, archive_articles, key_prefix="top_hub"
+  )
+
+# =====================================================================
+# 18-ب. التبويبات الرئيسية
 # =====================================================================
 tabs = st.tabs([
     f"🌐 الكل ({len(live_articles)})",
@@ -9716,6 +10918,7 @@ tabs = st.tabs([
     f"🟪 أخرى ({len(other_live)})",
     f"🎯 المخصص ({len(target_live)})",
     f"🗄️ الأرشيف ({len(archive_articles)})",
+    f"📑 بحث وتصدير ({selected_count_badge})",
 ])
 
 with tabs[0]:
@@ -9751,7 +10954,12 @@ with tabs[7]:
     filtered_arch = [
         a
         for a in archive_articles
-        if q_low
+        if matches_custom_keywords(
+            a.get("title", ""),
+            f"{a.get('summary', '')} {a.get('raw_snippet', '')} {a.get('source_name', '')}",
+            arch_q.strip(),
+        )
+        or q_low
         in (
             a.get("title", "")
             + " "
@@ -9764,6 +10972,11 @@ with tabs[7]:
       filtered_arch,
       empty_msg="لا توجد عناصر في الأرشيف حالياً (تنتقل الأخبار تلقائياً إلى الأرشيف بعد مرور 24 ساعة على رصدها).",
       tab_prefix="arch",
+  )
+
+with tabs[8]:
+  render_monitored_search_and_export_hub(
+      all_articles, live_articles, archive_articles, key_prefix="tab_hub"
   )
 
 # =====================================================================
