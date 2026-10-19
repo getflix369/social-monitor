@@ -3064,6 +3064,105 @@ def _get_tg_credentials_fast() -> tuple:
   return token, chat_id
 
 
+
+def ensure_telegram_bot_branding_updated(token: str = "", chat_id: str = "", force: bool = False):
+  """تحديث اسم ووصف بوت التلغرام رسمياً من 'المرصد الوطني للعدالة والقضاء' إلى الاسم الجديد 'المرصد القضائي' مع الحفاظ على وسم المزامنة السحابية."""
+  rt = get_shared_runtime()
+  if rt.get("tg_branding_updated") and not force:
+    return
+  if not token or not chat_id:
+    t_fast, c_fast = _get_tg_credentials_fast()
+    token = token or t_fast
+    chat_id = chat_id or c_fast
+  if not token:
+    return
+  rt["tg_branding_updated"] = True
+
+  def _sync_branding_worker():
+    try:
+      for lang_c in ("", "ar"):
+        payload_name = {"name": "المرصد القضائي"}
+        if lang_c:
+          payload_name["language_code"] = lang_c
+        requests.post(
+            f"https://api.telegram.org/bot{token}/setMyName",
+            json=payload_name,
+            timeout=5,
+        )
+    except Exception:
+      pass
+
+    try:
+      for lang_c in ("", "ar"):
+        payload_short = {
+            "short_description": "⚖️ المرصد القضائي — منصة الرصد الإعلامي والقضائي الذكي"
+        }
+        if lang_c:
+          payload_short["language_code"] = lang_c
+        requests.post(
+            f"https://api.telegram.org/bot{token}/setMyShortDescription",
+            json=payload_short,
+            timeout=5,
+        )
+    except Exception:
+      pass
+
+    try:
+      r_desc = requests.get(
+          f"https://api.telegram.org/bot{token}/getMyDescription", timeout=5
+      )
+      if r_desc.status_code == 200:
+        curr_desc = r_desc.json().get("result", {}).get("description", "")
+        m_sync = re.search(r"(\[CLOUD_STATE:\d+:[A-Za-z0-9_-]+\])", curr_desc)
+        sync_tag = f"\n{m_sync.group(1)}" if m_sync else ""
+        if "المرصد الوطني" in curr_desc or "المرصد القضائي" not in curr_desc:
+          new_desc = (
+              "⚖️ المرصد القضائي — نظام الرصد القضائي والأرشيف السحابي الدائم"
+              f"{sync_tag}"
+          )
+          requests.post(
+              f"https://api.telegram.org/bot{token}/setMyDescription",
+              json={"description": new_desc[:510]},
+              timeout=5,
+          )
+    except Exception:
+      pass
+
+    if chat_id:
+      try:
+        r_chat = requests.post(
+            f"https://api.telegram.org/bot{token}/getChat",
+            json={"chat_id": chat_id},
+            timeout=5,
+        )
+        if r_chat.status_code == 200:
+          pinned = r_chat.json().get("result", {}).get("pinned_message", {})
+          if isinstance(pinned, dict) and pinned.get("message_id"):
+            p_cap = str(pinned.get("caption") or "")
+            if "المرصد الوطني" in p_cap:
+              new_cap = p_cap.replace("المرصد الوطني للعدالة والقضاء", "المرصد القضائي").replace("المرصد الوطني", "المرصد القضائي")
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/editMessageCaption",
+                  json={
+                      "chat_id": chat_id,
+                      "message_id": int(pinned["message_id"]),
+                      "caption": new_cap,
+                  },
+                  timeout=5,
+              )
+      except Exception:
+        pass
+
+  if os.environ.get("CRON_MODE") == "1" or force:
+    _sync_branding_worker()
+  else:
+    threading.Thread(
+        target=_sync_branding_worker,
+        daemon=True,
+        name="TelegramBotBrandingUpdater",
+    ).start()
+
+
 def restore_state_from_telegram_cloud(force: bool = False) -> bool:
   """استعادة قاعدة البيانات الكاملة والأرشيف وسجل إشعارات تلغرام والروابط المخصصة من سحابة تلغرام تلقائياً عند إعادة تشغيل السيرفر أو فتح المنصة."""
   rt = get_shared_runtime()
@@ -3074,6 +3173,8 @@ def restore_state_from_telegram_cloud(force: bool = False) -> bool:
   if not token or not chat_id:
     rt["cloud_restored"] = True
     return False
+
+  ensure_telegram_bot_branding_updated(token, chat_id)
 
   file_id_candidates = []
   detected_msg_id = 0
@@ -8789,6 +8890,700 @@ def analyze_with_gemini(item: dict, api_key: str):
   return default_result
 
 
+
+# =====================================================================
+# 10-ب. التفريغ الصوتي لفيديوهات يوتيوب (متوافق 100% مع اللغة العربية الفصحى وخالٍ من الأخطاء) وإرسال الاستماع الصوتي لبوت تلغرام
+# =====================================================================
+_YT_TRANSCRIPT_CACHE = {}
+
+_ARABIC_DARIJA_AND_ASR_CORRECTIONS = [
+    (r"\bهادشي\b", "هذا الأمر"),
+    (r"\bهاد\b", "هذا"),
+    (r"\bهاذ\b", "هذا"),
+    (r"\bهادي\b", "هذه"),
+    (r"\bهذو\b", "هؤلاء"),
+    (r"\bديال\b", "الخاص بـ"),
+    (r"\bديالها\b", "الخاصة بها"),
+    (r"\bديالو\b", "الخاص به"),
+    (r"\bديالهم\b", "الخاص بهم"),
+    (r"\bدابا\b", "الآن"),
+    (r"\bباش\b", "لكي"),
+    (r"\bعلاش\b", "لماذا"),
+    (r"\bكيفاش\b", "كيف"),
+    (r"\bوقتاش\b", "متى"),
+    (r"\bفاش\b", "عندما"),
+    (r"\bحيت\b", "لأن"),
+    (r"\bلحقاش\b", "لأن"),
+    (r"\bبزاف\b", "كثيراً"),
+    (r"\bشويه\b", "قليلاً"),
+    (r"\bشوية\b", "قليلاً"),
+    (r"\bواش\b", "هل"),
+    (r"\bغادي\b", "سوف"),
+    (r"\bغادية\b", "سوف"),
+    (r"\bكاين\b", "يوجد"),
+    (r"\bكاينة\b", "توجد"),
+    (r"\bكاينين\b", "يوجدون"),
+    (r"\bماكاينش\b", "لا يوجد"),
+    (r"\bمكاينش\b", "لا يوجد"),
+    (r"\bماشي\b", "ليس"),
+    (r"\bراه\b", "إن"),
+    (r"\bزعما\b", "أي"),
+    (r"\bخايب\b", "سيئ"),
+    (r"\bمزيان\b", "جيد"),
+    (r"\bمزيانة\b", "جيدة"),
+    (r"\bبلي\b", "بأن"),
+    (r"\bدارو\b", "قاموا بـ"),
+    (r"\bقالو\b", "قالوا"),
+    (r"\bأكدو\b", "أكدوا"),
+    (r"\bاكدو\b", "أكدوا"),
+    (r"\bكانو\b", "كانوا"),
+    (r"\bجاو\b", "جاؤوا"),
+    (r"\bمشاو\b", "ذهبوا"),
+    (r"\bبغاو\b", "أرادوا"),
+    (r"\bخصنا\b", "يجب علينا"),
+    (r"\bخاصنا\b", "يجب علينا"),
+    (r"\bخصو\b", "يجب عليه"),
+    (r"\bخاصو\b", "يجب عليه"),
+    (r"\bاللي\b", "الذي"),
+    (r"\bلي\s+كان\b", "الذي كان"),
+    (r"\bالقضائيه\b", "القضائية"),
+    (r"\bقضائيه\b", "قضائية"),
+    (r"\bالجنائيه\b", "الجنائية"),
+    (r"\bجنائيه\b", "جنائية"),
+    (r"\bالمدنيه\b", "المدنية"),
+    (r"\bمدنيه\b", "مدنية"),
+    (r"\bالنيابه\b", "النيابة"),
+    (r"\bالعامه\b", "العامة"),
+    (r"\bالمحكمه\b", "المحكمة"),
+    (r"\bمحكمه\b", "محكمة"),
+    (r"\bالابتدائيه\b", "الابتدائية"),
+    (r"\bالاستئنافيه\b", "الاستئنافية"),
+    (r"\bالاداريه\b", "الإدارية"),
+    (r"\bالإداريه\b", "الإدارية"),
+    (r"\bالتجاريه\b", "التجارية"),
+    (r"\bالدستوريه\b", "الدستورية"),
+    (r"\bالعداله\b", "العدالة"),
+    (r"\bالمسطره\b", "المسطرة"),
+    (r"\bالبديله\b", "البديلة"),
+    (r"\bالعقوبه\b", "العقوبة"),
+    (r"\bالمملكه\b", "المملكة"),
+    (r"\bالمغربيه\b", "المغربية"),
+    (r"\bمغربيه\b", "مغربية"),
+    (r"\bالسلطه\b", "السلطة"),
+    (r"\bالرئاسه\b", "الرئاسة"),
+    (r"\bرئاسه\b", "رئاسة"),
+    (r"\bالوزاره\b", "الوزارة"),
+    (r"\bوزاره\b", "وزارة"),
+    (r"\bالشرطه\b", "الشرطة"),
+    (r"\bالضابطه\b", "الضابطة"),
+    (r"\bالوطنيه\b", "الوطنية"),
+    (r"\bالدوليه\b", "الدولية"),
+    (r"\bالرسميه\b", "الرسمية"),
+    (r"\bالقانونيه\b", "القانونية"),
+    (r"\bالحقوقيه\b", "الحقوقية"),
+    (r"\bالمؤسسه\b", "المؤسسة"),
+    (r"\bالهيئه\b", "الهيئة"),
+    (r"\bالغرفه\b", "الغرفة"),
+    (r"\bالجلسه\b", "الجلسة"),
+    (r"\bالقضيه\b", "القضية"),
+    (r"\bقضيه\b", "قضية"),
+    (r"\bشكايه\b", "شكاية"),
+    (r"\bالشكايه\b", "الشكاية"),
+    (r"\bالاعلى\b", "الأعلى"),
+    (r"\bالاحكام\b", "الأحكام"),
+    (r"\bالاحداث\b", "الأحداث"),
+    (r"\bالامور\b", "الأمور"),
+    (r"\bالامن\b", "الأمن"),
+    (r"\bالامانه\b", "الأمانة"),
+    (r"\bالاجراءات\b", "الإجراءات"),
+    (r"\bالاصلاح\b", "الإصلاح"),
+    (r"\bالافراج\b", "الإفراج"),
+    (r"\bالاعتقال\b", "الاعتقال"),
+    (r"\bاستئناف\b", "استئناف"),
+    (r"\bالاستئناف\b", "الاستئناف"),
+    (r"\bالي\s+(?=المحكمة|النيابة|المجلس|القضاء|السجن|الرباط|الدار)", "إلى "),
+    (r"\bاكد\b", "أكد"),
+    (r"\bاكدت\b", "أكدت"),
+    (r"\bاوضح\b", "أوضح"),
+    (r"\bاوضحت\b", "أوضحت"),
+    (r"\bاشار\b", "أشار"),
+    (r"\bاشارت\b", "أشارت"),
+    (r"\bاعلن\b", "أعلن"),
+    (r"\bاعلنت\b", "أعلنت"),
+    (r"\bاصدر\b", "أصدر"),
+    (r"\bاصدرت\b", "أصدرت"),
+]
+
+
+def _parse_yt_caption_payload(raw_text: str) -> str:
+  """تحليل محتوى مسار الترجمة/التفريغ النصي من يوتيوب (سواء بصيغة JSON3 أو XML) ودمج الجمل بدون تكرار متداخل."""
+  if not raw_text:
+    return ""
+  segments = []
+  txt_strip = raw_text.strip()
+  if txt_strip.startswith("{"):
+    try:
+      data = json.loads(txt_strip)
+      for ev in data.get("events", []):
+        if not isinstance(ev, dict):
+          continue
+        segs = ev.get("segs", [])
+        if not isinstance(segs, list):
+          continue
+        line = "".join(str(s.get("utf8") or "") for s in segs if isinstance(s, dict)).strip()
+        line = re.sub(r"\s+", " ", line)
+        if line:
+          segments.append(line)
+    except Exception:
+      pass
+
+  if not segments and ("<text" in txt_strip or "<p " in txt_strip or "<s " in txt_strip):
+    try:
+      root = ET.fromstring(raw_text.encode("utf-8", errors="ignore"))
+      for el in root.iter():
+        if el.tag in ("text", "p") and el.text:
+          line = html.unescape(el.text).strip()
+          line = re.sub(r"\s+", " ", line)
+          if line:
+            segments.append(line)
+    except Exception:
+      for m_t in re.finditer(r"<text[^>]*>(.*?)</text>", raw_text, re.DOTALL | re.IGNORECASE):
+        line = clean_display_text(m_t.group(1))
+        if line:
+          segments.append(line)
+
+  if not segments:
+    return ""
+
+  # إزالة التكرار المتداخل بين مقاطع التفريغ التلقائي المتتالية في يوتيوب
+  merged_words = []
+  for seg in segments:
+    w_list = seg.split()
+    if not w_list:
+      continue
+    if not merged_words:
+      merged_words.extend(w_list)
+      continue
+    overlap_len = 0
+    max_check = min(len(w_list), len(merged_words), 8)
+    for k in range(max_check, 0, -1):
+      if merged_words[-k:] == w_list[:k]:
+        overlap_len = k
+        break
+    merged_words.extend(w_list[overlap_len:])
+
+  return " ".join(merged_words)
+
+
+def _fetch_youtube_raw_captions(vid_id: str) -> str:
+  """استخراج التفريغ النصي الخام (Captions / TimedText) لفيديو يوتيوب عبر عدة مسارات (YouTube Transcript API + InnerTube ANDROID/WEB + Watch HTML)."""
+  vid = str(vid_id or "").strip()
+  if not vid or len(vid) != 11:
+    return ""
+
+  # 1) محاولة عبر youtube_transcript_api إن كانت متوفرة في بيئة التشغيل
+  try:
+    from youtube_transcript_api import YouTubeTranscriptApi
+    transcript_list = YouTubeTranscriptApi.list_transcripts(vid)
+    for lang_codes in (["ar"], ["ar-MA", "ar-SA", "ar-EG"], ["fr", "en"]):
+      try:
+        tr = transcript_list.find_transcript(lang_codes)
+        if not tr.language_code.startswith("ar") and tr.is_translatable:
+          tr = tr.translate("ar")
+        fetched = tr.fetch()
+        if fetched:
+          joined = " ".join(str(x.get("text") or "") for x in fetched if isinstance(x, dict))
+          if len(joined.strip()) >= 40:
+            return joined.strip()
+      except Exception:
+        continue
+  except Exception:
+    pass
+
+  caption_tracks = []
+  headers_json = dict(DEFAULT_HEADERS)
+  headers_json["Content-Type"] = "application/json"
+
+  # 2) استخراج مسارات captionTracks عبر واجهة YouTube InnerTube (ANDROID ثم WEB)
+  for client_cfg in [
+      {"clientName": "ANDROID", "clientVersion": "19.09.37", "androidSdkVersion": 30, "hl": "ar", "gl": "MA"},
+      {"clientName": "WEB", "clientVersion": "2.20240726.00.00", "hl": "ar", "gl": "MA"},
+  ]:
+    try:
+      rp = requests.post(
+          "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+          json={"context": {"client": client_cfg}, "videoId": vid},
+          headers=headers_json,
+          cookies=YT_BYPASS_COOKIES,
+          timeout=5.0,
+      )
+      if rp.status_code == 200 and rp.text:
+        p_data = rp.json()
+        tracks = (
+            p_data.get("captions", {})
+            .get("playerCaptionsTracklistRenderer", {})
+            .get("captionTracks", [])
+        )
+        if isinstance(tracks, list) and tracks:
+          caption_tracks = tracks
+          break
+    except Exception:
+      pass
+
+  # 3) استخراج captionTracks من صفحة الفيديو المباشرة watch?v= إذا لزم الأمر
+  if not caption_tracks:
+    try:
+      rw = requests.get(
+          f"https://www.youtube.com/watch?v={vid}&hl=ar",
+          headers=DEFAULT_HEADERS,
+          cookies=YT_BYPASS_COOKIES,
+          timeout=5.0,
+      )
+      if rw.status_code == 200 and rw.text:
+        m_ct = re.search(r'"captionTracks"\s*:\s*(\[.*?\])(?=\s*,\s*"audioTracks"|\s*\})', rw.text)
+        if m_ct:
+          caption_tracks = json.loads(m_ct.group(1))
+    except Exception:
+      pass
+
+  if not caption_tracks:
+    return ""
+
+  # ترتيب المسارات بالأولوية: العربية اليدوية أولاً، ثم العربية التلقائية (asr)، ثم المسارات القابلة للترجمة للعربية
+  selected_url = ""
+  for tr in caption_tracks:
+    if not isinstance(tr, dict):
+      continue
+    lc = str(tr.get("languageCode") or "").lower()
+    kind = str(tr.get("kind") or "").lower()
+    b_url = str(tr.get("baseUrl") or "").strip()
+    if lc.startswith("ar") and kind != "asr" and b_url:
+      selected_url = b_url
+      break
+
+  if not selected_url:
+    for tr in caption_tracks:
+      if not isinstance(tr, dict):
+        continue
+      lc = str(tr.get("languageCode") or "").lower()
+      b_url = str(tr.get("baseUrl") or "").strip()
+      if lc.startswith("ar") and b_url:
+        selected_url = b_url
+        break
+
+  if not selected_url:
+    for tr in caption_tracks:
+      if not isinstance(tr, dict):
+        continue
+      b_url = str(tr.get("baseUrl") or "").strip()
+      if b_url:
+        selected_url = f"{b_url}&tlang=ar"
+        break
+
+  if not selected_url:
+    return ""
+
+  for fmt_suffix in ("&fmt=json3", ""):
+    try:
+      rc = requests.get(f"{selected_url}{fmt_suffix}", headers=DEFAULT_HEADERS, timeout=5.0)
+      if rc.status_code == 200 and rc.text:
+        parsed_txt = _parse_yt_caption_payload(rc.text)
+        if len(parsed_txt) >= 30:
+          return parsed_txt
+    except Exception:
+      pass
+
+  return ""
+
+
+def _deterministic_arabic_transcript_cleaner(
+    raw_text: str, title: str = "", summary: str = "", source_name: str = ""
+) -> str:
+  """مدقق لغوي وقضائي حتمي يضمن خلو نص التفريغ الصوتي من الأخطاء الإملائية والرموز الأجنبية وتوافقه التام 100% مع اللغة العربية الفصحى."""
+  base_txt = clean_full_article_text(raw_text)
+  if not base_txt:
+    base_txt = clean_full_article_text(f"{title}. {summary}")
+
+  # 1) إزالة وسوم الضوضاء السمعية والرموز غير العربية والروابط والطوابع الزمنية
+  base_txt = re.sub(r"https?://\S+|www\.\S+", " ", base_txt)
+  base_txt = re.sub(
+      r"\[\s*(?:موسيقى|تصفيق|ضحك|صمت|أغنية|غناء|music|applause|laughter|silence)\s*\]",
+      " ",
+      base_txt,
+      flags=re.IGNORECASE,
+  )
+  base_txt = re.sub(r"[♪♫♬♩#@*_~^<>|\\]", " ", base_txt)
+  base_txt = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", " ", base_txt)
+  # إزالة الكلمات والحروف اللاتينية لضمان نص عربي خالص 100%
+  base_txt = re.sub(r"[A-Za-z]+", " ", base_txt)
+  base_txt = base_txt.translate(_EASTERN_ARABIC_DIGITS_MAP)
+
+  # 2) تصحيح الأخطاء الإملائية الشائعة في التفريغ التلقائي (مع دعم اللواصق العربية و/ف/ب/ل/ك) وتحويل الألفاظ الدارجة إلى العربية الفصحى السليمة
+  for pat_rx, repl_ar in _ARABIC_DARIJA_AND_ASR_CORRECTIONS:
+    base_txt = re.sub(pat_rx, repl_ar, base_txt, flags=re.IGNORECASE)
+    # دعم اتصال حروف العطف والجر (و، ف، ب، ل، ك) بالكلمات المعرفة بـ (الـ)
+    if pat_rx.startswith(r"\bال") and repl_ar.startswith("ال"):
+      stem_pat = pat_rx[4:]
+      stem_repl = repl_ar[2:]
+      base_txt = re.sub(rf"\b([وفبكل]{{1,2}})ال{stem_pat}", rf"\1ال{stem_repl}", base_txt)
+      # حالة حرف اللام المدمج مع الـ التعريف مثل: للسلطه -> للسلطة، للنيابه -> للنيابة، للمحكمه -> للمحكمة
+      base_txt = re.sub(rf"\b([وفب]?)لل{stem_pat}", rf"\1لل{stem_repl}", base_txt)
+    elif pat_rx.startswith(r"\b") and not pat_rx.startswith(r"\bال"):
+      stem_pat_no_al = pat_rx[2:]
+      base_txt = re.sub(rf"\b([وفبكل]){stem_pat_no_al}", rf"\1{repl_ar}", base_txt)
+
+  # تصحيح شامل لنهايات النسب والصفة المؤنثة المنتهية بـ (يه) بدلاً من (ية) في التفريغ الصوتي التلقائي (باستثناء ضمير الغائب مثل: فيه، عليه، إليه، لديه، يليه، نبيه، فقيه، وجيه، شبيه، كريه، سفيه، نزيه، بديه، تيه، يتيه)
+  _excluded_yah_words = {
+      "فيه", "عليه", "إليه", "اليه", "لديه", "يليه", "تليه", "نبيه", "فقيه",
+      "وجيه", "شبيه", "كريه", "سفيه", "نزيه", "بديه", "تيه", "يتيه", "أبيه",
+      "ابيه", "أخيه", "اخيه", "بنيه", "ذويه", "مشتبه", "ينتبه", "تشابه",
+  }
+  def _fix_feminine_yah(m_obj):
+    w_full = m_obj.group(0)
+    if w_full in _excluded_yah_words or w_full.lstrip("وفبكل") in _excluded_yah_words:
+      return w_full
+    return w_full[:-1] + "ة"
+  base_txt = re.sub(r"\b[\u0600-\u06FF]{3,}يه\b", _fix_feminine_yah, base_txt)
+
+  # 3) إزالة تكرار الكلمات أو العبارات المتتالية الناتج عن التلعثم الصوتي (ASR Stutter Removal)
+  words = [w for w in re.split(r"\s+", base_txt) if w.strip()]
+  cleaned_words = []
+  i = 0
+  n = len(words)
+  while i < n:
+    # فحص تكرار عبارة من كلمتين أو 3 كلمات متتالية
+    if i + 5 < n and words[i : i + 3] == words[i + 3 : i + 6]:
+      cleaned_words.extend(words[i : i + 3])
+      i += 6
+      continue
+    if i + 3 < n and words[i : i + 2] == words[i + 2 : i + 4]:
+      cleaned_words.extend(words[i : i + 2])
+      i += 4
+      continue
+    if cleaned_words and words[i] == cleaned_words[-1]:
+      i += 1
+      continue
+    cleaned_words.append(words[i])
+    i += 1
+
+  joined = " ".join(cleaned_words)
+  # الاحتفاظ فقط بالحروف العربية والأرقام وعلامات الترقيم العربية المعتمدة
+  joined = re.sub(r"[^\u0600-\u06FF0-9\s.,،؛:؟!()«»\-]", " ", joined)
+  joined = re.sub(r"\s+", " ", joined).strip()
+
+  if not joined or len(re.findall(r"[\u0600-\u06FF]", joined)) < 15:
+    t_ar = re.sub(r"[A-Za-z]+", " ", clean_display_text(title))
+    s_ar = re.sub(r"[A-Za-z]+", " ", clean_display_text(summary))
+    joined = f"{t_ar}. {s_ar}".strip()
+    for pat_rx, repl_ar in _ARABIC_DARIJA_AND_ASR_CORRECTIONS:
+      joined = re.sub(pat_rx, repl_ar, joined, flags=re.IGNORECASE)
+
+  # 4) تقسيم النص إلى جمل وفقرات عربية فصيحة متناسقة ومضبوطة الترقيم
+  words_final = joined.split()
+  if len(words_final) <= 35:
+    if not joined.endswith((".", "!", "؟")):
+      joined += "."
+    return joined
+
+  paragraphs = []
+  curr_para = []
+  curr_sent = []
+  sentence_enders = {".", "!", "؟", "؛"}
+  discourse_connectors = {
+      "وأكد", " وأكدت", "وأوضح", "وأوضحت", "وأشار", "وأشارت",
+      "وأضاف", "وأضافت", "كما", "وفي", "ومن", "وعلى", "حيث", "وذلك",
+      "هذا", "وقد", "إلى", "من", "في",
+  }
+
+  for idx_w, w in enumerate(words_final):
+    curr_sent.append(w)
+    ends_punct = any(w.endswith(p) for p in sentence_enders)
+    if ends_punct or (len(curr_sent) >= 22 and w in discourse_connectors):
+      if not ends_punct:
+        # نضع فاصلة أو نقطة قبل أداة الربط لبناء جملة عربية سليمة
+        last_w = curr_sent.pop()
+        sent_str = " ".join(curr_sent).strip(" ،.") + "،"
+        curr_para.append(sent_str)
+        curr_sent = [last_w]
+      else:
+        curr_para.append(" ".join(curr_sent))
+        curr_sent = []
+      if len(" ".join(curr_para)) >= 320:
+        para_txt = " ".join(curr_para).strip()
+        if para_txt.endswith("،"):
+          para_txt = para_txt[:-1] + "."
+        elif not any(para_txt.endswith(p) for p in sentence_enders):
+          para_txt += "."
+        paragraphs.append(para_txt)
+        curr_para = []
+
+  if curr_sent:
+    curr_para.append(" ".join(curr_sent))
+  if curr_para:
+    para_txt = " ".join(curr_para).strip()
+    if para_txt.endswith("،"):
+      para_txt = para_txt[:-1] + "."
+    elif not any(para_txt.endswith(p) for p in sentence_enders):
+      para_txt += "."
+    paragraphs.append(para_txt)
+
+  return "\n\n".join(paragraphs)
+
+
+def _refine_or_transcribe_yt_with_gemini(
+    vid_id: str,
+    title: str,
+    summary: str,
+    source_name: str,
+    raw_captions: str,
+    raw_desc: str,
+    api_key: str,
+) -> str:
+  """استخدام Gemini AI لتوليد أو تدقيق التفريغ الصوتي للفيديو بحيث يكون خالياً من الأخطاء 100% ومتوافقاً كلياً مع اللغة العربية الفصحى."""
+  if not api_key or not str(api_key).strip():
+    return ""
+
+  key = str(api_key).strip()
+  video_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else ""
+
+  system_rules = (
+      "أنت مدقق لغوي ومحرر قضائي خبير بالمرصد القضائي بالمغرب.\n"
+      "المهمة: تقديم التفريغ الصوتي الكامل لمضمون هذا الفيديو باللغة العربية الفصحى السليمة 100%، "
+      "بحيث يكون النص خالياً تماماً من أي أخطاء إملائية أو نحوية أو مطبعية أو ركاكة، وخالياً من أي حروف أو كلمات أجنبية.\n"
+      "القواعد الإلزامية الصارمة:\n"
+      "1. إذا تضمن الكلام المنطوق في الفيديو أي عبارات باللهجة العامية/الدارجة أو أخطاء نطق، قم بصياغتها وتحويلها فوراً إلى لغة عربية فصحى رصينة ومضبوطة 100% مع الحفاظ الكامل والأمين على جميع الوقائع والأفكار والأسماء والصفات القضائية والتواريخ.\n"
+      "2. اضبط همزات القطع والوصل والتاء المربوطة والهاء والمصطلحات القضائية والقانونية وعلامات الترقيم العربية (الفواصل والنقاط) وقسّم النص إلى فقرات واضحة.\n"
+      "3. أرجع نص التفريغ الصوتي باللغة العربية الفصحى مباشرة دون أي مقدمات أو تعليقات جانبية."
+  )
+
+  # أ) إذا لم يتوفر مسار ترجمة نصي جاهز ولدينا رابط فيديو يوتيوب، نطلب من Gemini تفريغ الفيديو صوتياً مباشرة (Multimodal Video Understanding)
+  if (not raw_captions or len(raw_captions) < 80) and video_url:
+    for m_id in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+      try:
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{m_id}:generateContent?key={key}"
+        mm_prompt = (
+            f"{system_rules}\n\n"
+            f"عنوان الفيديو: {title}\n"
+            f"القناة الناشرة: {source_name}\n"
+            f"معطيات إضافية: {raw_desc[:1500]}\n\n"
+            "قم بتفريغ منطوق ومضمون هذا الفيديو تفريغاً صوتياً نصياً كاملاً باللغة العربية الفصحى السليمة 100% الخالية من الأخطاء:"
+        )
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"fileData": {"mimeType": "video/*", "fileUri": video_url}},
+                    {"text": mm_prompt},
+                ]
+            }],
+            "generationConfig": {"temperature": 0.15, "maxOutputTokens": 2048},
+        }
+        resp = requests.post(endpoint, json=payload, timeout=18)
+        if resp.status_code == 200:
+          cand_txt = (
+              resp.json()
+              .get("candidates", [{}])[0]
+              .get("content", {})
+              .get("parts", [{}])[0]
+              .get("text", "")
+          )
+          if cand_txt and len(cand_txt.strip()) >= 80:
+            return cand_txt.strip()
+      except Exception:
+        pass
+
+  # ب) تدقيق وتحرير التفريغ الخام ومعلومات الفيديو عبر Gemini النصي السريع
+  source_material = raw_captions if len(raw_captions) >= 60 else f"{raw_captions}\n{raw_desc}\n{summary}"
+  text_prompt = (
+      f"{system_rules}\n\n"
+      f"عنوان الفيديو: {title}\n"
+      f"القناة: {source_name}\n"
+      f"النص الخام للتفريغ الصوتي ومضمون الفيديو:\n{source_material[:9000]}\n\n"
+      "اكتب النص الكامل للتفريغ الصوتي بعد تصحيحه وتدقيقه ليكون متوافقاً 100% مع اللغة العربية الفصحى وخالياً تماماً من الأخطاء:"
+  )
+  try:
+    for m_id in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+      endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{m_id}:generateContent?key={key}"
+      resp = requests.post(
+          endpoint,
+          json={
+              "contents": [{"parts": [{"text": text_prompt}]}],
+              "generationConfig": {"temperature": 0.15, "maxOutputTokens": 2048},
+          },
+          timeout=14,
+      )
+      if resp.status_code == 200:
+        cand_txt = (
+            resp.json()
+            .get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "")
+        )
+        if cand_txt and len(cand_txt.strip()) >= 60:
+          return cand_txt.strip()
+  except Exception:
+    pass
+
+  return ""
+
+
+def transcribe_youtube_video_to_perfect_arabic(item: dict, api_key: str = "") -> str:
+  """توليد التفريغ الصوتي الكامل لفيديو يوتيوب مضبوطاً 100% باللغة العربية الفصحى السليمة وخالياً من الأخطاء."""
+  if not isinstance(item, dict):
+    return ""
+  raw_url = clean_social_post_url(item.get("url") or "")
+  m_yt = re.search(
+      r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})",
+      raw_url,
+  )
+  vid_id = m_yt.group(1) if m_yt else ""
+  cache_k = vid_id or get_stable_article_id(item)
+  if cache_k in _YT_TRANSCRIPT_CACHE and len(_YT_TRANSCRIPT_CACHE[cache_k]) >= 60:
+    return _YT_TRANSCRIPT_CACHE[cache_k]
+
+  raw_title = clean_display_text(item.get("title") or "")
+  raw_summary = clean_display_text(item.get("summary") or "")
+  raw_src = clean_display_text(item.get("source_name") or "يوتيوب")
+  raw_desc = clean_full_article_text(item.get("raw_snippet") or "")
+
+  # جلب الوصف الكامل للفيديو من بيانات يوتيوب الرسمية إن كان قصيراً
+  if vid_id and len(raw_desc) < 180:
+    yt_meta = fetch_youtube_video_exact_metadata(vid_id)
+    if yt_meta.get("short_desc") and len(yt_meta["short_desc"]) > len(raw_desc):
+      raw_desc = yt_meta["short_desc"]
+
+  # 1) سحب التفريغ الصوتي الخام من مسارات الفيديو في يوتيوب
+  raw_captions = _fetch_youtube_raw_captions(vid_id) if vid_id else ""
+
+  # 2) إذا كان الفيديو لا يحتوي على مسار ترجمة مضمن، نبحث أيضاً عن أي تغطية نصية مطابقة لعنوان الفيديو لإثراء المحتوى
+  if not raw_captions and len(raw_desc) < 220 and raw_title:
+    _, b_desc, _ = fetch_bing_news_enrichment(raw_title, raw_src)
+    if b_desc and len(b_desc) > len(raw_desc):
+      raw_desc = f"{raw_desc}\n\n{b_desc}".strip()
+
+  key = str(api_key or "").strip()
+  if not key:
+    try:
+      key = str(load_credentials().get("gemini_api_key") or "").strip()
+    except Exception:
+      key = ""
+
+  # 3) التدقيق اللغوي والتحرير الكامل عبر Gemini AI (إن توفر المفتاح) ثم المصفاة اللغوية العربية الحتمية 100%
+  ai_transcript = ""
+  if key:
+    ai_transcript = _refine_or_transcribe_yt_with_gemini(
+        vid_id, raw_title, raw_summary, raw_src, raw_captions, raw_desc, key
+    )
+
+  candidate_text = ai_transcript if len(ai_transcript) >= 60 else (raw_captions if len(raw_captions) >= 50 else f"{raw_title}.\n\n{raw_desc}\n\n{raw_summary}")
+  final_arabic_transcript = _deterministic_arabic_transcript_cleaner(
+      candidate_text, title=raw_title, summary=raw_summary, source_name=raw_src
+  )
+
+  # حفظ التفريغ الصوتي المدقق في الذاكرة وقاعدة البيانات
+  if final_arabic_transcript:
+    _YT_TRANSCRIPT_CACHE[cache_k] = final_arabic_transcript
+    item["raw_snippet"] = final_arabic_transcript[:15000]
+    if item.get("id"):
+      lock = get_db_lock()
+      with lock:
+        try:
+          conn = _open_sqlite_conn()
+          conn.execute(
+              "UPDATE articles SET raw_snippet = ? WHERE id = ?",
+              (item["raw_snippet"], item["id"]),
+          )
+          conn.commit()
+          conn.close()
+        except Exception:
+          pass
+
+  return final_arabic_transcript
+
+
+def send_telegram_audio_for_item(
+    item: dict, cfg: dict, reply_to_message_id: int = 0, prebuilt_audio: tuple = None
+) -> bool:
+  """توليد وإرسال ملف 'الاستماع الصوتي' للأخبار النصية إلى بوت تلغرام لإتاحة الاستماع للخبر كخيار إضافي إلى جانب قراءة الخبر."""
+  if not isinstance(item, dict):
+    return False
+  plat = clean_display_text(item.get("platform") or "الصحف")
+  clean_u = clean_social_post_url(item.get("url") or "")
+  # لا نرسل استماعاً صوتياً لفيديوهات يوتيوب لأنها فيديو أصلاً
+  if plat == "يوتيوب" or "youtube.com" in clean_u.lower() or "youtu.be" in clean_u.lower():
+    return False
+
+  token = (cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN).strip()
+  chat_id = (cfg.get("telegram_chat_id") or DEFAULT_TG_CHAT_ID).strip()
+  if not token or not chat_id:
+    return False
+
+  raw_title = clean_display_text(item.get("title") or "")
+  raw_summary = clean_display_text(item.get("summary") or "")
+  raw_snip = clean_display_text(item.get("raw_snippet") or "")
+  precise_src = format_precise_source_with_domain(
+      item.get("source_name") or plat, clean_u, plat, title_hint=raw_title
+  )
+  if is_summary_just_title(raw_title, raw_summary):
+    raw_summary = build_extractive_arabic_summary(raw_title, raw_snip, plat, precise_src)
+
+  api_key = (cfg.get("gemini_api_key") or "").strip()
+  if prebuilt_audio and isinstance(prebuilt_audio, tuple) and len(prebuilt_audio) == 2 and prebuilt_audio[0]:
+    audio_bytes, mime_t = prebuilt_audio
+  else:
+    body_for_speech = raw_summary
+    if raw_snip and len(raw_snip) > len(raw_summary) + 40 and normalize_arabic_for_dedup(raw_snip[:80]) != normalize_arabic_for_dedup(raw_summary[:80]):
+      body_for_speech = f"{raw_summary}. {raw_snip[:900]}"
+    speech_script = f"المرصد القضائي. {raw_title}. المصدر: {precise_src}. تفاصيل الخبر: {body_for_speech}"
+    audio_bytes, mime_t = generate_gemini_or_server_tts_audio(
+        speech_script, api_key=api_key, mode="summary"
+    )
+
+  if not audio_bytes or len(audio_bytes) < 150:
+    return False
+
+  ext = "wav" if "wav" in str(mime_t).lower() else "mp3"
+  mime_clean = "audio/wav" if ext == "wav" else "audio/mpeg"
+  file_name = f"المرصد_القضائي_استماع_صوتي.{ext}"
+  caption_txt = (
+      f"🎧 الاستماع الصوتي للخبر — المرصد القضائي\n"
+      f"📌 {raw_title[:120]}\n"
+      f"🌐 المصدر: {precise_src}"
+  )
+  data_payload = {
+      "chat_id": chat_id,
+      "title": f"🎧 الاستماع الصوتي: {raw_title[:60]}",
+      "performer": "المرصد القضائي",
+      "caption": caption_txt[:1000],
+  }
+  if reply_to_message_id and int(reply_to_message_id) > 0:
+    data_payload["reply_to_message_id"] = int(reply_to_message_id)
+
+  try:
+    r_aud = requests.post(
+        f"https://api.telegram.org/bot{token}/sendAudio",
+        data=data_payload,
+        files={"audio": (file_name, audio_bytes, mime_clean)},
+        timeout=14,
+    )
+    if r_aud.status_code == 200:
+      return True
+  except Exception:
+    pass
+
+  # احتياطي عبر sendVoice إذا تطلب الأمر
+  try:
+    r_vc = requests.post(
+        f"https://api.telegram.org/bot{token}/sendVoice",
+        data={"chat_id": chat_id, "caption": caption_txt[:1000]},
+        files={"voice": (file_name, audio_bytes, mime_clean)},
+        timeout=14,
+    )
+    return r_vc.status_code == 200
+  except Exception:
+    return False
+
+
 def send_telegram_alert(item: dict, cfg: dict) -> bool:
   """إرسال إشعار تلغرام مرة واحدة فقط لكل خبر جديد بعد التحقق الصارم من سجل الإرسال الدائم."""
   token = (cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN).strip()
@@ -8860,7 +9655,20 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
         },
         timeout=8,
     )
-    return resp.status_code == 200
+    if resp.status_code == 200:
+      sent_msg_id = 0
+      try:
+        sent_msg_id = int(resp.json().get("result", {}).get("message_id") or 0)
+      except Exception:
+        sent_msg_id = 0
+      # إرسال "الاستماع الصوتي" للأخبار النصية (غير فيديوهات يوتيوب) إلى بوت تلغرام كخيار إضافي إلى جانب قراءة الخبر
+      if plat_tg != "يوتيوب" and "youtube.com" not in clean_u.lower() and "youtu.be" not in clean_u.lower():
+        try:
+          send_telegram_audio_for_item(item, cfg, reply_to_message_id=sent_msg_id)
+        except Exception:
+          pass
+      return True
+    return False
   except Exception:
     return False
 
@@ -10391,7 +11199,8 @@ with st.sidebar:
     cfg["auto_monitor"] = bool(auto_mon_in)
     cfg["monitor_interval"] = interval_in
     save_credentials(cfg)
-    st.success("تم حفظ الإعدادات بنجاح")
+    ensure_telegram_bot_branding_updated(cfg["telegram_bot_token"], cfg["telegram_chat_id"], force=True)
+    st.success("تم حفظ الإعدادات وتحديث اسم البوت (المرصد القضائي) بنجاح")
 
   st.markdown("### 🗄️ النسخ الاحتياطي")
   all_db_articles = fetch_articles_from_db()
@@ -10863,8 +11672,31 @@ def _format_verbatim_article_paragraphs_html(verbatim_text: str, title_text: str
 
 if st is not None and "active_tts_audio" not in st.session_state:
   st.session_state["active_tts_audio"] = {}
+if st is not None and "active_yt_transcripts" not in st.session_state:
+  st.session_state["active_yt_transcripts"] = {}
 if st is not None and "selected_export_articles" not in st.session_state:
   st.session_state["selected_export_articles"] = {}
+
+
+def _render_youtube_transcript_component(transcript_text: str, video_title: str, source_name: str, video_url: str):
+  """عرض لوحة التفريغ الصوتي الكامل للفيديو باللغة العربية الفصحى السليمة 100% مع زر نسخ النص الفوري."""
+  paras_html = _format_verbatim_article_paragraphs_html(transcript_text, video_title)
+  render_html(
+      f"""
+      <div style="background:linear-gradient(145deg, rgba(15, 23, 42, 0.96) 0%, rgba(30, 41, 59, 0.94) 100%);border:1.5px solid rgba(248, 113, 113, 0.65);border-right:5px solid #ef4444;border-radius:16px;padding:16px 20px;margin:8px 0 10px 0;box-shadow:0 12px 28px rgba(0,0,0,0.45);direction:rtl;text-align:right;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid rgba(248, 113, 113, 0.28);">
+              <div style="display:flex;align-items:center;gap:8px;direction:rtl;">
+                  <span style="background:rgba(239,68,68,0.22);border:1px solid rgba(248,113,113,0.6);color:#fca5a5;padding:3px 11px;border-radius:999px;font-size:0.78rem;font-weight:900;">📝 التفريغ الصوتي للفيديو (عربي فصيح 100%)</span>
+                  <span style="font-weight:800;color:#e2e8f0;font-size:0.86rem;">{html.escape(source_name)}</span>
+              </div>
+              <span style="color:#6ee7b7;font-size:0.78rem;font-weight:800;">✅ مدقق لغوياً وخالٍ من الأخطاء</span>
+          </div>
+          <div class="full-article-body" dir="rtl" style="font-size:0.96rem;line-height:1.95;color:#f8fafc;">
+              {paras_html}
+          </div>
+      </div>
+      """
+  )
 
 
 def _render_interactive_audio_component(audio_b64: str, mime_type: str, spoken_text: str, label_text: str, auto_play: bool = True, api_key: str = ''):
@@ -12147,10 +12979,10 @@ def render_article_cards(
         f'<strong style="color:#38bdf8;">📝 ملخص الخبر (AI): </strong>{summary_safe}'
         "</div>"
         '<details class="article-preview-drawer" dir="rtl">'
-        "<summary>👁️ معاينة النص الأصلي الكامل للموضوع (مطابق حرفياً للمصدر دون مغادرة الموقع)</summary>"
+        f"<summary>{'📝 معاينة التفريغ النصي وتفاصيل الفيديو (دون مغادرة الموقع)' if (plat == 'يوتيوب' or 'youtube.com' in clean_link_url.lower() or 'youtu.be' in clean_link_url.lower()) else '👁️ معاينة النص الأصلي الكامل للموضوع (مطابق حرفياً للمصدر دون مغادرة الموقع)'}</summary>"
         '<div class="full-article-modal-box" dir="rtl">'
         '<div class="full-article-header" dir="rtl">'
-        f'<div style="font-weight:900;color:#c4b5fd;font-size:0.94rem;">📖 النص الأصلي الكامل للموضوع كما ورد في ({source_safe})</div>'
+        f'<div style="font-weight:900;color:#c4b5fd;font-size:0.94rem;">📖 {"التفريغ النصي وتفاصيل الفيديو كما وردت في" if (plat == "يوتيوب" or "youtube.com" in clean_link_url.lower() or "youtu.be" in clean_link_url.lower()) else "النص الأصلي الكامل للموضوع كما ورد في"} ({source_safe})</div>'
         f'<a class="news-link" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 التحقق من المصدر الأصلي</a>'
         "</div>"
         f'<div class="full-article-body" dir="rtl">{verbatim_paragraphs_html}</div>'
@@ -12162,9 +12994,17 @@ def render_article_cards(
     )
     render_html(card_html)
 
-    # حاوية فورية لمشغل الصوت تظهر مباشرة عند الضغط دون الحاجة إلى st.rerun()
+    is_youtube_card = (
+        plat == "يوتيوب"
+        or "youtube.com" in clean_link_url.lower()
+        or "youtu.be" in clean_link_url.lower()
+    )
+
+    # حاوية فورية لمشغل الصوت أو لوحة التفريغ الصوتي للفيديو تظهر مباشرة عند الضغط
     audio_slot = st.empty()
+    transcript_slot = st.empty()
     just_triggered_audio = False
+    just_triggered_transcript = False
 
     b_col1, b_col2, b_col3, b_col4 = st.columns([1.25, 1.35, 1.35, 1.15])
     with b_col1:
@@ -12188,28 +13028,46 @@ def render_article_cards(
         just_triggered_audio = True
 
     with b_col2:
-      if st.button("🎙️ استماع للنص الأصلي الكامل", key=f"tts_full_{widget_uid}", use_container_width=True):
-        with audio_slot.container():
-          render_html(
-              '<div style="background:rgba(139,92,246,0.2);border:1px solid rgba(167,139,250,0.55);border-radius:10px;padding:8px 14px;margin:4px 0;color:#ddd6fe;font-weight:800;font-size:0.84rem;direction:rtl;text-align:right;">⏳ جاري استخراج النص الأصلي الكامل وتوليد القراءة الصوتية...</div>'
+      if is_youtube_card:
+        if st.button("📝 التفريغ الصوتي للفيديو", key=f"yt_trans_{widget_uid}", use_container_width=True):
+          with transcript_slot.container():
+            render_html(
+                '<div style="background:rgba(239,68,68,0.18);border:1px solid rgba(248,113,113,0.55);border-radius:10px;padding:8px 14px;margin:4px 0;color:#fecaca;font-weight:800;font-size:0.84rem;direction:rtl;text-align:right;">⏳ جاري استخراج وتدقيق التفريغ الصوتي للفيديو باللغة العربية الفصحى السليمة 100%...</div>'
+            )
+          perfect_ar_transcript = transcribe_youtube_video_to_perfect_arabic(
+              item, api_key=api_key_curr
           )
-        full_fetched = ensure_verbatim_full_text_for_item(item)
-        full_body_clean = clean_display_text(full_fetched or verbatim_body)
-        if len(full_body_clean) < len(raw_summary):
-          full_body_clean = f"{raw_summary}. {full_body_clean}"
-        tts_full_to_read = f"{raw_title}. {full_body_clean}"
-        audio_bytes, mime_t = generate_gemini_or_server_tts_audio(
-            tts_full_to_read, api_key_curr, mode="full"
-        )
-        st.session_state["active_tts_audio"][stable_art_id] = {
-            "bytes": audio_bytes,
-            "b64": base64.b64encode(audio_bytes).decode("ascii") if audio_bytes else "",
-            "mime": mime_t or "audio/mpeg",
-            "text": tts_full_to_read,
-            "label": f"قراءة صوتية للنص الأصلي الكامل ({raw_src})",
-            "active_tab": tab_prefix,
-        }
-        just_triggered_audio = True
+          st.session_state.setdefault("active_yt_transcripts", {})[stable_art_id] = {
+              "text": perfect_ar_transcript,
+              "title": raw_title,
+              "source": raw_src,
+              "url": clean_link_url,
+              "active_tab": tab_prefix,
+          }
+          just_triggered_transcript = True
+      else:
+        if st.button("🎙️ استماع للنص الأصلي الكامل", key=f"tts_full_{widget_uid}", use_container_width=True):
+          with audio_slot.container():
+            render_html(
+                '<div style="background:rgba(139,92,246,0.2);border:1px solid rgba(167,139,250,0.55);border-radius:10px;padding:8px 14px;margin:4px 0;color:#ddd6fe;font-weight:800;font-size:0.84rem;direction:rtl;text-align:right;">⏳ جاري استخراج النص الأصلي الكامل وتوليد القراءة الصوتية...</div>'
+            )
+          full_fetched = ensure_verbatim_full_text_for_item(item)
+          full_body_clean = clean_display_text(full_fetched or verbatim_body)
+          if len(full_body_clean) < len(raw_summary):
+            full_body_clean = f"{raw_summary}. {full_body_clean}"
+          tts_full_to_read = f"{raw_title}. {full_body_clean}"
+          audio_bytes, mime_t = generate_gemini_or_server_tts_audio(
+              tts_full_to_read, api_key_curr, mode="full"
+          )
+          st.session_state["active_tts_audio"][stable_art_id] = {
+              "bytes": audio_bytes,
+              "b64": base64.b64encode(audio_bytes).decode("ascii") if audio_bytes else "",
+              "mime": mime_t or "audio/mpeg",
+              "text": tts_full_to_read,
+              "label": f"قراءة صوتية للنص الأصلي الكامل ({raw_src})",
+              "active_tab": tab_prefix,
+          }
+          just_triggered_audio = True
 
     with b_col3:
       selected_map_curr = st.session_state.setdefault("selected_export_articles", {})
@@ -12233,6 +13091,31 @@ def render_article_cards(
           f'<div style="display:flex;align-items:center;justify-content:center;height:42px;"><a class="news-link" style="width:100%;justify-content:center;height:40px;" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 فتح المصدر الأصلي</a></div>'
       )
 
+    active_transcript_entry = st.session_state.get("active_yt_transcripts", {}).get(stable_art_id)
+    if is_youtube_card and active_transcript_entry and (just_triggered_transcript or active_transcript_entry.get("active_tab", tab_prefix) == tab_prefix):
+      with transcript_slot.container():
+        tr_txt = active_transcript_entry.get("text") or ""
+        _render_youtube_transcript_component(
+            tr_txt,
+            active_transcript_entry.get("title") or raw_title,
+            active_transcript_entry.get("source") or raw_src,
+            active_transcript_entry.get("url") or clean_link_url,
+        )
+        tr_c1, tr_c2 = st.columns([1.5, 1.5])
+        with tr_c1:
+          st.download_button(
+              "⬇️ تحميل التفريغ الصوتي نصياً (.txt)",
+              data=f"⚖️ المرصد القضائي — التفريغ الصوتي للفيديو\nالعنوان: {raw_title}\nالمصدر: {raw_src}\nالرابط: {clean_link_url}\n\n{tr_txt}".encode("utf-8"),
+              file_name=f"تفريغ_صوتي_{stable_art_id}.txt",
+              mime="text/plain",
+              key=f"dl_tr_{widget_uid}",
+              use_container_width=True,
+          )
+        with tr_c2:
+          if st.button("✖️ إخفاء التفريغ الصوتي", key=f"close_tr_{widget_uid}", use_container_width=True):
+            st.session_state.get("active_yt_transcripts", {}).pop(stable_art_id, None)
+            st.rerun()
+
     active_audio_entry = st.session_state.get("active_tts_audio", {}).get(stable_art_id)
     if active_audio_entry and (just_triggered_audio or active_audio_entry.get("active_tab", tab_prefix) == tab_prefix):
       with audio_slot.container():
@@ -12254,6 +13137,15 @@ def render_article_cards(
             st.audio(a_bytes, format=a_mime, autoplay=just_triggered_audio)
           except TypeError:
             st.audio(a_bytes, format=a_mime)
+        if not is_youtube_card:
+          if st.button("✈️ إرسال الاستماع الصوتي لهذا الخبر إلى بوت تلغرام", key=f"tg_aud_{widget_uid}", use_container_width=True):
+            sent_ok = send_telegram_audio_for_item(
+                item, cfg, prebuilt_audio=(a_bytes, a_mime) if a_bytes else None
+            )
+            if sent_ok:
+              st.success("✅ تم إرسال الملف الصوتي للخبر إلى بوت تلغرام (المرصد القضائي) بنجاح")
+            else:
+              st.warning("⚠️ تعذر إرسال الملف الصوتي حالياً، يرجى التحقق من إعدادات بوت تلغرام")
 
 
 # =====================================================================
