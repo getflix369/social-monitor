@@ -69,32 +69,57 @@ _WORKING_GEMINI_MODEL = None
 
 DEFAULT_JUDICIAL_QUERIES = [
     "المجلس الأعلى للسلطة القضائية المغرب",
+    "المجلس الأعلى للسلطة القضائية",
     "رئاسة النيابة العامة المغرب",
+    "الشؤون القضائية المغرب",
+    "القضاة بالمغرب",
     "القضاء بالمغرب",
     "العدالة بالمغرب",
     "محكمة النقض المغرب",
+    "نادي قضاة المغرب",
+    "الودادية الحسنية للقضاة",
+    "المعهد العالي للقضاء المغرب",
+    "المسطرة الجنائية المغرب",
 ]
 
 STRICT_JUDICIAL_UNAMBIGUOUS = [
     "المجلس الأعلى للسلطة القضائية",
+    "المجلس الاعلى للسلطة القضائية",
+    "المجلس الأعلى للقضاء",
     "السلطة القضائية",
+    "الشؤون القضائية",
+    "المفتشية العامة للشؤون القضائية",
     "رئاسة النيابة العامة",
+    "النيابة العامة بالمغرب",
     "محكمة النقض",
     "المعهد العالي للقضاء",
-    "المفتشية العامة للشؤون القضائية",
     "الودادية الحسنية للقضاة",
     "نادي قضاة المغرب",
     "محمد عبد النباوي",
+    "عبد النباوي",
     "هشام البلاوي",
+    "مولاي الحسن الداكي",
     "الوكيل العام للملك",
     "وكيل الملك",
     "قاضي التحقيق",
+    "قاضي التطبيق",
+    "قاضي الأحداث",
     "القضاء المغربي",
     "القضاء بالمغرب",
+    "القضاء في المغرب",
     "العدالة بالمغرب",
+    "العدالة في المغرب",
+    "القضاة بالمغرب",
+    "القضاة في المغرب",
+    "قضاة المغرب",
+    "قضاة المملكة",
     "منظومة العدالة",
     "إصلاح العدالة",
+    "تحديث العدالة",
+    "رقمنة العدالة",
+    "رقمنة المحاكم",
     "المحاكم المغربية",
+    "محاكم المملكة",
     "محكمة الاستئناف",
     "المحكمة الابتدائية",
     "المحكمة الإدارية",
@@ -104,9 +129,27 @@ STRICT_JUDICIAL_UNAMBIGUOUS = [
     "المسطرة المدنية",
     "القانون الجنائي",
     "التنظيم القضائي",
+    "العقوبات البديلة",
+    "قانون العقوبات البديلة",
+    "الاعتقال الاحتياطي",
+    "الأمن القضائي",
+    "النجاعة القضائية",
+    "الاجتهاد القضائية",
+    "الاجتهاد القضائي",
+    "السنة القضائية",
+    "افتتاح السنة القضائية",
+    "الحركة الانتقالية للقضاة",
+    "التعيينات القضائية",
+    "المسؤولين القضائيين",
+    "الملحقين القضائيين",
+    "استقلال القضاء",
+    "استقلالية القضاء",
+    "أخلاقيات القضاء",
 ]
 
 JUDICIAL_GENERAL_TERMS = [
+    "الشؤون القضائية",
+    "السلطة القضائية",
     "النيابة العامة",
     "القضاء",
     "قضائي",
@@ -114,6 +157,7 @@ JUDICIAL_GENERAL_TERMS = [
     "القضاة",
     "قضاة",
     "القاضي",
+    "للقضاة",
     "المحاكم",
     "محكمة",
     "العدالة",
@@ -125,6 +169,9 @@ JUDICIAL_GENERAL_TERMS = [
     "هيئة المحامين",
     "الضابطة القضائية",
     "الشرطة القضائية",
+    "المفوضين القضائيين",
+    "هيئة الدفاع",
+    "المحاكمة العادلة",
 ]
 
 MOROCCAN_CONTEXT_TERMS = [
@@ -194,6 +241,33 @@ MOROCCAN_CONTEXT_TERMS = [
     "أكادير 24",
     "طنجة 24",
     "ناظورسيتي",
+    "snrt",
+    "snrtnews",
+    "2m",
+    "القناة الثانية",
+    "القناة الأولى",
+    "medi1",
+    "مدي 1",
+    "ميدي 1",
+    "فبراير",
+    "febrayer",
+    "هبة بريس",
+    "hibapress",
+    "le360",
+    "al3omk",
+    "alyaoum24",
+    "madar21",
+    "alayam24",
+    "goud",
+    "akhbarona",
+    "kech24",
+    "tanja24",
+    "agadir24",
+    "chouftv",
+    "شوف تيفي",
+    "الدار",
+    "تيلكيل",
+    "الداكي",
 ]
 
 BLOCKED_INAPPROPRIATE_TERMS = [
@@ -356,13 +430,69 @@ INTERVAL_MAP = {
 }
 
 SEARCH_PERIOD_MAP = {
-    "آخر ساعة": {"sec": 3600, "gnews": "1h", "ddg": "d", "yt": "EgIIAQ%253D%253D"},
-    "آخر 24 ساعة": {"sec": 86400, "gnews": "1d", "ddg": "d", "yt": "EgIIAg%253D%253D"},
-    "آخر 7 أيام": {"sec": 7 * 86400, "gnews": "7d", "ddg": "w", "yt": "EgIIAw%253D%253D"},
-    "آخر شهر": {"sec": 30 * 86400, "gnews": "30d", "ddg": "m", "yt": "EgIIBA%253D%253D"},
-    "آخر 3 أشهر": {"sec": 90 * 86400, "gnews": "90d", "ddg": "y", "yt": "CAI%253D"},
-    "آخر 6 أشهر": {"sec": 180 * 86400, "gnews": "180d", "ddg": "y", "yt": "CAI%253D"},
-    "آخر 12 شهراً": {"sec": 365 * 86400, "gnews": "1y", "ddg": "y", "yt": "CAI%253D"},
+    "آخر ساعة": {
+        "sec": 3600,
+        "gnews": "1h",
+        "ddg": "d",
+        "yt": "EgIIAQ%3D%3D",
+        "yt_date": "CAISBAgBEAE%3D",
+        "yt_raw": "EgIIAQ==",
+        "yt_date_raw": "CAISBAgBEAE=",
+    },
+    "آخر 24 ساعة": {
+        "sec": 86400,
+        "gnews": "1d",
+        "ddg": "d",
+        "yt": "EgIIAg%3D%3D",
+        "yt_date": "CAISBAgCEAE%3D",
+        "yt_raw": "EgIIAg==",
+        "yt_date_raw": "CAISBAgCEAE=",
+    },
+    "آخر 7 أيام": {
+        "sec": 7 * 86400,
+        "gnews": "7d",
+        "ddg": "w",
+        "yt": "EgIIAw%3D%3D",
+        "yt_date": "CAISBAgDEAE%3D",
+        "yt_raw": "EgIIAw==",
+        "yt_date_raw": "CAISBAgDEAE=",
+    },
+    "آخر شهر": {
+        "sec": 30 * 86400,
+        "gnews": "30d",
+        "ddg": "m",
+        "yt": "EgIIBA%3D%3D",
+        "yt_date": "CAISBAgEEAE%3D",
+        "yt_raw": "EgIIBA==",
+        "yt_date_raw": "CAISBAgEEAE=",
+    },
+    "آخر 3 أشهر": {
+        "sec": 90 * 86400,
+        "gnews": "90d",
+        "ddg": "y",
+        "yt": "CAI%3D",
+        "yt_date": "CAISAhAB",
+        "yt_raw": "CAI=",
+        "yt_date_raw": "CAISAhAB",
+    },
+    "آخر 6 أشهر": {
+        "sec": 180 * 86400,
+        "gnews": "180d",
+        "ddg": "y",
+        "yt": "CAI%3D",
+        "yt_date": "CAISAhAB",
+        "yt_raw": "CAI=",
+        "yt_date_raw": "CAISAhAB",
+    },
+    "آخر 12 شهراً": {
+        "sec": 365 * 86400,
+        "gnews": "1y",
+        "ddg": "y",
+        "yt": "EgIIBQ%3D%3D",
+        "yt_date": "CAISBAgFEAE%3D",
+        "yt_raw": "EgIIBQ==",
+        "yt_date_raw": "CAISBAgFEAE=",
+    },
 }
 
 ARABIC_MONTHS = {
@@ -961,6 +1091,7 @@ def is_strictly_judicial_and_clean(
   u_clean = str(url or "").lower()
   combined = f"{t_clean} {s_clean}".lower()
   combined_with_url = f"{combined} {u_clean}"
+  norm_combined = normalize_arabic_for_dedup(f"{t_clean} {s_clean}")
 
   for bad_word in BLOCKED_INAPPROPRIATE_TERMS:
     if bad_word in combined_with_url:
@@ -1006,15 +1137,32 @@ def is_strictly_judicial_and_clean(
   if len(arabic_chars) < 6:
     return False
 
-  if any(term.lower() in combined for term in STRICT_JUDICIAL_UNAMBIGUOUS):
-    return True
+  for term in STRICT_JUDICIAL_UNAMBIGUOUS:
+    if term.lower() in combined:
+      return True
+    norm_term = normalize_arabic_for_dedup(term)
+    if norm_term and norm_term in norm_combined:
+      return True
+    # دعم اللواصق العربية المتصلة بأول كلمة في المصطلح القضائي (مثل: للمجلس الأعلى للسلطة القضائية / بالسلطة القضائية / للشؤون القضائية)
+    if norm_term.startswith("ال") and len(norm_term) >= 6:
+      stem_term = norm_term[2:]
+      if stem_term in norm_combined:
+        return True
 
-  has_general_judicial = any(
-      term.lower() in combined for term in JUDICIAL_GENERAL_TERMS
-  )
+  has_general_judicial = False
+  for term in JUDICIAL_GENERAL_TERMS:
+    if term.lower() in combined:
+      has_general_judicial = True
+      break
+    norm_g = normalize_arabic_for_dedup(term)
+    if norm_g and (norm_g in norm_combined or (norm_g.startswith("ال") and len(norm_g) >= 5 and norm_g[2:] in norm_combined)):
+      has_general_judicial = True
+      break
+
   if has_general_judicial:
     has_morocco_ctx = (
         any(m.lower() in combined_with_url for m in MOROCCAN_CONTEXT_TERMS)
+        or any(normalize_arabic_for_dedup(m) in norm_combined for m in MOROCCAN_CONTEXT_TERMS if len(m) >= 3)
         or ".ma/" in u_clean
         or any(s["domain"] in u_clean for s in MOROCCAN_PRESS_SITES)
     )
@@ -3711,7 +3859,33 @@ def parse_any_date(date_str: str, fallback_offset_sec: int = 3600):
     except Exception:
       pass
 
-  # 7) صيغ الوقت النسبي الإنجليزية الصريحة (مثل: 5d · أو 3 days ago أو 18h ago)
+  # 7) صيغ الوقت النسبي الإنجليزية والفرنسية الصريحة (مثل: 3 days ago أو Streamed 18h ago أو il y a 2 jours)
+  m_fr_rel = re.search(
+      r"il y a\s+(\d+)\s*(seconde|secondes|minute|minutes|heure|heures|jour|jours|semaine|semaines|mois|an|ans)\b",
+      rel_lower,
+  )
+  if m_fr_rel:
+    n_fr = int(m_fr_rel.group(1))
+    u_fr = m_fr_rel.group(2)
+    if u_fr.startswith("sec"):
+      ts = now_ts - n_fr
+    elif u_fr.startswith("min"):
+      ts = now_ts - n_fr * 60
+    elif u_fr.startswith("heur"):
+      ts = now_ts - n_fr * 3600
+    elif u_fr.startswith("jour"):
+      ts = now_ts - n_fr * 86400
+    elif u_fr.startswith("sem"):
+      ts = now_ts - n_fr * 7 * 86400
+    elif u_fr.startswith("mois"):
+      ts = now_ts - n_fr * 30 * 86400
+    else:
+      ts = now_ts - n_fr * 365 * 86400
+    return (
+        datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        ts,
+    )
+
   m_short_rel = re.search(
       r"(?:^|\b)(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks|mo|month|months|y|yr|yrs|year|years)\b(?:\s*ago|\s*·)?",
       rel_lower,
@@ -4152,18 +4326,106 @@ def scrape_moroccan_press(
   return items
 
 
+MOROCCAN_JUDICIAL_YOUTUBE_CHANNELS = [
+    ("@Hespress", "قناة هسبريس"),
+    ("@2mtv", "القناة الثانية 2M"),
+    ("@SNRTnews", "قناة SNRTnews"),
+    ("@Medi1TV", "قناة مدي 1 تيفي"),
+    ("@al3omk", "قناة العمق المغربي"),
+    ("@Alyaoum24", "قناة اليوم 24"),
+    ("@madar21", "قناة مدار 21"),
+    ("@alayam24", "قناة الأيام 24"),
+    ("@FebrayerTV", "قناة فبراير"),
+    ("@Hibapress", "قناة هبة بريس"),
+    ("@Le360Live", "قناة Le360"),
+    ("@GoudMa", "قناة كود"),
+    ("@kech24", "قناة كش 24"),
+    ("@Tanja24", "قناة طنجة 24"),
+]
+
+
+def build_youtube_judicial_queries(keywords_input: str) -> list:
+  """توليد استعلامات بحث يوتيوب الدقيقة والشاملة التي تغطي المجلس الأعلى للسلطة القضائية والشؤون القضائية والقضاة والعدالة بالمغرب."""
+  custom_kws = [
+      k.strip()
+      for k in re.split(r"[,،\n]+", str(keywords_input or ""))
+      if k.strip()
+  ]
+  if custom_kws:
+    queries = []
+    for kw in custom_kws:
+      kw_clean = kw.strip('"\' ')
+      queries.append(kw_clean)
+      if "المغرب" not in kw_clean:
+        queries.append(f"{kw_clean} المغرب")
+        queries.append(f"{kw_clean} القضاء المغرب")
+    return queries
+
+  return [
+      "المجلس الأعلى للسلطة القضائية",
+      "المجلس الأعلى للسلطة القضائية المغرب",
+      "رئاسة النيابة العامة المغرب",
+      "الشؤون القضائية المغرب",
+      "القضاة بالمغرب",
+      "القضاء بالمغرب",
+      "العدالة بالمغرب",
+      "محكمة النقض المغرب",
+      "نادي قضاة المغرب",
+      "الودادية الحسنية للقضاة",
+      "المعهد العالي للقضاء المغرب",
+      "الوكيل العام للملك المغرب",
+      "وكيل الملك المحكمة المغرب",
+      "المسطرة الجنائية المغرب",
+      "إصلاح العدالة المغرب",
+  ]
+
+
+def _extract_yt_relative_time_from_text(text: str) -> str:
+  """استخراج عبارة الوقت النسبي (مثل: قبل 3 أيام / قبل يومين / 2 days ago / il y a 3 jours) من نصوص يوتيوب أو accessibilityData."""
+  if not text:
+    return ""
+  m_ar = re.search(
+      r"((?:تم البث\s+|بث مباشر\s+)?(?:قبل|منذ)\s+(?:حوالي\s+)?(?:\d+\s+)?(?:ثانية|ثواني|دقيقة|دقائق|دقيقتين|ساعة|ساعات|ساعتين|يوم|أيام|يومين|أسبوع|أسابيع|اسبوع|أسبوعين|شهر|أشهر|شهور|شهرين|سنة|سنوات|عام|أعوام|سنتين|عامين)(?:\s+واحد|\s+واحدة)?)",
+      text,
+      re.IGNORECASE,
+  )
+  if m_ar:
+    return m_ar.group(1).strip()
+
+  m_en = re.search(
+      r"((?:Streamed\s+|Premiered\s+)?\d+\s+(?:second|seconds|minute|minutes|hour|hours|day|days|week|weeks|month|months|year|years)\s+ago)",
+      text,
+      re.IGNORECASE,
+  )
+  if m_en:
+    return m_en.group(1).strip()
+
+  m_fr = re.search(
+      r"(il y a\s+\d+\s+(?:seconde|secondes|minute|minutes|heure|heures|jour|jours|semaine|semaines|mois|an|ans))",
+      text,
+      re.IGNORECASE,
+  )
+  if m_fr:
+    return m_fr.group(1).strip()
+  return ""
+
+
 def _extract_yt_renderers_from_html(
     html_text: str, default_channel_name: str = "YouTube"
 ):
   results = []
   seen_vids = set()
+  if not html_text:
+    return results
+
   chunks = re.split(
       r'"(?:videoRenderer|gridVideoRenderer|compactVideoRenderer|reelItemRenderer|shortsLockupViewModel|lockupViewModel)"\s*:',
       html_text,
   )[1:]
-  for chunk in chunks[:45]:
+  for chunk in chunks[:85]:
+    window = chunk[:15000]
     vid_m = re.search(
-        r'"(?:videoId|contentId)"\s*:\s*"([a-zA-Z0-9_-]{11})"', chunk[:2500]
+        r'"(?:videoId|contentId)"\s*:\s*"([a-zA-Z0-9_-]{11})"', window[:3500]
     )
     if not vid_m:
       continue
@@ -4172,23 +4434,32 @@ def _extract_yt_renderers_from_html(
       continue
 
     title = ""
+    acc_label_full = ""
+    m_acc = re.search(r'"accessibilityData"\s*:\s*\{"label"\s*:\s*"((?:[^"\\]|\\.)*)"', window[:6000])
+    if m_acc:
+      acc_label_full = decode_js_escaped_text(m_acc.group(1))
+
     for t_pat in [
         r'"title"\s*:\s*\{[^{}]*"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
         r'"title"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
         r'"title"\s*:\s*\{[^{}]*"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"',
         r'"headline"\s*:\s*\{[^{}]*"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        r'"lockupMetadataViewModel"\s*:\s*\{.*?"title"\s*:\s*\{"content"\s*:\s*"((?:[^"\\]|\\.)*)"',
         r'"primaryText"\s*:\s*\{"content"\s*:\s*"((?:[^"\\]|\\.)*)"',
         r'"title"\s*:\s*\{"content"\s*:\s*"((?:[^"\\]|\\.)*)"',
-        r'"accessibilityData"\s*:\s*\{"label"\s*:\s*"((?:[^"\\]|\\.)*)"',
     ]:
-      m_t = re.search(t_pat, chunk[:3500])
+      m_t = re.search(t_pat, window[:6000])
       if m_t:
         cand_t = decode_js_escaped_text(m_t.group(1))
         if len(cand_t) >= 4:
           title = cand_t
           break
 
-    if not title:
+    if not title and acc_label_full:
+      # تنظيف العنوان من لاحقة الوقت والمشاهدات في accessibilityData
+      title = re.sub(r"\s+(?:قبل|منذ)\s+\d+.*$", "", acc_label_full).strip()
+
+    if not title or len(title) < 4:
       continue
 
     pub_rel = ""
@@ -4196,30 +4467,56 @@ def _extract_yt_renderers_from_html(
         r'"publishedTimeText"\s*:\s*\{"simpleText"\s*:\s*"((?:[^"\\]|\\.)*)"',
         r'"publishedTimeText"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
     ]:
-      pub_m = re.search(p_pat, chunk[:4000])
+      pub_m = re.search(p_pat, window)
       if pub_m:
         pub_rel = decode_js_escaped_text(pub_m.group(1))
         break
 
+    # استخراج التاريخ النسبي واسم القناة من metadataParts في قوالب lockupViewModel الحديثة
+    meta_parts_texts = [
+        decode_js_escaped_text(mp)
+        for mp in re.findall(r'"metadataParts"\s*:\s*\[(.*?)\]', window[:9000])
+        for mp in re.findall(r'"content"\s*:\s*"((?:[^"\\]|\\.)*)"', mp)
+    ]
+    if not pub_rel:
+      for mp_txt in meta_parts_texts:
+        cand_rel = _extract_yt_relative_time_from_text(mp_txt)
+        if cand_rel:
+          pub_rel = cand_rel
+          break
+    if not pub_rel and acc_label_full:
+      pub_rel = _extract_yt_relative_time_from_text(acc_label_full)
+
     owner_m = re.search(
         r'"(?:ownerText|shortBylineText|longBylineText)"\s*:\s*\{"runs"\s*:\s*\[\{"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
-        chunk[:4500],
+        window,
     )
     channel_name = (
         decode_js_escaped_text(owner_m.group(1))
         if owner_m
-        else default_channel_name
+        else ""
     )
+    if not channel_name and meta_parts_texts:
+      for mp_txt in meta_parts_texts:
+        if (
+            len(mp_txt) >= 2
+            and not _extract_yt_relative_time_from_text(mp_txt)
+            and not any(w in mp_txt.lower() for w in ("مشاهدة", "views", "vues", "ألف", "مليون"))
+        ):
+          channel_name = mp_txt
+          break
+    if not channel_name:
+      channel_name = default_channel_name
 
     owner_id_m = re.search(
         r'"(?:ownerText|shortBylineText|longBylineText)".*?"browseId"\s*:\s*"(UC[a-zA-Z0-9_-]{20,})"',
-        chunk[:4500],
+        window,
     )
     owner_id = owner_id_m.group(1) if owner_id_m else ""
 
     owner_h_m = re.search(
         r'"canonicalBaseUrl"\s*:\s*"/(@?[^"\\]+)"',
-        chunk[:4500],
+        window,
     )
     owner_handle = (
         urllib.parse.unquote(owner_h_m.group(1)).lstrip("@")
@@ -4229,12 +4526,12 @@ def _extract_yt_renderers_from_html(
 
     desc_runs = re.findall(
         r'"detailedMetadataSnippets".*?"snippetText"\s*:\s*\{"runs"\s*:\s*\[(.*?)\]\s*\}',
-        chunk[:5000],
+        window,
     )
     if not desc_runs:
       desc_runs = re.findall(
           r'"descriptionSnippet"\s*:\s*\{"runs"\s*:\s*\[(.*?)\]\s*\}',
-          chunk[:5000],
+          window,
       )
     desc_text = ""
     if desc_runs:
@@ -4254,61 +4551,274 @@ def _extract_yt_renderers_from_html(
   return results
 
 
-def scrape_youtube_platform(
-    keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
-):
-  items = []
-  seen_urls = set()
-  queries = build_search_queries(keywords_input)[:4]
-  p_cfg = get_period_config(search_period)
-  max_age = p_cfg["sec"]
-  yt_sp = p_cfg["yt"]
-  now_ts = time.time()
+def _search_youtube_via_innertube_api(query: str, sp_params: str = "") -> list:
+  """البحث المباشر عبر واجهة YouTube InnerTube v1 Search JSON API الرسمية لتجاوز قيود HTML وجلب الفيديوهات القضائية بدقة عالية."""
+  api_url = "https://www.youtube.com/youtubei/v1/search?prettyPrint=false"
+  payload = {
+      "context": {
+          "client": {
+              "clientName": "WEB",
+              "clientVersion": "2.20240726.00.00",
+              "hl": "ar",
+              "gl": "MA",
+          }
+      },
+      "query": query,
+  }
+  if sp_params:
+    # InnerTube يتوقع قيمة params بصيغة Base64 صافية غير مهربة بـ %3D
+    payload["params"] = urllib.parse.unquote(sp_params)
 
-  for idx, q in enumerate(queries):
+  headers = dict(DEFAULT_HEADERS)
+  headers["Content-Type"] = "application/json"
+  try:
+    r = requests.post(
+        api_url,
+        json=payload,
+        headers=headers,
+        cookies=YT_BYPASS_COOKIES,
+        timeout=8.5,
+    )
+    if r.status_code == 200 and r.text:
+      return _extract_yt_renderers_from_html(r.text)
+  except Exception:
+    pass
+  return []
+
+
+def _fetch_single_youtube_query_bundle(args_tuple: tuple) -> list:
+  """تنفيذ استعلام بحث يوتيوب واحد عبر InnerTube API + صفحة نتائج يوتيوب مع فلاتر الفترة الزمنية والترتيب بالأحدث."""
+  q, yt_sp, yt_date_sp, yt_raw, yt_date_raw, include_date_sort = args_tuple
+  if is_stop_requested():
+    return []
+  bundle_renderers = []
+  seen_local_vids = set()
+
+  def _collect(v_list):
+    for v in v_list:
+      vid = v.get("vid")
+      if vid and vid not in seen_local_vids:
+        seen_local_vids.add(vid)
+        bundle_renderers.append(v)
+
+  # 1) البحث عبر واجهة YouTube InnerTube JSON API بفلتر الفترة الزمنية + الترتيب بالأحدث
+  for raw_p in ([yt_raw, yt_date_raw, "CAISAhAB"] if include_date_sort else [yt_raw, yt_date_raw]):
     if is_stop_requested():
       break
-    if progress_cb:
-      progress_cb((idx + 1) / max(1, len(queries)), f"مسح يوتيوب: {q}")
+    _collect(_search_youtube_via_innertube_api(q, raw_p))
+    if len(bundle_renderers) >= 18:
+      break
+
+  # 2) البحث عبر صفحة نتائج يوتيوب HTML بفلتر الفترة المحددة وبدون فلتر مقيد كاحتياطي
+  sp_candidates = [yt_sp, yt_date_sp]
+  if include_date_sort and "CAI%3D" not in sp_candidates:
+    sp_candidates.append("CAI%3D")
+  for sp_val in sp_candidates[:2]:
+    if is_stop_requested() or len(bundle_renderers) >= 24:
+      break
     search_url = (
-        "https://www.youtube.com/results?search_query="
-        f"{urllib.parse.quote(q)}&sp={yt_sp}"
+        f"https://www.youtube.com/results?search_query={urllib.parse.quote(q)}"
+        + (f"&sp={sp_val}" if sp_val else "")
     )
     try:
       r = requests.get(
           search_url,
           headers=DEFAULT_HEADERS,
           cookies=YT_BYPASS_COOKIES,
-          timeout=12,
+          timeout=8.5,
       )
-      if r.status_code == 200:
-        for v in _extract_yt_renderers_from_html(r.text):
-          v_url = f"https://www.youtube.com/watch?v={v['vid']}"
-          if v_url in seen_urls:
-            continue
-          if not is_strictly_judicial_and_clean(
-              v["title"], v["desc"], v_url, keywords_input
-          ):
-            continue
-          pub_str, pub_ts = extract_date_from_url_or_text(
-              v_url, v["desc"], v["pub_rel"], fallback_offset_sec=3600
-          )
-          if max_age > 0 and (now_ts - pub_ts) > max_age:
-            continue
-          seen_urls.add(v_url)
-          items.append({
-              "title": v["title"],
-              "url": v_url,
-              "raw_snippet": v["desc"],
-              "source_name": f"قناة {v['channel_name']}",
-              "platform": "يوتيوب",
-              "pub_date": pub_str,
-              "pub_timestamp": pub_ts,
-              "image_url": f"https://i.ytimg.com/vi/{v['vid']}/hqdefault.jpg",
-          })
+      if r.status_code == 200 and r.text:
+        _collect(_extract_yt_renderers_from_html(r.text))
     except Exception:
       pass
 
+  return bundle_renderers
+
+
+def _search_single_moroccan_yt_channel_judicial(args_tuple: tuple) -> list:
+  """البحث المباشر داخل القنوات الإخبارية والقضائية المغربية المعتمدة على يوتيوب عن فيديوهات المجلس الأعلى للسلطة القضائية والقضاء والعدالة."""
+  ch_handle, ch_label, search_term = args_tuple
+  if is_stop_requested():
+    return []
+  clean_h = ch_handle if ch_handle.startswith("@") else f"@{ch_handle}"
+  ch_search_url = (
+      f"https://www.youtube.com/{clean_h}/search?query={urllib.parse.quote(search_term)}"
+  )
+  try:
+    r = requests.get(
+        ch_search_url,
+        headers=DEFAULT_HEADERS,
+        cookies=YT_BYPASS_COOKIES,
+        timeout=7.5,
+    )
+    if r.status_code == 200 and r.text:
+      return _extract_yt_renderers_from_html(r.text, default_channel_name=ch_label)
+  except Exception:
+    pass
+  return []
+
+
+def scrape_youtube_platform(
+    keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
+):
+  """محرك رصد يوتيوب القضائي المتطور (4 طبقات متوازية):
+  1) واجهة YouTube InnerTube v1 Search API + بحث يوتيوب HTML بفلاتر (آخر يوم / آخر أسبوع / آخر شهر + الأحدث).
+  2) مسح شامل لاستعلامات المجلس الأعلى للسلطة القضائية، رئاسة النيابة العامة، الشؤون القضائية، القضاة، والعدالة بالمغرب.
+  3) البحث المباشر داخل القنوات المغربية المعتمدة على يوتيوب (هسبريس، 2M، SNRTnews، مدي 1 تيفي، العمق، اليوم 24، مدار 21...).
+  4) البحث الموازي عبر محركات الويب والفيديو وخلاصات الأخبار لروابط youtube.com القضائية."""
+  items = []
+  seen_vids = set()
+  queries = build_youtube_judicial_queries(keywords_input)
+  p_cfg = get_period_config(search_period)
+  max_age = p_cfg["sec"]
+  # هامش مرونة 15% لتعويض تقريب يوتيوب للتواريخ النسبية (مثل: "قبل يوم واحد" لفيديو عمره 22 ساعة، أو "قبل أسبوع واحد" لفيديو عمره 7 أيام)
+  effective_max_age = int(max_age * 1.15) + 7200 if max_age > 0 else 0
+  yt_sp = p_cfg.get("yt", "EgIIAw%3D%3D")
+  yt_date_sp = p_cfg.get("yt_date", "CAISBAgDEAE%3D")
+  yt_raw = p_cfg.get("yt_raw", "EgIIAw==")
+  yt_date_raw = p_cfg.get("yt_date_raw", "CAISBAgDEAE=")
+  when_tag = p_cfg.get("gnews", "7d")
+  now_ts = time.time()
+
+  def _process_and_add_yt_candidate(v: dict, fallback_offset: int = 1800):
+    vid = (v.get("vid") or "").strip()
+    if not vid or vid in seen_vids:
+      return
+    v_url = f"https://www.youtube.com/watch?v={vid}"
+    v_title = clean_display_text(v.get("title") or "")
+    v_desc = clean_display_text(v.get("desc") or "") or v_title
+    v_ch = clean_display_text(v.get("channel_name") or "يوتيوب")
+    if not v_title or len(v_title) < 5:
+      return
+
+    # نمرر اسم القناة مع الوصف حتى يتعرف الفلتر على الهوية المغربية للقنوات الوطنية مثل هسبريس و2M وSNRTnews
+    combined_snip_for_check = f"{v_desc} {v_ch}"
+    if not is_strictly_judicial_and_clean(
+        v_title, combined_snip_for_check, v_url, keywords_input
+    ):
+      return
+
+    pub_rel_raw = (v.get("pub_rel") or "").strip()
+    if pub_rel_raw:
+      pub_str, pub_ts = parse_any_date(pub_rel_raw, fallback_offset_sec=fallback_offset)
+    else:
+      # إذا لم يظهر نص الوقت النسبي في البطاقة المختصرة، لا نأخذ تواريخ القوانين القديمة من الوصف بل نتحقق من الوقت النسبي فقط أو نعتمد وقت الرصد القريب
+      rel_in_desc = _extract_yt_relative_time_from_text(v_desc)
+      if rel_in_desc:
+        pub_str, pub_ts = parse_any_date(rel_in_desc, fallback_offset_sec=fallback_offset)
+      else:
+        pub_str, pub_ts = parse_any_date("", fallback_offset_sec=fallback_offset)
+
+    if effective_max_age > 0 and (now_ts - pub_ts) > effective_max_age:
+      return
+
+    seen_vids.add(vid)
+    ch_clean = v_ch if v_ch.startswith("قناة") else f"قناة {v_ch}"
+    items.append({
+        "title": v_title,
+        "url": v_url,
+        "raw_snippet": v_desc if len(v_desc) >= len(v_title) else v_title,
+        "source_name": format_precise_source_with_domain(ch_clean, v_url, "يوتيوب", title_hint=v_title),
+        "platform": "يوتيوب",
+        "pub_date": pub_str,
+        "pub_timestamp": pub_ts,
+        "image_url": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
+    })
+
+  # الطبقة 1 و 2: المسح المتوازي للاستعلامات القضائية عبر InnerTube API + YouTube Search HTML
+  if progress_cb:
+    progress_cb(0.15, f"مسح يوتيوب للمواضيع القضائية والمجلس الأعلى للسلطة القضائية ({search_period})...")
+
+  query_tasks = [
+      (q, yt_sp, yt_date_sp, yt_raw, yt_date_raw, idx < 6)
+      for idx, q in enumerate(queries)
+  ]
+  try:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+      for q_idx, rendered_list in enumerate(pool.map(_fetch_single_youtube_query_bundle, query_tasks)):
+        if is_stop_requested():
+          break
+        if progress_cb:
+          progress_cb(
+              min(0.55, 0.15 + 0.40 * ((q_idx + 1) / max(1, len(query_tasks)))),
+              f"فحص نتائج يوتيوب القضائية: {queries[q_idx]}",
+          )
+        for v_item in rendered_list:
+          _process_and_add_yt_candidate(v_item, fallback_offset=1800)
+  except Exception:
+    pass
+
+  # الطبقة 3: البحث القضائي المباشر داخل القنوات الإخبارية والمؤسساتية المغربية الكبرى على يوتيوب
+  if not is_stop_requested():
+    if progress_cb:
+      progress_cb(0.72, "فحص الفيديوهات القضائية داخل القنوات المغربية المعتمدة على يوتيوب...")
+    ch_kw = (
+        keywords_input.strip().split(",")[0].strip()
+        if (keywords_input and keywords_input.strip())
+        else "المجلس الأعلى للسلطة القضائية القضاء"
+    )
+    ch_tasks = []
+    for ch_h, ch_lbl in MOROCCAN_JUDICIAL_YOUTUBE_CHANNELS[:10]:
+      ch_tasks.append((ch_h, ch_lbl, ch_kw))
+      if not (keywords_input and keywords_input.strip()):
+        ch_tasks.append((ch_h, ch_lbl, "النيابة العامة القضاة العدالة"))
+
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        for ch_vids in pool.map(_search_single_moroccan_yt_channel_judicial, ch_tasks):
+          if is_stop_requested():
+            break
+          for v_ch_item in ch_vids[:10]:
+            _process_and_add_yt_candidate(v_ch_item, fallback_offset=2400)
+    except Exception:
+      pass
+
+  # الطبقة 4: البحث الموازي في فهارس الفيديو والويب (Bing / Yahoo / DuckDuckGo) عن فيديوهات يوتيوب القضائية بالمغرب
+  if not is_stop_requested():
+    if progress_cb:
+      progress_cb(0.88, "تعزيز الرصد عبر فهارس الفيديو لمحركات البحث...")
+    if keywords_input and keywords_input.strip():
+      web_yt_queries = [
+          f'site:youtube.com "{keywords_input.strip()}" القضاء المغرب',
+          f'site:youtube.com "{keywords_input.strip()}" المغرب',
+      ]
+    else:
+      web_yt_queries = [
+          'site:youtube.com "المجلس الأعلى للسلطة القضائية" المغرب',
+          'site:youtube.com "رئاسة النيابة العامة" المغرب',
+          'site:youtube.com ("الشؤون القضائية" OR "القضاة" OR "منظومة العدالة" OR "محكمة النقض") المغرب',
+          'site:youtube.com ("نادي قضاة المغرب" OR "الودادية الحسنية للقضاة" OR "المعهد العالي للقضاء")',
+      ]
+
+    for wq in web_yt_queries:
+      if is_stop_requested():
+        break
+      for sr in _multi_engine_web_search(wq, platform="يوتيوب", default_source="يوتيوب", max_results=12):
+        u_sr = clean_social_post_url(sr.get("url", ""))
+        m_v = re.search(
+            r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})",
+            u_sr,
+        )
+        if not m_v:
+          continue
+        vid_w = m_v.group(1)
+        if vid_w in seen_vids:
+          continue
+        t_sr = clean_display_text(sr.get("title") or "")
+        t_sr = re.sub(r"\s*-\s*YouTube.*$", "", t_sr, flags=re.IGNORECASE).strip()
+        s_sr = clean_display_text(sr.get("raw_snippet") or "")
+        _process_and_add_yt_candidate(
+            {
+                "vid": vid_w,
+                "title": t_sr,
+                "desc": s_sr or t_sr,
+                "pub_rel": _extract_yt_relative_time_from_text(f"{t_sr} {s_sr}"),
+                "channel_name": "يوتيوب",
+            },
+            fallback_offset=3600,
+        )
+
+  items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
   return items
 
 
@@ -7925,13 +8435,19 @@ def quick_process_and_save(
       conn = _open_sqlite_conn()
       _ensure_schema_on_conn(conn)
       c = conn.cursor()
-      c.execute("SELECT id, url, title, platform, is_custom_target FROM articles")
-      for r_id, r_url, r_title, r_plat, r_tgt in c.fetchall():
+      now_check_ts = time.time()
+      c.execute("SELECT id, url, title, platform, is_custom_target, pub_timestamp, created_at FROM articles")
+      archived_id_map = {}
+      for r_id, r_url, r_title, r_plat, r_tgt, r_pub_ts, r_created_at in c.fetchall():
         base_keys = compute_article_dedup_keys(r_title or "", r_url or "")
         plat_scope = r_plat or "الصحف"
         tgt_scope = int(r_tgt or 0)
+        mon_ts_row = float(r_created_at or r_pub_ts or 0)
+        is_row_archived = (now_check_ts - mon_ts_row) >= 86400
         for bk in base_keys:
           existing_dedup_keys.add(f"{plat_scope}::{tgt_scope}::{bk}")
+          if is_row_archived:
+            archived_id_map[f"{plat_scope}::{tgt_scope}::{bk}"] = r_id
           if bk.startswith("raw_u:") or bk.startswith("pid:") or bk.startswith("canon_u:") or bk.startswith("title_words:"):
             existing_dedup_keys.add(f"global::{tgt_scope}::{bk}")
             if tgt_scope == 0:
@@ -7996,6 +8512,19 @@ def quick_process_and_save(
             except Exception:
               pass
     pre_keys = {f"{p_scope}::{t_scope}::{k}" for k in base_pre_keys}
+    # إذا كان الفيديو على يوتيوب موجوداً في الأرشيف بسبب تاريخ نشره السابق ولكن المستخدم يبحث في فترة تشمله، نقوم بتنشيطه ليظهر في تبويب يوتيوب
+    if p_scope == "يوتيوب":
+      matched_arch_keys = [ pk for pk in pre_keys if pk in archived_id_map ]
+      if matched_arch_keys:
+        with lock:
+          try:
+            conn_act = _open_sqlite_conn()
+            for mak in matched_arch_keys:
+              conn_act.execute("UPDATE articles SET created_at = ? WHERE id = ?", (time.time(), archived_id_map[mak]))
+            conn_act.commit()
+            conn_act.close()
+          except Exception:
+            pass
     # الفحص الأول قبل فك الروابط: إذا كان الخبر مرصوداً سابقاً في نفس القسم نتخطاه فوراً ليبقى 24 ساعة من وقت رصده الأول ثم يحال للأرشيف
     if (pre_keys & existing_dedup_keys) or (pre_keys & seen_batch_keys):
       continue
@@ -8078,7 +8607,7 @@ def quick_process_and_save(
         ),
         "raw_snippet": clean_full_article_text(it.get("raw_snippet") or "")[:15000],
         "image_url": img_url,
-        "created_at": pub_ts if (time.time() - pub_ts) >= 86400 else time.time(),
+        "created_at": time.time(),
         "telegram_sent": 1 if (time.time() - pub_ts) >= 86400 else 0,
     }
     prepared_rows.append(record)
@@ -9711,9 +10240,14 @@ for a in all_articles:
   mon_t = float(a.get("created_at") or pub_t)
   if mon_t <= 0:
     mon_t = pub_t
-  # يبقى الخبر المرصود في الواجهة النشطة لمدة 24 ساعة من وقت رصده الأول (created_at)، وبمجرد مرور 24 ساعة يُحال تلقائياً إلى الأرشيف الدائم
+  # يبقى الخبر المرصود في الواجهة النشطة لمدة 24 ساعة من وقت رصده الأول (created_at)، كما تظهر فيديوهات يوتيوب المطابقة لفترة البحث المختارة (آخر يوم / أسبوع / شهر)
   is_monitored_within_24h = (now_ts - mon_t) < 86400
-  if is_monitored_within_24h:
+  is_yt_in_selected_period = (
+      a.get("platform") == "يوتيوب"
+      and selected_period_sec > 0
+      and (now_ts - pub_t) <= (selected_period_sec * 1.15 + 7200)
+  )
+  if is_monitored_within_24h or is_yt_in_selected_period:
     live_articles.append(a)
   else:
     archive_articles.append(a)
