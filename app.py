@@ -3,6 +3,7 @@ import concurrent.futures
 import hashlib
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+import gc
 import gzip
 import html
 import io
@@ -57,6 +58,9 @@ TELEGRAM_LEDGER_FILE = "telegram_sent_ledger.json"
 
 DEFAULT_TG_TOKEN = "8806182263:AAFw5HbBup_TRif3FHvZP0QFYj0YPI4mb6c"
 DEFAULT_TG_CHAT_ID = "1357905784"
+PLATFORM_OFFICIAL_NAME = "المرصد القضائي"
+LEGACY_PLATFORM_NAME = "المرصد الوطني للعدالة والقضاء"
+DAEMON_CODE_VERSION = "marsad_qadai_v5_2026_10_20"
 
 GEMINI_MODELS_FALLBACK = [
     "gemini-2.5-flash",
@@ -595,7 +599,8 @@ def clean_full_article_text(val: str) -> str:
     if len(line) >= 3:
       if not paragraphs or paragraphs[-1] != line:
         paragraphs.append(line)
-  return "\n\n".join(paragraphs).strip()
+  res_full = "\n\n".join(paragraphs).strip()
+  return res_full.replace("المرصد الوطني للعدالة والقضاء", "المرصد القضائي")
 
 
 def matches_custom_keywords(title: str, snippet: str, keywords_input: str) -> bool:
@@ -651,7 +656,7 @@ def clean_display_text(val: str) -> str:
   txt = re.sub(r"<[^>]+>", " ", txt)
   txt = re.sub(r"[\r\n\t]+", " ", txt)
   txt = re.sub(r"\s+", " ", txt).strip()
-  return txt
+  return txt.replace("المرصد الوطني للعدالة والقضاء", "المرصد القضائي")
 
 
 def strip_internal_url_fragments(url: str) -> str:
@@ -2839,6 +2844,18 @@ def purge_invalid_articles_from_db():
           bad_ids.append((d["id"],))
         elif is_tgt and not belongs_to_any_custom_target(d, current_targets):
           bad_ids.append((d["id"],))
+      try:
+        c.execute(
+            "UPDATE articles SET source_name = REPLACE(source_name, 'المرصد الوطني للعدالة والقضاء', 'المرصد القضائي'), "
+            "summary = REPLACE(summary, 'المرصد الوطني للعدالة والقضاء', 'المرصد القضائي'), "
+            "title = REPLACE(title, 'المرصد الوطني للعدالة والقضاء', 'المرصد القضائي') "
+            "WHERE source_name LIKE '%المرصد الوطني%' OR summary LIKE '%المرصد الوطني%' OR title LIKE '%المرصد الوطني%'"
+        )
+        if c.rowcount and c.rowcount > 0:
+          conn.commit()
+          removed_any = True
+      except Exception:
+        pass
       if date_updates:
         c.executemany("UPDATE articles SET pub_date = ?, pub_timestamp = ?, created_at = ? WHERE id = ?", date_updates)
         conn.commit()
@@ -3066,9 +3083,9 @@ def _get_tg_credentials_fast() -> tuple:
 
 
 def ensure_telegram_bot_branding_updated(token: str = "", chat_id: str = "", force: bool = False):
-  """تحديث اسم ووصف بوت التلغرام رسمياً من 'المرصد الوطني للعدالة والقضاء' إلى الاسم الجديد 'المرصد القضائي' مع الحفاظ على وسم المزامنة السحابية."""
+  """تحديث اسم ووصف بوت التلغرام ومحادثته رسمياً من 'المرصد الوطني للعدالة والقضاء' إلى الاسم الجديد 'المرصد القضائي' عبر جميع اللغات."""
   rt = get_shared_runtime()
-  if rt.get("tg_branding_updated") and not force:
+  if rt.get("tg_branding_version") == DAEMON_CODE_VERSION and not force:
     return
   if not token or not chat_id:
     t_fast, c_fast = _get_tg_credentials_fast()
@@ -3076,11 +3093,13 @@ def ensure_telegram_bot_branding_updated(token: str = "", chat_id: str = "", for
     chat_id = chat_id or c_fast
   if not token:
     return
+  rt["tg_branding_version"] = DAEMON_CODE_VERSION
   rt["tg_branding_updated"] = True
 
   def _sync_branding_worker():
-    try:
-      for lang_c in ("", "ar"):
+    # 1) تحديث اسم البوت لجميع واجهات اللغات (الافتراضية، العربية، الفرنسية، الإنجليزية)
+    for lang_c in ("", "ar", "fr", "en"):
+      try:
         payload_name = {"name": "المرصد القضائي"}
         if lang_c:
           payload_name["language_code"] = lang_c
@@ -3089,11 +3108,12 @@ def ensure_telegram_bot_branding_updated(token: str = "", chat_id: str = "", for
             json=payload_name,
             timeout=5,
         )
-    except Exception:
-      pass
+      except Exception:
+        pass
 
-    try:
-      for lang_c in ("", "ar"):
+    # 2) تحديث الوصف المختصر لجميع اللغات
+    for lang_c in ("", "ar", "fr", "en"):
+      try:
         payload_short = {
             "short_description": "⚖️ المرصد القضائي — منصة الرصد الإعلامي والقضائي الذكي"
         }
@@ -3104,9 +3124,10 @@ def ensure_telegram_bot_branding_updated(token: str = "", chat_id: str = "", for
             json=payload_short,
             timeout=5,
         )
-    except Exception:
-      pass
+      except Exception:
+        pass
 
+    # 3) تحديث الوصف الكامل مع الحفاظ على وسم المزامنة السحابية [CLOUD_STATE:...]
     try:
       r_desc = requests.get(
           f"https://api.telegram.org/bot{token}/getMyDescription", timeout=5
@@ -3115,20 +3136,30 @@ def ensure_telegram_bot_branding_updated(token: str = "", chat_id: str = "", for
         curr_desc = r_desc.json().get("result", {}).get("description", "")
         m_sync = re.search(r"(\[CLOUD_STATE:\d+:[A-Za-z0-9_-]+\])", curr_desc)
         sync_tag = f"\n{m_sync.group(1)}" if m_sync else ""
-        if "المرصد الوطني" in curr_desc or "المرصد القضائي" not in curr_desc:
-          new_desc = (
-              "⚖️ المرصد القضائي — نظام الرصد القضائي والأرشيف السحابي الدائم"
-              f"{sync_tag}"
-          )
+        new_desc = (
+            "⚖️ المرصد القضائي — نظام الرصد القضائي والأرشيف السحابي الدائم"
+            f"{sync_tag}"
+        )
+        for lang_c in ("", "ar", "fr", "en"):
+          p_desc = {"description": new_desc[:510]} if not lang_c else {"description": "⚖️ المرصد القضائي — نظام الرصد القضائي والأرشيف السحابي الدائم", "language_code": lang_c}
           requests.post(
               f"https://api.telegram.org/bot{token}/setMyDescription",
-              json={"description": new_desc[:510]},
+              json=p_desc,
               timeout=5,
           )
     except Exception:
       pass
 
+    # 4) إذا كانت المحادثة قناة أو مجموعة، نحدّث عنوانها أيضاً، ونحدّث وصف الرسالة السحابية المثبتة
     if chat_id:
+      try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/setChatTitle",
+            json={"chat_id": chat_id, "title": "المرصد القضائي"},
+            timeout=4,
+        )
+      except Exception:
+        pass
       try:
         r_chat = requests.post(
             f"https://api.telegram.org/bot{token}/getChat",
@@ -3165,16 +3196,17 @@ def ensure_telegram_bot_branding_updated(token: str = "", chat_id: str = "", for
 
 def restore_state_from_telegram_cloud(force: bool = False) -> bool:
   """استعادة قاعدة البيانات الكاملة والأرشيف وسجل إشعارات تلغرام والروابط المخصصة من سحابة تلغرام تلقائياً عند إعادة تشغيل السيرفر أو فتح المنصة."""
+  token, chat_id = _get_tg_credentials_fast()
+  if token:
+    ensure_telegram_bot_branding_updated(token, chat_id)
+
   rt = get_shared_runtime()
   if rt.get("cloud_restored") and not force:
     return False
 
-  token, chat_id = _get_tg_credentials_fast()
   if not token or not chat_id:
     rt["cloud_restored"] = True
     return False
-
-  ensure_telegram_bot_branding_updated(token, chat_id)
 
   file_id_candidates = []
   detected_msg_id = 0
@@ -9633,6 +9665,7 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
   precise_src_tg = format_precise_source_with_domain(
       item.get("source_name", plat_tg), clean_u, plat_tg, title_hint=item.get("title", "")
   )
+  ensure_telegram_bot_branding_updated(token, chat_id)
   msg = (
       f"⚖️ *المرصد القضائي*\n"
       f"{target_badge}"
@@ -9643,7 +9676,7 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
       f"📝 *الملخص:* {item.get('summary', '')}\n\n"
       f"🏷️ *التصنيف:* {item.get('category', '')}\n"
       f"🔗 [فتح المصدر الأصلي]({clean_u})"
-  )
+  ).replace("المرصد الوطني للعدالة والقضاء", "المرصد القضائي").replace("المرصد الوطني", "المرصد القضائي")
   try:
     resp = requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
@@ -10096,15 +10129,104 @@ def run_headless_background_cycle() -> int:
       pass
 
 
-def ensure_background_daemon():
+def _detect_public_app_url() -> str:
+  """اكتشاف الرابط العام للمنصة تلقائياً (من ترويسات Streamlit أو متغيرات البيئة أو الإعدادات) لاستخدامه في نبضات منع السبات Keep-Alive."""
+  try:
+    cfg_u = str(load_credentials().get("app_public_url") or "").strip()
+    if cfg_u.startswith("http"):
+      return cfg_u.rstrip("/")
+  except Exception:
+    pass
+  for env_k in ("STREAMLIT_APP_URL", "APP_PUBLIC_URL", "RENDER_EXTERNAL_URL", "PUBLIC_URL"):
+    ev = os.environ.get(env_k, "").strip()
+    if ev.startswith("http"):
+      return ev.rstrip("/")
+  if st is not None:
+    try:
+      hdrs = getattr(st, "context", None) and getattr(st.context, "headers", None)
+      if hdrs:
+        host = (hdrs.get("X-Forwarded-Host") or hdrs.get("Host") or "").strip()
+        proto = (hdrs.get("X-Forwarded-Proto") or "https").strip()
+        if host and "localhost" not in host and "127.0.0.1" not in host:
+          detected = f"{proto}://{host}".rstrip("/")
+          try:
+            c_curr = load_credentials()
+            if not c_curr.get("app_public_url"):
+              c_curr["app_public_url"] = detected
+              save_credentials(c_curr)
+          except Exception:
+            pass
+          return detected
+    except Exception:
+      pass
+  return ""
+
+
+def _ping_keep_alive_endpoints():
+  """إرسال نبضات HTTP خفيفة (Self-Ping) للخادم المحلي والرابط العام للمنصة لمنع دخول السيرفر في وضع السبات (Sleep Mode)."""
   rt = get_shared_runtime()
-  if rt.get("daemon_started", False):
+  port = os.environ.get("PORT") or os.environ.get("STREAMLIT_SERVER_PORT") or "8501"
+  targets_to_ping = [
+      f"http://127.0.0.1:{port}/_stcore/health",
+      f"http://127.0.0.1:{port}/",
+  ]
+  pub_u = _detect_public_app_url()
+  if pub_u and pub_u.startswith("http"):
+    targets_to_ping.insert(0, f"{pub_u}/_stcore/health")
+    targets_to_ping.insert(1, pub_u)
+
+  for ping_u in targets_to_ping:
+    try:
+      requests.get(ping_u, headers=DEFAULT_HEADERS, timeout=4)
+    except Exception:
+      pass
+  rt["last_keepalive_ping_ts"] = time.time()
+
+
+def _neutralize_and_patch_legacy_daemon_threads():
+  """إيقاف وتحديث أي خيط خلفية قديم (JusticeAutoMonitor) عالق في ذاكرة السيرفر من نسخة كود سابقة لمنعه من إرسال الاسم القديم نهائياً."""
+  current_globals = globals()
+  try:
+    for obj in list(gc.get_objects()):
+      if callable(obj) and hasattr(obj, "__name__") and hasattr(obj, "__globals__"):
+        fn_name = getattr(obj, "__name__", "")
+        fn_globals = getattr(obj, "__globals__", None)
+        if isinstance(fn_globals, dict) and fn_globals is not current_globals:
+          if fn_name in ("_daemon_loop", "run_headless_background_cycle", "send_telegram_alert", "quick_process_and_save"):
+            # تحديث الدوال داخل مساحة الأسماء القديمة وإيقاف حلقتها الدورية
+            fn_globals["send_telegram_alert"] = send_telegram_alert
+            fn_globals["send_telegram_audio_for_item"] = send_telegram_audio_for_item
+            fn_globals["quick_process_and_save"] = quick_process_and_save
+            fn_globals["run_headless_background_cycle"] = lambda: 0
+            fn_globals["load_credentials"] = lambda: {"auto_monitor": False}
+  except Exception:
+    pass
+
+
+def ensure_background_daemon():
+  _detect_public_app_url()
+  _neutralize_and_patch_legacy_daemon_threads()
+  rt = get_shared_runtime()
+  if rt.get("daemon_started", False) and rt.get("daemon_version") == DAEMON_CODE_VERSION:
     return
   rt["daemon_started"] = True
+  rt["daemon_version"] = DAEMON_CODE_VERSION
+  my_version = DAEMON_CODE_VERSION
 
   def _daemon_loop():
     time.sleep(2)
+    last_keepalive = 0.0
     while True:
+      if rt.get("daemon_version") != my_version:
+        break
+      now_t = time.time()
+      # نبضة Keep-Alive كل 3 دقائق لمنع خمول السيرفر
+      if now_t - last_keepalive >= 180:
+        last_keepalive = now_t
+        try:
+          _ping_keep_alive_endpoints()
+        except Exception:
+          pass
       try:
         cfg = load_credentials()
         if cfg.get("auto_monitor", True):
@@ -10117,17 +10239,18 @@ def ensure_background_daemon():
             run_headless_background_cycle()
       except Exception:
         pass
-      time.sleep(30)
+      time.sleep(25)
 
   t = threading.Thread(
-      target=_daemon_loop, daemon=True, name="JusticeAutoMonitor"
+      target=_daemon_loop, daemon=True, name=f"JusticeAutoMonitor_{DAEMON_CODE_VERSION}"
   )
   t.start()
 
 
-# دعم التشغيل السحابي المستقل عبر GitHub Actions (CRON_MODE=1)
+# دعم التشغيل السحابي المستقل عبر GitHub Actions (CRON_MODE=1) مع إيقاظ الموقع تلقائياً من وضع السبات
 if os.environ.get("CRON_MODE") == "1" or st is None:
   init_db()
+  _ping_keep_alive_endpoints()
   count = run_headless_background_cycle()
   print(f"[CRON_MODE] Completed cycle. Added {count} new items.")
   sys.exit(0)
@@ -11192,15 +11315,65 @@ with st.sidebar:
       else 0,
   )
 
-  if st.button("💾 حفظ الإعدادات"):
+  app_url_in = st.text_input(
+      "🌐 رابط المنصة العام (لمنع السبات Keep-Alive)",
+      value=cfg.get("app_public_url", _detect_public_app_url()),
+      placeholder="https://your-app.streamlit.app",
+  )
+
+  if st.button("💾 حفظ الإعدادات وتحديث اسم البوت"):
     cfg["gemini_api_key"] = gemini_key_in.strip()
     cfg["telegram_bot_token"] = tg_token_in.strip() or DEFAULT_TG_TOKEN
     cfg["telegram_chat_id"] = tg_chat_in.strip() or DEFAULT_TG_CHAT_ID
     cfg["auto_monitor"] = bool(auto_mon_in)
     cfg["monitor_interval"] = interval_in
+    cfg["app_public_url"] = app_url_in.strip()
     save_credentials(cfg)
     ensure_telegram_bot_branding_updated(cfg["telegram_bot_token"], cfg["telegram_chat_id"], force=True)
-    st.success("تم حفظ الإعدادات وتحديث اسم البوت (المرصد القضائي) بنجاح")
+    _ping_keep_alive_endpoints()
+    st.success("تم حفظ الإعدادات وتحديث اسم البوت إلى (المرصد القضائي) بنجاح")
+
+  st.markdown("### ⚡ استمرارية الرصد 24/7 ومنع السبات")
+  gh_workflow_yaml = """name: Al-Marsad Al-Qadai 24/7 Auto Monitor & Keep-Alive
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  monitor_and_keep_alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 duckduckgo-search python-docx pillow
+
+      - name: Run Headless Judicial Monitor & Wake Up App
+        env:
+          CRON_MODE: "1"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STREAMLIT_APP_URL: ${{ secrets.STREAMLIT_APP_URL }}
+        run: |
+          python app.py
+"""
+  st.download_button(
+      "⚡ تحميل ملف GitHub Actions للرصد 24/7 بدون توقف",
+      data=gh_workflow_yaml.encode("utf-8"),
+      file_name="marsad_qadai_cron.yml",
+      mime="text/yaml",
+      help="ضعه في مسار .github/workflows/marsad_qadai_cron.yml في مستودع GitHub ليعمل الرصد التلقائي وإرسال الأخبار لتلغرام كل 15 دقيقة حتى لو دخل الموقع في وضع السبات.",
+  )
 
   st.markdown("### 🗄️ النسخ الاحتياطي")
   all_db_articles = fetch_articles_from_db()
@@ -13530,11 +13703,23 @@ if cfg.get("auto_monitor", True):
         name="OnLoadAsyncCycle",
     ).start()
 
-  if not st.session_state.get("active_tts_audio"):
+  if not st.session_state.get("active_tts_audio") and not st.session_state.get("active_yt_transcripts"):
     render_html("""
       <script>
-      setTimeout(function() {
+      (function() {
+        // نبضات Keep-Alive صامتة كل 40 ثانية لمنع قطع اتصال WebSocket أو دخول السيرفر في وضع السبات
+        setInterval(function() {
+          try {
+            fetch(window.location.origin + "/_stcore/health", { method: "GET", cache: "no-store" }).catch(function(){});
+          } catch (e) {}
+        }, 40000);
+        // تفعيل WakeLock لمنع خمول التبويب إن كان المتصفح يدعم ذلك
+        if ("wakeLock" in navigator) {
+          try { navigator.wakeLock.request("screen").catch(function(){}); } catch (e) {}
+        }
+        setTimeout(function() {
           window.parent.location.reload();
-      }, 60000);
+        }, 90000);
+      })();
       </script>
       """)
