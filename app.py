@@ -53,6 +53,7 @@ ARCHIVE_JSON_FILE = "articles_archive.json"
 PERSISTENT_HOME_ARCHIVE_JSON = os.path.join(os.path.expanduser("~"), ".morocco_justice_archive_persistent.json")
 CREDENTIALS_FILE = "credentials.json"
 CUSTOM_TARGETS_FILE = "custom_targets.json"
+PLATFORM_KEYWORD_TRACKERS_FILE = "platform_keyword_trackers.json"
 MONITOR_STATE_FILE = "monitor_state.json"
 TELEGRAM_LEDGER_FILE = "telegram_sent_ledger.json"
 
@@ -660,7 +661,7 @@ def clean_display_text(val: str) -> str:
 
 
 def strip_internal_url_fragments(url: str) -> str:
-  return re.sub(r"#(?:plat|v4target|v3target|v2target|target)=[^\s#]*", "", str(url or "").strip())
+  return re.sub(r"#(?:plat|kwtrack|v4target|v3target|v2target|target)=[^\s#]*", "", str(url or "").strip())
 
 
 def strip_source_suffix_from_title(title: str) -> str:
@@ -1154,6 +1155,16 @@ def is_strictly_judicial_and_clean(
     elif any(d in u_dom for d in ["facebook.com", "fb.com", "fb.watch"]):
       if is_target and not is_direct_social_post_url(u_unwrapped, "فيسبوك"):
         return False
+
+  # إذا كان المنشور مرصوداً عبر ميزة تتبع كلمة مفتاحية على منصة معينة (#kwtrack=...)، نتحقق من مطابقته للكلمة المفتاحية ونقبله فوراً
+  m_kwtrack = re.search(r"#kwtrack=([^&#\s]+)", str(url or ""))
+  if m_kwtrack and not (keywords_input and str(keywords_input).strip()):
+    try:
+      tracked_kw_from_url = urllib.parse.unquote(m_kwtrack.group(1)).strip()
+      if tracked_kw_from_url:
+        keywords_input = tracked_kw_from_url
+    except Exception:
+      pass
 
   has_explicit_kw = bool(keywords_input and str(keywords_input).strip())
   if has_explicit_kw:
@@ -3318,6 +3329,14 @@ def restore_state_from_telegram_cloud(force: bool = False) -> bool:
       except Exception:
         pass
 
+    cloud_kw_trackers = payload.get("platform_keyword_trackers", [])
+    if isinstance(cloud_kw_trackers, list) and cloud_kw_trackers and not os.path.exists(PLATFORM_KEYWORD_TRACKERS_FILE):
+      try:
+        with open(PLATFORM_KEYWORD_TRACKERS_FILE, "w", encoding="utf-8") as f:
+          json.dump(cloud_kw_trackers, f, ensure_ascii=False, indent=2)
+      except Exception:
+        pass
+
     # ج) استعادة جميع الأخبار والأرشيف ودمجها في ملفات الأرشيف المحلية
     cloud_articles = payload.get("articles", [])
     if isinstance(cloud_articles, list) and cloud_articles:
@@ -3406,6 +3425,7 @@ def _push_state_to_telegram_cloud_sync():
         "articles": articles_to_save,
         "telegram_ledger": sorted(list(ledger_set))[-8000:],
         "custom_targets": targets_to_save,
+        "platform_keyword_trackers": load_platform_keyword_trackers(),
         "credentials": creds_to_save,
     }
     raw_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -3917,6 +3937,49 @@ def save_custom_targets(targets):
     pass
 
 
+def load_platform_keyword_trackers() -> list:
+  """تحميل قائمة قواعد تتبع المنصات بالكلمات المفتاحية (المنصة + الكلمة المفتاحية المراد تتبعها)."""
+  if os.path.exists(PLATFORM_KEYWORD_TRACKERS_FILE):
+    try:
+      with open(PLATFORM_KEYWORD_TRACKERS_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+      if isinstance(data, list):
+        cleaned = []
+        seen = set()
+        for item in data:
+          if isinstance(item, dict):
+            plat = str(item.get("platform") or "فيسبوك").strip()
+            kw = str(item.get("keyword") or "").strip()
+            sig = f"{plat}::{kw.lower()}"
+            if kw and sig not in seen:
+              seen.add(sig)
+              cleaned.append({"platform": plat, "keyword": kw})
+        return cleaned
+    except Exception:
+      pass
+  return []
+
+
+def save_platform_keyword_trackers(trackers: list):
+  """حفظ قائمة قواعد تتبع المنصات بالكلمات المفتاحية ومزامنتها سحابياً."""
+  try:
+    cleaned = []
+    seen = set()
+    for t in trackers:
+      if isinstance(t, dict):
+        plat = str(t.get("platform") or "فيسبوك").strip()
+        kw = str(t.get("keyword") or "").strip()
+        sig = f"{plat}::{kw.lower()}"
+        if kw and sig not in seen:
+          seen.add(sig)
+          cleaned.append({"platform": plat, "keyword": kw})
+    with open(PLATFORM_KEYWORD_TRACKERS_FILE, "w", encoding="utf-8") as f:
+      json.dump(cleaned, f, ensure_ascii=False, indent=2)
+    trigger_cloud_state_backup(async_mode=True)
+  except Exception:
+    pass
+
+
 def load_monitor_state():
   state = {"last_auto_run": 0.0, "last_auto_added": 0, "total_auto_cycles": 0}
   if os.path.exists(MONITOR_STATE_FILE):
@@ -4399,12 +4462,12 @@ def build_search_queries(keywords_input: str):
     queries = []
     for kw in custom_kws:
       kw_clean = kw.strip('"\' ')
-      # البحث الدقيق بالعبارة المفتاحية أولاً ثم البحث المقترن بالسياق المغربي والقضائي
+      queries.append(f'"{kw_clean}"')
       if "المغرب" not in kw_clean:
         queries.append(f'"{kw_clean}" المغرب')
+        queries.append(f'{kw_clean} المغرب')
         queries.append(f'"{kw_clean}" القضاء المغرب')
       else:
-        queries.append(f'"{kw_clean}"')
         queries.append(kw_clean)
     return queries
   return list(DEFAULT_JUDICIAL_QUERIES)
@@ -5571,18 +5634,18 @@ def _multi_engine_social_search(
       kw_clean = keywords_input.strip()
       if platform_label == "فيسبوك":
         social_g_queries = [
-            f"{kw_clean} القضاء فيسبوك المغرب when:{when_tag}",
-            f"{kw_clean} العدالة فايسبوك المغرب when:{when_tag}",
+            f'"{kw_clean}" (فيسبوك OR فايسبوك OR منشور OR تدوينة) when:{when_tag}',
+            f'"{kw_clean}" فيسبوك المغرب when:{when_tag}',
         ]
       elif platform_label == "إكس":
         social_g_queries = [
-            f"{kw_clean} القضاء تغريدة المغرب when:{when_tag}",
-            f"{kw_clean} العدالة منصة إكس المغرب when:{when_tag}",
+            f'"{kw_clean}" (تغريدة OR إكس OR تويتر) when:{when_tag}',
+            f'"{kw_clean}" إكس المغرب when:{when_tag}',
         ]
       else:
         social_g_queries = [
-            f"{kw_clean} القضاء تيك توك المغرب when:{when_tag}",
-            f"{kw_clean} القضاء إنستغرام المغرب when:{when_tag}",
+            f'"{kw_clean}" (تيك توك OR إنستغرام OR لينكدإن) when:{when_tag}',
+            f'"{kw_clean}" مواقع التواصل المغرب when:{when_tag}',
         ]
 
     plat_tag_slug = {"فيسبوك": "fb", "إكس": "x", "أخرى": "other"}.get(
@@ -5929,8 +5992,11 @@ def scrape_facebook_platform(
     custom_kws = [k.strip() for k in re.split(r"[,،\n]+", keywords_input) if k.strip()]
     fb_queries = []
     for kw in custom_kws[:4]:
-      fb_queries.append(f'site:facebook.com "{kw}" القضاء المغرب')
-      fb_queries.append(f'facebook.com "{kw}" المحكمة OR النيابة العامة المغرب')
+      fb_queries.append(f'site:facebook.com "{kw}"')
+      fb_queries.append(f'site:facebook.com "{kw}" المغرب')
+      fb_queries.append(f'facebook.com/posts "{kw}"')
+      fb_queries.append(f'facebook.com/videos "{kw}"')
+      fb_queries.append(f'site:facebook.com {kw} المغرب')
   else:
     fb_queries = [
         'site:facebook.com "المجلس الأعلى للسلطة القضائية"',
@@ -6010,8 +6076,9 @@ def scrape_facebook_platform(
     if keywords_input and keywords_input.strip():
       kw_clean = keywords_input.strip()
       fb_rss_queries = [
-          f'"{kw_clean}" (فيسبوك OR فايسبوك OR تدوينة OR منشور OR صفحة) المغرب when:{when_tag}',
-          f'"{kw_clean}" (القضاء OR المحكمة OR النيابة العامة) المغرب when:{when_tag}',
+          f'"{kw_clean}" (فيسبوك OR فايسبوك OR تدوينة OR منشور OR صفحة) when:{when_tag}',
+          f'"{kw_clean}" (فيسبوك OR فايسبوك OR تدوينة OR منشور) المغرب when:{when_tag}',
+          f'"{kw_clean}" المغرب when:{when_tag}',
       ]
     else:
       fb_rss_queries = [
@@ -8487,6 +8554,81 @@ def scrape_custom_targets(
   return items
 
 
+def scrape_platform_by_keyword(
+    platform_name: str,
+    keyword_input: str,
+    search_period: str = "آخر 7 أيام",
+    progress_cb=None,
+) -> list:
+  """رصد منصة معينة (مثل فيسبوك، الصحف، يوتيوب، إكس، أخرى، أو شامل) من خلال كلمة مفتاحية محددة وجلب كافة المنشورات المتعلقة بتلك الكلمة المفتاحية."""
+  kw_clean = str(keyword_input or "").strip()
+  if not kw_clean:
+    return []
+
+  plat = str(platform_name or "فيسبوك").strip()
+  raw_collected = []
+
+  if plat == "فيسبوك":
+    raw_collected.extend(scrape_facebook_platform(kw_clean, search_period, progress_cb))
+  elif plat == "الصحف":
+    raw_collected.extend(scrape_moroccan_press(kw_clean, search_period, progress_cb))
+  elif plat == "يوتيوب":
+    raw_collected.extend(scrape_youtube_platform(kw_clean, search_period, progress_cb))
+  elif plat == "إكس":
+    raw_collected.extend(scrape_x_platform(kw_clean, search_period, progress_cb))
+  elif plat == "أخرى":
+    raw_collected.extend(scrape_other_platforms(kw_clean, search_period, progress_cb))
+  else:
+    # رصد شامل للكلمة المفتاحية عبر جميع المنصات
+    steps_kw = [
+        ("فيسبوك", lambda cb: scrape_facebook_platform(kw_clean, search_period, cb)),
+        ("الصحف المغربية", lambda cb: scrape_moroccan_press(kw_clean, search_period, cb)),
+        ("يوتيوب", lambda cb: scrape_youtube_platform(kw_clean, search_period, cb)),
+        ("منصة إكس", lambda cb: scrape_x_platform(kw_clean, search_period, cb)),
+        ("منصات أخرى", lambda cb: scrape_other_platforms(kw_clean, search_period, cb)),
+    ]
+    for s_idx, (_, s_fn) in enumerate(steps_kw):
+      if is_stop_requested():
+        break
+      bp = s_idx / len(steps_kw)
+      sp = 1.0 / len(steps_kw)
+      raw_collected.extend(
+          s_fn(
+              lambda sub_p, msg, b=bp, s=sp: progress_cb(b + sub_p * s, msg)
+              if progress_cb
+              else None
+          )
+      )
+
+  kw_tag = f"#kwtrack={urllib.parse.quote(kw_clean, safe='')}"
+  verified_items = []
+  seen_u = set()
+
+  for it in raw_collected:
+    if not isinstance(it, dict):
+      continue
+    t_str = clean_display_text(it.get("title") or "")
+    s_str = clean_display_text(it.get("raw_snippet") or "")
+    src_str = clean_display_text(it.get("source_name") or "")
+    u_str = str(it.get("url") or "").strip()
+    if not t_str or not u_str:
+      continue
+    if _has_inappropriate_terms(t_str, f"{s_str} {src_str}", u_str):
+      continue
+    if not matches_custom_keywords(t_str, f"{s_str} {src_str}", kw_clean):
+      continue
+    if "#kwtrack=" not in u_str:
+      it["url"] = f"{u_str}{kw_tag}"
+    canon_k = canonicalize_url_for_dedup(it["url"]) or it["url"]
+    if canon_k in seen_u:
+      continue
+    seen_u.add(canon_k)
+    verified_items.append(it)
+
+  verified_items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
+  return verified_items
+
+
 # =====================================================================
 # 10. تلخيص المحتوى الفعلي عبر Gemini API (مع دعم تعدد النماذج واستخلاص متن الخبر)
 # =====================================================================
@@ -9777,7 +9919,7 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
 
 
 def quick_process_and_save(
-    items: list, cfg: dict, is_target_run: bool = False
+    items: list, cfg: dict, is_target_run: bool = False, custom_kw_override: str = ""
 ) -> int:
   if not items:
     upgrade_incomplete_existing_articles(cfg, max_upgrades=6)
@@ -9831,7 +9973,7 @@ def quick_process_and_save(
         except Exception:
           pass
 
-  kw_filter = cfg.get("keywords_input", "")
+  kw_filter = custom_kw_override.strip() if (custom_kw_override and str(custom_kw_override).strip()) else cfg.get("keywords_input", "")
   candidates = []
   seen_batch_keys = set()
   for it in sorted(
@@ -9869,10 +10011,10 @@ def quick_process_and_save(
             except Exception:
               pass
     pre_keys = {f"{p_scope}::{t_scope}::{k}" for k in base_pre_keys}
-    # إذا كان الفيديو على يوتيوب موجوداً في الأرشيف وكان تاريخ نشره الحقيقي يقع فعلياً ضمن فترة البحث المختارة حالياً، نقوم بتنشيطه وتحديث تاريخه
+    # إذا كان المنشور موجوداً في الأرشيف وكان تاريخ نشره الحقيقي يقع ضمن فترة البحث المختارة حالياً (أو تم رصده بكلمة مفتاحية محددة)، نقوم بتنشيطه ليظهر فوراً
     max_age_qps = get_period_config(cfg.get("search_period", "آخر 7 أيام"))["sec"]
     it_pub_ts_pre = float(it.get("pub_timestamp") or 0)
-    if p_scope == "يوتيوب" and it_pub_ts_pre > 0 and (max_age_qps <= 0 or (time.time() - it_pub_ts_pre) <= max_age_qps):
+    if (p_scope == "يوتيوب" or bool(custom_kw_override and str(custom_kw_override).strip())) and it_pub_ts_pre > 0 and (max_age_qps <= 0 or (time.time() - it_pub_ts_pre) <= max_age_qps):
       matched_arch_keys = [ pk for pk in pre_keys if pk in archived_id_map ]
       if matched_arch_keys:
         with lock:
@@ -10111,7 +10253,20 @@ def run_headless_background_cycle() -> int:
       t_items = scrape_custom_targets(targets, kw, s_period)
       added_targets = quick_process_and_save(t_items, cfg, is_target_run=True)
 
-    total_added = added_general + added_targets
+    added_kw_trackers = 0
+    kw_trackers_list = load_platform_keyword_trackers()
+    for kwt in kw_trackers_list:
+      if is_stop_requested():
+        break
+      t_plat_k = kwt.get("platform", "فيسبوك")
+      t_word_k = kwt.get("keyword", "").strip()
+      if t_word_k:
+        kw_items = scrape_platform_by_keyword(t_plat_k, t_word_k, s_period)
+        added_kw_trackers += quick_process_and_save(
+            kw_items, cfg, is_target_run=False, custom_kw_override=t_word_k
+        )
+
+    total_added = added_general + added_targets + added_kw_trackers
     m_state = load_monitor_state()
     m_state["last_auto_run"] = time.time()
     m_state["last_auto_added"] = total_added
@@ -11449,6 +11604,146 @@ with col_period:
     cfg["search_period"] = selected_period
     save_credentials(cfg)
 
+platform_kw_trackers = load_platform_keyword_trackers()
+triggered_platform_kw_scan = None
+
+render_html(f"""
+<div class="custom-targets-header-card" dir="rtl" style="background:linear-gradient(135deg, rgba(14, 165, 233, 0.24) 0%, rgba(15, 23, 42, 0.82) 65%, rgba(30, 41, 59, 0.88) 100%);border:1px solid rgba(56, 189, 248, 0.55);border-right:5px solid #38bdf8;">
+    <div class="custom-targets-header-right" dir="rtl">
+        <span class="custom-targets-icon-box" style="background:rgba(56, 189, 248, 0.2);border-color:rgba(56, 189, 248, 0.6);">🔎</span>
+        <div>
+            <div class="custom-targets-main-title" style="color:#e0f2fe;">رصد منصة معينة من خلال كلمة مفتاحية</div>
+            <div class="custom-targets-subtitle">اختر المنصة (مثل فيسبوك أو يوتيوب أو الصحف أو إكس) واكتب الكلمة المفتاحية لجلب وتتبع جميع المنشورات التي تخص تلك الكلمة المفتاحية</div>
+        </div>
+    </div>
+    <span class="custom-targets-count-pill" style="background:rgba(14, 165, 233, 0.24);border-color:rgba(56, 189, 248, 0.6);color:#bae6fd;">📌 كلمات قيد التتبع: {len(platform_kw_trackers)}</span>
+</div>
+""")
+
+with st.expander(
+    f"🔎 فتح لوحة رصد وتتبع منصة معينة من خلال كلمة مفتاحية ({len(platform_kw_trackers)} كلمة متتبعة)",
+    expanded=True,
+):
+  PLAT_KW_OPTIONS = {
+      "🟦 فيسبوك (Facebook)": "فيسبوك",
+      "📰 الصحف المغربية (المواقع الإخبارية)": "الصحف",
+      "🟥 يوتيوب (YouTube)": "يوتيوب",
+      "⬛ منصة إكس (X / Twitter)": "إكس",
+      "🟪 منصات أخرى (تيك توك • إنستغرام • لينكدإن)": "أخرى",
+      "🚀 جميع المنصات (شامل)": "شامل",
+  }
+  pkw_c1, pkw_c2, pkw_c3, pkw_c4 = st.columns([1.45, 2.15, 1.25, 1.15])
+  with pkw_c1:
+    chosen_plat_label = st.selectbox(
+        "اختر المنصة",
+        options=list(PLAT_KW_OPTIONS.keys()),
+        index=0,
+        key="plat_kw_select_box",
+        label_visibility="collapsed",
+    )
+    chosen_plat_val = PLAT_KW_OPTIONS[chosen_plat_label]
+  with pkw_c2:
+    typed_plat_kw = st.text_input(
+        "الكلمة المفتاحية المراد تتبعها على المنصة",
+        placeholder="✍️ اكتب الكلمة أو العبارة المفتاحية المراد جلب منشوراتها...",
+        key="plat_kw_text_input",
+        label_visibility="collapsed",
+    )
+  with pkw_c3:
+    try:
+      scan_now_pkw = st.button(
+          "🚀 رصد وجلب المنشورات الآن",
+          key="btn_scan_plat_kw_now",
+          type="primary",
+          use_container_width=True,
+      )
+    except TypeError:
+      scan_now_pkw = st.button(
+          "🚀 رصد وجلب المنشورات الآن",
+          key="btn_scan_plat_kw_now",
+      )
+    if scan_now_pkw:
+      if typed_plat_kw.strip():
+        clear_stop_scan()
+        triggered_platform_kw_scan = (chosen_plat_val, typed_plat_kw.strip())
+        st.session_state["active_platform_kw_filter"] = {
+            "platform": chosen_plat_val,
+            "keyword": typed_plat_kw.strip(),
+        }
+      else:
+        st.warning("⚠️ يرجى كتابة الكلمة المفتاحية أولاً قبل الضغط على زر الرصد.")
+  with pkw_c4:
+    save_track_pkw = st.button(
+        "📌 تثبيت في التتبع التلقائي",
+        key="btn_save_plat_kw_tracker",
+        use_container_width=True,
+    )
+    if save_track_pkw:
+      if typed_plat_kw.strip():
+        platform_kw_trackers.append(
+            {"platform": chosen_plat_val, "keyword": typed_plat_kw.strip()}
+        )
+        save_platform_keyword_trackers(platform_kw_trackers)
+        clear_stop_scan()
+        triggered_platform_kw_scan = (chosen_plat_val, typed_plat_kw.strip())
+        st.session_state["active_platform_kw_filter"] = {
+            "platform": chosen_plat_val,
+            "keyword": typed_plat_kw.strip(),
+        }
+      else:
+        st.warning("⚠️ يرجى كتابة الكلمة المفتاحية أولاً لتثبيتها في التتبع.")
+
+  if platform_kw_trackers:
+    render_html(
+        "<div style='font-size:0.82rem;font-weight:800;color:#7dd3fc;margin:8px 0 6px 0;direction:rtl;text-align:right;'>"
+        "📌 الكلمات المفتاحية المثبتة للرصد والتتبع التلقائي حسب المنصة:"
+        "</div>"
+    )
+    plat_badge_icons = {
+        "فيسبوك": "🟦 فيسبوك",
+        "الصحف": "📰 الصحف",
+        "يوتيوب": "🟥 يوتيوب",
+        "إكس": "⬛ إكس",
+        "أخرى": "🟪 منصات أخرى",
+        "شامل": "🚀 جميع المنصات",
+    }
+    for k_idx, k_item in enumerate(list(platform_kw_trackers)):
+      kc1, kc2, kc3, kc4 = st.columns([3.4, 1.0, 1.0, 0.7])
+      k_plat = k_item.get("platform", "فيسبوك")
+      k_word = k_item.get("keyword", "")
+      k_badge = plat_badge_icons.get(k_plat, f"📡 {k_plat}")
+      with kc1:
+        render_html(
+            f"""
+            <div class="target-glass-item" dir="rtl" style="border-right-color:#38bdf8;">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;direction:rtl;">
+                    <span class="target-plat-chip" style="background:rgba(56,189,248,0.18);border-color:rgba(56,189,248,0.45);color:#7dd3fc;">{html.escape(k_badge)}</span>
+                    <span style="font-weight:900;color:#f8fafc;font-size:0.92rem;">🔍 الكلمة المتتبعة: «{html.escape(k_word)}»</span>
+                </div>
+            </div>
+            """
+        )
+      with kc2:
+        if st.button("▶ رصد الآن", key=f"run_pkw_{k_idx}", use_container_width=True):
+          clear_stop_scan()
+          triggered_platform_kw_scan = (k_plat, k_word)
+          st.session_state["active_platform_kw_filter"] = {
+              "platform": k_plat,
+              "keyword": k_word,
+          }
+      with kc3:
+        if st.button("👁️ عرض المنشورات", key=f"view_pkw_{k_idx}", use_container_width=True):
+          st.session_state["active_platform_kw_filter"] = {
+              "platform": k_plat,
+              "keyword": k_word,
+          }
+          st.rerun()
+      with kc4:
+        if st.button("🗑️", key=f"del_pkw_{k_idx}", help="حذف هذه الكلمة من التتبع", use_container_width=True):
+          platform_kw_trackers.pop(k_idx)
+          save_platform_keyword_trackers(platform_kw_trackers)
+          st.rerun()
+
 render_html(f"""
 <div class="custom-targets-header-card" dir="rtl">
     <div class="custom-targets-header-right" dir="rtl">
@@ -11709,7 +12004,61 @@ def execute_interactive_scan(mode_key: str):
   progress_placeholder.empty()
 
 
-if triggered_mode:
+def execute_platform_keyword_scan(target_platform: str, target_keyword: str):
+  """تنفيذ رصد مباشر وعميق لمنصة محددة من خلال كلمة مفتاحية معينة وحفظ كافة المنشورات المطابقة."""
+  clear_stop_scan()
+  rt_state["active_scan"] = f"pkw_{target_platform}"
+  s_period = cfg.get("search_period", "آخر 7 أيام")
+
+  def update_pkw_progress(pct: float, status_msg: str):
+    pct_int = max(5, min(100, int(pct * 100)))
+    render_html(
+        f"""
+        <div class="radar-panel" dir="rtl">
+            <div class="radar-scanner"></div>
+            <div style="flex:1;direction:rtl;text-align:right;">
+                <div style="font-size:1rem;font-weight:800;color:#38bdf8;margin-bottom:3px;">
+                    📡 رصد منصة ({html.escape(target_platform)}) للكلمة المفتاحية «{html.escape(target_keyword)}»: {html.escape(clean_display_text(status_msg))}
+                </div>
+                <div style="font-size:0.82rem;color:#94a3b8;">
+                    جلب كافة المنشورات المطابقة للكلمة المفتاحية خلال ({html.escape(s_period)})... ({pct_int}%)
+                </div>
+            </div>
+        </div>
+        """,
+        target=radar_placeholder,
+    )
+    progress_placeholder.progress(pct_int / 100.0)
+
+  update_pkw_progress(0.10, f"بدء مسح منصة {target_platform} عن «{target_keyword}»...")
+  collected = scrape_platform_by_keyword(
+      target_platform, target_keyword, s_period, progress_cb=update_pkw_progress
+  )
+  if not is_stop_requested():
+    update_pkw_progress(
+        0.92, f"تم العثور على {len(collected)} منشور مطابق — جاري استخلاص المتون وتلخيصها..."
+    )
+    added_count = quick_process_and_save(
+        collected, cfg, is_target_run=False, custom_kw_override=target_keyword
+    )
+    update_pkw_progress(1.0, "اكتمل رصد الكلمة المفتاحية على المنصة بنجاح")
+    time.sleep(0.25)
+    rt_state["last_done_mode"] = f"pkw:{target_platform}:{target_keyword}"
+    rt_state["last_done_count"] = added_count
+    rt_state["last_done_ts"] = time.time()
+  else:
+    rt_state["last_done_mode"] = "stopped"
+    rt_state["last_done_count"] = 0
+    rt_state["last_done_ts"] = time.time()
+
+  rt_state["active_scan"] = None
+  radar_placeholder.empty()
+  progress_placeholder.empty()
+
+
+if triggered_platform_kw_scan:
+  execute_platform_keyword_scan(triggered_platform_kw_scan[0], triggered_platform_kw_scan[1])
+elif triggered_mode:
   execute_interactive_scan(triggered_mode)
 
 if time.time() - float(rt_state.get("last_done_ts", 0)) < 25:
@@ -11819,6 +12168,49 @@ metrics_cards_html = "".join(
     for m_label, m_val in metrics_data
 )
 render_html(f'<div class="metrics-grid" dir="rtl">{metrics_cards_html}</div>')
+
+# عرض نتائج رصد المنصة بالكلمة المفتاحية بشكل فوري ومباشر عند اختيار منصة وكلمة مفتاحية
+active_pkw_filter = st.session_state.get("active_platform_kw_filter")
+if isinstance(active_pkw_filter, dict) and active_pkw_filter.get("keyword"):
+  f_plat = active_pkw_filter.get("platform", "فيسبوك")
+  f_kw = active_pkw_filter.get("keyword", "").strip()
+  pkw_matched_articles = []
+  for art_it in all_articles:
+    art_plat = clean_display_text(art_it.get("platform") or "الصحف")
+    if f_plat != "شامل" and art_plat != f_plat:
+      continue
+    art_pub_t = float(art_it.get("pub_timestamp", 0))
+    if selected_period_sec > 0 and (now_ts - art_pub_t) > selected_period_sec:
+      continue
+    hay_txt = f"{art_it.get('title', '')} {art_it.get('summary', '')} {art_it.get('raw_snippet', '')} {art_it.get('source_name', '')}"
+    if matches_custom_keywords(art_it.get("title", ""), hay_txt, f_kw):
+      pkw_matched_articles.append(art_it)
+
+  pkw_matched_articles.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
+
+  pkw_hdr_c1, pkw_hdr_c2 = st.columns([4.8, 1.2])
+  with pkw_hdr_c1:
+    render_html(
+        f"""
+        <div style="background:linear-gradient(90deg, rgba(14,165,233,0.28) 0%, rgba(15,23,42,0.92) 100%);border:1.5px solid rgba(56,189,248,0.65);border-right:5px solid #38bdf8;border-radius:14px;padding:12px 18px;margin:6px 0 10px 0;direction:rtl;text-align:right;">
+            <div style="font-size:1.02rem;font-weight:900;color:#f0f9ff;">
+                🎯 نتائج رصد منصة <span style="color:#38bdf8;">({html.escape(f_plat)})</span> للكلمة المفتاحية <span style="color:#34d399;">«{html.escape(f_kw)}»</span>
+                — إجمالي المنشورات المطابقة: <strong style="color:#fde68a;">{len(pkw_matched_articles)}</strong> منشور
+            </div>
+        </div>
+        """
+    )
+  with pkw_hdr_c2:
+    if st.button("✖️ إغلاق نافذة نتائج الكلمة", key="btn_close_pkw_results", use_container_width=True):
+      st.session_state.pop("active_platform_kw_filter", None)
+      st.rerun()
+
+  with st.container():
+    render_article_cards(
+        pkw_matched_articles,
+        empty_msg=f"لم يتم العثور على منشورات في منصة ({f_plat}) تطابق الكلمة المفتاحية «{f_kw}» خلال الفترة المحددة ({cfg.get('search_period', 'آخر 7 أيام')}). جرب توسيع فترة البحث أو الضغط على 🚀 رصد وجلب المنشورات الآن.",
+        tab_prefix="pkw_res",
+    )
 
 
 def _format_verbatim_article_paragraphs_html(verbatim_text: str, title_text: str) -> str:
