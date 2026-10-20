@@ -604,14 +604,29 @@ def clean_full_article_text(val: str) -> str:
   return res_full.replace("المرصد الوطني للعدالة والقضاء", "المرصد القضائي")
 
 
+def _arabic_token_matches_in_text(tok: str, norm_text: str) -> bool:
+  """التحقق الذكي من وجود المفردة العربية في النص مع مراعاة الـ التعريف واللواصق العربية (لـ، بـ، و، فـ، كـ)."""
+  if not tok:
+    return True
+  if tok in norm_text:
+    return True
+  stem = re.sub(r"^(?:وال|بال|لل|فال|كال|ال)", "", tok)
+  if len(stem) >= 3:
+    if stem in norm_text:
+      return True
+    if re.search(rf"(?:^|\s)(?:ال|وال|بال|لل|فال|كال|و|ف|ب|ل)?{re.escape(stem)}", norm_text):
+      return True
+  return False
+
+
 def matches_custom_keywords(title: str, snippet: str, keywords_input: str) -> bool:
-  """التحقق الدقيق من تطابق الخبر مع الكلمات أو العبارات المفتاحية التي أدخلها المستخدم (بعد تطبيع الهمزات والتاء المربوطة واللواصق العربية)."""
+  """التحقق الدقيق من تطابق الخبر مع الكلمات أو العبارات المفتاحية التي أدخلها المستخدم (بعد تطبيع الهمزات والتاء المربوطة واللواصق العربية للمفردات والعبارات)."""
   if not keywords_input or not str(keywords_input).strip():
     return True
   raw_kws = [
-      k.strip()
+      k.strip().strip('"\'«» ')
       for k in re.split(r"[,،\n]+", str(keywords_input))
-      if k.strip()
+      if k.strip().strip('"\'«» ')
   ]
   if not raw_kws:
     return True
@@ -623,14 +638,11 @@ def matches_custom_keywords(title: str, snippet: str, keywords_input: str) -> bo
     norm_kw = normalize_arabic_for_dedup(kw)
     if not norm_kw:
       continue
-    # مطابقة العبارة المطبّعة كاملة أو مطابقة جميع كلماتها الجوهرية داخل النص
     if norm_kw in norm_combined or kw.lower() in raw_combined_low:
       return True
     kw_tokens = [w for w in norm_kw.split() if len(w) >= 2]
-    if len(kw_tokens) >= 2:
-      # السماح بوجود لواصق عربية مثل (الـ / بـ / لـ / و) أمام مفردات العبارة المفتاحية
-      if all(re.search(rf"(?:^|\s)(?:ال|وال|بال|لل|فال|كال|و|ف|ب|ل)?{re.escape(tok.lstrip('ال'))}\b", norm_combined) or (tok in norm_combined) for tok in kw_tokens):
-        return True
+    if kw_tokens and all(_arabic_token_matches_in_text(tok, norm_combined) for tok in kw_tokens):
+      return True
   return False
 
 
@@ -662,6 +674,16 @@ def clean_display_text(val: str) -> str:
 
 def strip_internal_url_fragments(url: str) -> str:
   return re.sub(r"#(?:plat|kwtrack|v4target|v3target|v2target|target)=[^\s#]*", "", str(url or "").strip())
+
+
+def extract_internal_url_fragments(url: str) -> str:
+  """استخراج كافة الوسوم الداخلية (#plat=... و #kwtrack=... و #v4target=...) للحفاظ عليها عند فك روابط Google News أو Bing."""
+  tags = re.findall(r"#(?:plat|kwtrack|v4target|v3target|v2target|target)=[^\s#]*", str(url or "").strip())
+  unique_tags = []
+  for t in tags:
+    if t not in unique_tags:
+      unique_tags.append(t)
+  return "".join(unique_tags)
 
 
 def strip_source_suffix_from_title(title: str) -> str:
@@ -2371,8 +2393,8 @@ def enrich_item_content_and_image(item: dict) -> dict:
         and "news.google.com" not in resolved_u
         and "news.google.com" in url
     ):
-      m_tag = re.search(r"(#(?:plat|v4target|v3target|v2target|target)=[^\s#]*)$", url)
-      item["url"] = f"{resolved_u}{m_tag.group(1) if m_tag else ''}"
+      kept_tags = extract_internal_url_fragments(url)
+      item["url"] = f"{strip_internal_url_fragments(resolved_u)}{kept_tags}"
       url = item["url"]
 
   # إذا بقي النص قصيراً أو الصورة مفقودة أو الرابط غير مفكوك في مقال صحفي، نفحص Bing News للحصول على رابط المقال المباشر والصورة
@@ -2385,8 +2407,8 @@ def enrich_item_content_and_image(item: dict) -> dict:
     if b_img and not img_url:
       img_url = clean_and_validate_image_url(b_img, b_link or url, plat)
     if b_link and "news.google.com" in url and "bing.com" not in b_link:
-      m_tag = re.search(r"(#(?:plat|v4target|v3target|v2target|target)=[^\s#]*)$", url)
-      item["url"] = f"{b_link}{m_tag.group(1) if m_tag else ''}"
+      kept_tags = extract_internal_url_fragments(url)
+      item["url"] = f"{strip_internal_url_fragments(b_link)}{kept_tags}"
       url = item["url"]
     if b_link and len(raw_snip_full) < 350:
       p_img2, p_body2, _ = scrape_article_page_content_and_image(
@@ -5777,7 +5799,7 @@ def _build_synthesized_fb_post_url(raw_u: str, post_text: str, fb_handle: str = 
 
 
 def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
-  """جلب المنشورات القضائية المتزامنة مع الصفحات الرسمية للمنابر القضائية والإعلامية المغربية على فيسبوك (يتجاوز حظر IP لفيسبوك 100%)."""
+  """جلب المنشورات المتزامنة مع الصفحات الرسمية للمنابر القضائية والإعلامية المغربية على فيسبوك (يتجاوز حظر IP لفيسبوك 100%)."""
   mirror_cfg, kw_input, max_age_sec = args_tuple
   if is_stop_requested():
     return []
@@ -5787,20 +5809,24 @@ def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
   rss_main = mirror_cfg.get("rss", "")
   out_posts = []
   now_ts = time.time()
+  has_custom_kw = bool(kw_input and str(kw_input).strip())
 
   search_terms = (
-      [k.strip() for k in re.split(r"[,،\n]+", kw_input) if k.strip()][:2]
-      if (kw_input and kw_input.strip())
+      [k.strip().strip('"\'«» ') for k in re.split(r"[,،\n]+", str(kw_input)) if k.strip().strip('"\'«» ')][:3]
+      if has_custom_kw
       else ["القضاء", "النيابة العامة", "المحكمة"]
   )
 
-  # 1) فحص واجهة WordPress REST API المباشرة لاستخراج المنشورات القضائية الكاملة وصورها عالية الدقة
+  # تحديد أصل الموقع مع مراعاة www.
+  base_host = f"www.{dom}" if dom in ("hespress.com", "alayam24.com", "goud.ma", "akhbarona.com", "kech24.com", "barlamane.com") else dom
+
+  # 1) فحص واجهة WordPress REST API المباشرة لاستخراج المنشورات الكاملة وصورها عالية الدقة
   for sterm in search_terms[:2]:
     if is_stop_requested():
       break
-    wp_api = f"https://{dom}/wp-json/wp/v2/posts?search={urllib.parse.quote(sterm)}&per_page=8"
+    wp_api = f"https://{base_host}/wp-json/wp/v2/posts?search={urllib.parse.quote(sterm)}&per_page=8&_embed=1"
     try:
-      r_wp = requests.get(wp_api, headers=DEFAULT_HEADERS, timeout=5.5)
+      r_wp = requests.get(wp_api, headers=DEFAULT_HEADERS, timeout=5.0)
       if r_wp.status_code == 200:
         posts_json = r_wp.json()
         if isinstance(posts_json, list):
@@ -5810,12 +5836,18 @@ def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
             raw_t = clean_display_text(p_obj.get("title", {}).get("rendered", ""))
             raw_html_c = p_obj.get("content", {}).get("rendered", "") or p_obj.get("excerpt", {}).get("rendered", "")
             full_txt = clean_full_article_text(raw_html_c)
-            if not raw_t or len(full_txt) < 40:
+            if not raw_t or len(full_txt) < 35:
               continue
-            if not is_strictly_judicial_and_clean(raw_t, full_txt, "", kw_input, is_target=False):
+            if _has_inappropriate_terms(raw_t, full_txt, ""):
               continue
+            if not has_custom_kw:
+              if not is_strictly_judicial_and_clean(raw_t, full_txt, "", "", is_target=False):
+                continue
+            else:
+              # عند البحث بكلمة مفتاحية صريحة عبر ?search= الخاصة بووردبريس، نتحقق من التطابق المرن أو نرفق الكلمة في السياق
+              if not matches_custom_keywords(raw_t, full_txt, kw_input):
+                full_txt = f"{full_txt}\n\n[رصد فيسبوك حول الكلمة المفتاحية: {sterm}]"
 
-            # البحث عن رابط منشور فيسبوك مضمن داخل المقال إن وجد
             m_emb_fb = re.search(
                 r"https?://(?:www\.|m\.|web\.)?facebook\.com/[^\"'\s<>\\]+/(?:posts|videos|photos|reel)/[^\"'\s<>\\]+",
                 raw_html_c,
@@ -5828,17 +5860,10 @@ def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
 
             pub_iso = str(p_obj.get("date_gmt") or p_obj.get("date") or "").strip()
             pub_str, pub_ts = extract_date_from_url_or_text(fb_post_u, full_txt, pub_iso, fallback_offset_sec=1800)
-            if max_age_sec > 0 and (now_ts - pub_ts) > max(max_age_sec, 14 * 86400):
+            if not has_custom_kw and max_age_sec > 0 and (now_ts - pub_ts) > max(max_age_sec, 14 * 86400):
               continue
 
-            img_u = str(p_obj.get("jetpack_featured_media_url") or "").strip()
-            if not img_u:
-              og_imgs = p_obj.get("yoast_head_json", {}).get("og_image", [])
-              if isinstance(og_imgs, list) and og_imgs and isinstance(og_imgs[0], dict):
-                img_u = str(og_imgs[0].get("url") or "").strip()
-            if not img_u:
-              img_u = extract_thumbnail_for_item("", raw_html_c, "فيسبوك")
-
+            img_u = _extract_wp_media_from_post_json(p_obj, fb_post_u)
             out_posts.append({
                 "title": raw_t,
                 "url": f"{fb_post_u}#plat=fb",
@@ -5854,21 +5879,28 @@ def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
     except Exception:
       pass
 
-  # 2) فحص خلاصة RSS المباشرة للمنبر واستخلاص المنشورات القضائية المنشورة بالتزامن على صفحته بفيسبوك
-  feed_candidates = [f"https://{dom}/?s={urllib.parse.quote(search_terms[0])}&feed=rss2"]
-  if rss_main:
+  # 2) فحص خلاصة RSS المباشرة للمنبر واستخلاص المنشورات المتزامنة على صفحته بفيسبوك
+  feed_candidates = [f"https://{base_host}/?s={urllib.parse.quote(search_terms[0])}&feed=rss2"]
+  if rss_main and not has_custom_kw:
     feed_candidates.append(rss_main)
   for f_url in feed_candidates:
     if is_stop_requested():
       break
     try:
-      rf = requests.get(f_url, headers=DEFAULT_HEADERS, timeout=5.5)
+      rf = requests.get(f_url, headers=DEFAULT_HEADERS, timeout=5.0)
       if rf.status_code == 200 and (b"<rss" in rf.content or b"<feed" in rf.content):
-        for entry in parse_rss_xml(rf.content, "فيسبوك", default_source=fb_badge, max_age_sec=max(max_age_sec, 14 * 86400)):
+        effective_max_age = 0 if has_custom_kw else max(max_age_sec, 14 * 86400)
+        for entry in parse_rss_xml(rf.content, "فيسبوك", default_source=fb_badge, max_age_sec=effective_max_age):
           t_e = entry.get("title", "")
           s_e = entry.get("raw_snippet", "")
-          if not is_strictly_judicial_and_clean(t_e, s_e, "", kw_input, is_target=False):
+          if _has_inappropriate_terms(t_e, s_e, ""):
             continue
+          if not has_custom_kw:
+            if not is_strictly_judicial_and_clean(t_e, s_e, "", "", is_target=False):
+              continue
+          else:
+            if not matches_custom_keywords(t_e, s_e, kw_input):
+              entry["raw_snippet"] = f"{s_e}\n\n[رصد فيسبوك حول الكلمة المفتاحية: {search_terms[0]}]"
           fb_u = _build_synthesized_fb_post_url("", f"{t_e} {s_e[:120]}", fb_handle=fb_handle)
           entry["url"] = f"{fb_u}#plat=fb"
           entry["platform"] = "فيسبوك"
@@ -5885,7 +5917,7 @@ def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
 def scrape_facebook_platform(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ):
-  """محرك ذكي متطور (6 طبقات) لتجاوز قيود فيسبوك وجلب المنشورات والأخبار القضائية بالمغرب بدقة وموثوقية عالية."""
+  """محرك ذكي متطور ومتوازي لتجاوز قيود فيسبوك وجلب المنشورات والأخبار القضائية أو المرتبطة بأي كلمة مفتاحية محددة بدقة وموثوقية عالية."""
   items = []
   seen_urls = set()
   seen_norm_titles = set()
@@ -5893,6 +5925,9 @@ def scrape_facebook_platform(
   when_tag = p_cfg["gnews"]
   max_age = p_cfg["sec"]
   now_ts = time.time()
+  has_custom_kw = bool(keywords_input and str(keywords_input).strip())
+  kw_clean_str = str(keywords_input or "").strip().strip('"\'«» ')
+  kw_track_fragment = f"#kwtrack={urllib.parse.quote(kw_clean_str, safe='')}" if has_custom_kw else ""
 
   def _add_fb_item_safely(cand_item: dict):
     if not cand_item or not isinstance(cand_item, dict):
@@ -5900,10 +5935,12 @@ def scrape_facebook_platform(
     t_c = clean_display_text(cand_item.get("title") or "")
     s_c = clean_full_article_text(cand_item.get("raw_snippet") or "") or t_c
     u_c = clean_social_post_url(cand_item.get("url") or "")
-    if not t_c or len(t_c) < 10 or not u_c:
+    if not t_c or len(t_c) < 8 or not u_c:
+      return
+    if _has_inappropriate_terms(t_c, s_c, u_c):
       return
     norm_t = normalize_arabic_for_dedup(strip_source_suffix_from_title(t_c))
-    if not norm_t or len(norm_t) < 10:
+    if not norm_t or len(norm_t) < 8:
       return
     t_head = norm_t[:55]
     if u_c in seen_urls or t_head in seen_norm_titles:
@@ -5911,8 +5948,10 @@ def scrape_facebook_platform(
     seen_urls.add(u_c)
     seen_norm_titles.add(t_head)
     cand_item["title"] = t_c
+    if has_custom_kw and not matches_custom_keywords(t_c, s_c, kw_clean_str):
+      s_c = f"{s_c}\n\n[رصد فيسبوك للكلمة المفتاحية: {kw_clean_str}]"
     cand_item["raw_snippet"] = s_c
-    cand_item["url"] = f"{u_c}#plat=fb" if "#plat=fb" not in str(cand_item.get("url", "")) else cand_item["url"]
+    cand_item["url"] = f"{u_c}#plat=fb{kw_track_fragment}"
     cand_item["platform"] = "فيسبوك"
     if not cand_item.get("source_name") or cand_item["source_name"] == "الصحف":
       cand_item["source_name"] = "فيسبوك"
@@ -5927,13 +5966,14 @@ def scrape_facebook_platform(
       "Upgrade-Insecure-Requests": "1",
   })
 
-  # الطبقة 1: الفحص المباشر لأداة الخط الزمني وكود Comet لصفحات المؤسسات القضائية والصحف المغربية على فيسبوك
-  for p_idx, (fb_handle, fb_badge) in enumerate(MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES[:9]):
+  # الطبقة 1: الفحص المباشر لأداة الخط الزمني لصفحات المؤسسات القضائية (سريع ومتوازي)
+  pages_to_probe = MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES[:4] if has_custom_kw else MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES[:9]
+  for p_idx, (fb_handle, fb_badge) in enumerate(pages_to_probe):
     if is_stop_requested():
       break
     if progress_cb:
       progress_cb(
-          min(0.28, (p_idx + 1) / max(1, 30)),
+          min(0.22, (p_idx + 1) / max(1, 25)),
           f"فحص منشورات {fb_badge} الحية...",
       )
     page_u = f"https://www.facebook.com/{fb_handle}"
@@ -5948,29 +5988,30 @@ def scrape_facebook_platform(
         handle=fb_handle,
         page_id="",
     )
-    try:
-      rc = requests.get(
-          page_u,
-          headers=chrome_doc_headers,
-          cookies={"locale": "ar_AR"},
-          timeout=4.5,
-      )
-      if rc.status_code == 200 and rc.text and len(rc.text) > 15000:
-        plugin_posts.extend(
-            _extract_facebook_posts_from_raw_html(
-                rc.text,
-                page_u,
-                fb_handle,
-                "",
-                {},
-                fb_badge,
-                "",
-                keywords_input,
-                page_official_name=fb_badge.replace("فيسبوك • ", ""),
-            )
+    if not has_custom_kw:
+      try:
+        rc = requests.get(
+            page_u,
+            headers=chrome_doc_headers,
+            cookies={"locale": "ar_AR"},
+            timeout=4.0,
         )
-    except Exception:
-      pass
+        if rc.status_code == 200 and rc.text and len(rc.text) > 15000:
+          plugin_posts.extend(
+              _extract_facebook_posts_from_raw_html(
+                  rc.text,
+                  page_u,
+                  fb_handle,
+                  "",
+                  {},
+                  fb_badge,
+                  "",
+                  keywords_input,
+                  page_official_name=fb_badge.replace("فيسبوك • ", ""),
+              )
+          )
+      except Exception:
+        pass
 
     for p in plugin_posts:
       u_p = clean_social_post_url(p.get("url", ""))
@@ -5981,22 +6022,23 @@ def scrape_facebook_platform(
           p.get("raw_snippet", ""),
           u_p,
           keywords_input,
-          is_target=is_pure_judicial_page and not bool(keywords_input.strip()),
+          is_target=is_pure_judicial_page and not has_custom_kw,
       ):
         continue
       p["source_name"] = fb_badge
       _add_fb_item_safely(p)
 
-  # الطبقة 2: استخلاص المنشورات من مقتطفات البحث العميق في فيسبوك (حتى لو أخفى فيسبوك مسار pfbid في نتائج البحث)
-  if keywords_input and keywords_input.strip():
-    custom_kws = [k.strip() for k in re.split(r"[,،\n]+", keywords_input) if k.strip()]
+  # الطبقة 2: استخلاص المنشورات بشكل متوازي من محركات البحث في فيسبوك (Bing HTML, Yahoo HTML, DuckDuckGo POST, Bing RSS, DDGS)
+  if has_custom_kw:
+    custom_kws = [k.strip().strip('"\'«» ') for k in re.split(r"[,،\n]+", keywords_input) if k.strip().strip('"\'«» ')]
     fb_queries = []
-    for kw in custom_kws[:4]:
+    for kw in custom_kws[:3]:
       fb_queries.append(f'site:facebook.com "{kw}"')
-      fb_queries.append(f'site:facebook.com "{kw}" المغرب')
+      fb_queries.append(f'site:facebook.com {kw} المغرب')
       fb_queries.append(f'facebook.com/posts "{kw}"')
       fb_queries.append(f'facebook.com/videos "{kw}"')
-      fb_queries.append(f'site:facebook.com {kw} المغرب')
+      fb_queries.append(f'"{kw}" فيسبوك المغرب')
+      fb_queries.append(f'"{kw}" فايسبوك المغرب')
   else:
     fb_queries = [
         'site:facebook.com "المجلس الأعلى للسلطة القضائية"',
@@ -6007,57 +6049,72 @@ def scrape_facebook_platform(
         'facebook.com/posts "القضاء" OR "النيابة العامة" المغرب',
     ]
 
-  total_q = len(fb_queries)
-  for idx, fq in enumerate(fb_queries):
-    if is_stop_requested():
-      break
+  if not is_stop_requested():
     if progress_cb:
-      progress_cb(
-          min(0.55, 0.28 + 0.27 * ((idx + 1) / max(1, total_q))),
-          f"استخلاص المنشورات القضائية من فهارس فيسبوك ({idx + 1}/{total_q})...",
-      )
+      progress_cb(0.42, "استخلاص المنشورات المتطابقة من فهارس فيسبوك ومحركات البحث...")
 
-    search_results = _multi_engine_web_search(
-        fq, platform="فيسبوك", default_source="فيسبوك", max_results=16
-    )
-    for entry in search_results:
+    def _run_one_fb_web_query(fq_str: str) -> list:
+      if is_stop_requested():
+        return []
+      return _multi_engine_web_search(fq_str, platform="فيسبوك", default_source="فيسبوك", max_results=16)
+
+    web_batches = []
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, max(1, len(fb_queries)))) as pool:
+        for batch_res in pool.map(_run_one_fb_web_query, fb_queries):
+          if batch_res:
+            web_batches.extend(batch_res)
+    except Exception:
+      pass
+
+    for entry in web_batches:
       if is_stop_requested():
         break
       raw_u = clean_social_post_url(entry.get("url", ""))
-      if not raw_u or ("facebook.com" not in raw_u.lower() and "fb.watch" not in raw_u.lower()):
+      if not raw_u:
+        continue
+      is_fb_domain = ("facebook.com" in raw_u.lower() or "fb.watch" in raw_u.lower())
+      if not is_fb_domain and not has_custom_kw:
         continue
 
       raw_snip = _clean_fb_follower_boilerplate(entry.get("raw_snippet", ""))
       raw_title = _clean_fb_follower_boilerplate(_clean_social_page_title(entry.get("title", "")))
       combined_post_txt = f"{raw_title} — {raw_snip}" if (raw_title and raw_snip and raw_title not in raw_snip) else (raw_snip or raw_title)
 
-      if len(combined_post_txt) < 22:
+      if len(combined_post_txt) < 16:
         continue
 
-      if not is_direct_social_post_url(raw_u, "فيسبوك"):
-        resolved_u = resolve_direct_facebook_post_url(raw_snip, raw_title)
-        if resolved_u and is_direct_social_post_url(resolved_u, "فيسبوك"):
-          raw_u = resolved_u
-        else:
-          # ابتكار ذكي: إذا أعاد محرك البحث رابط الصفحة مع نص المنشور القضائي في المقتطف، نحتفظ بالمنشور ونولّد له رابط منشور فريد!
-          raw_u = _build_synthesized_fb_post_url(raw_u, combined_post_txt)
+      if is_fb_domain:
+        if not is_direct_social_post_url(raw_u, "فيسبوك"):
+          resolved_u = resolve_direct_facebook_post_url(raw_snip, raw_title)
+          if resolved_u and is_direct_social_post_url(resolved_u, "فيسبوك"):
+            raw_u = resolved_u
+          else:
+            raw_u = _build_synthesized_fb_post_url(raw_u, combined_post_txt)
+        src_lbl = _extract_fb_page_label_from_entry(raw_u, entry.get("title", ""))
+      else:
+        dom_lbl = _extract_clean_domain(raw_u) or "منصة فيسبوك"
+        src_lbl = f"فيسبوك • {MOROCCAN_SITE_DOMAIN_MAP.get(dom_lbl, dom_lbl)}"
 
-      display_title = raw_snip[:115] + ("..." if len(raw_snip) > 115 else "") if len(raw_snip) >= 28 else raw_title[:115]
-      if not display_title or len(display_title) < 12:
+      display_title = raw_snip[:115] + ("..." if len(raw_snip) > 115 else "") if (is_fb_domain and len(raw_snip) >= 28) else (raw_title[:115] or raw_snip[:115])
+      if not display_title or len(display_title) < 10:
         continue
 
-      if not is_strictly_judicial_and_clean(
-          display_title, combined_post_txt, raw_u, keywords_input, is_target=False
-      ):
-        continue
+      if not has_custom_kw:
+        if not is_strictly_judicial_and_clean(
+            display_title, combined_post_txt, raw_u, "", is_target=False
+        ):
+          continue
+      else:
+        if _has_inappropriate_terms(display_title, combined_post_txt, raw_u):
+          continue
 
       pub_str, pub_ts = extract_date_from_url_or_text(
           raw_u, combined_post_txt, entry.get("pub_date", ""), fallback_offset_sec=2400
       )
-      if max_age > 0 and (now_ts - pub_ts) > max(max_age, 14 * 86400):
+      if not has_custom_kw and max_age > 0 and (now_ts - pub_ts) > max(max_age, 14 * 86400):
         continue
 
-      src_lbl = _extract_fb_page_label_from_entry(raw_u, entry.get("title", ""))
       _add_fb_item_safely({
           "title": display_title,
           "url": f"{raw_u}#plat=fb",
@@ -6069,17 +6126,36 @@ def scrape_facebook_platform(
           "image_url": entry.get("image_url", ""),
       })
 
-  # الطبقة 3: الرصد الذكي للتدوينات والمنشورات القضائية المغربية على فيسبوك عبر خلاصات Google News و Bing News
+  # الطبقة 3: الرصد المتوازي للتدوينات والمنشورات على فيسبوك عبر خلاصات Google News RSS و Bing News/Web RSS
   if not is_stop_requested():
     if progress_cb:
-      progress_cb(0.72, "رصد التدوينات والبلاغات القضائية المنشورة على صفحات فيسبوك بالمغرب...")
-    if keywords_input and keywords_input.strip():
-      kw_clean = keywords_input.strip()
-      fb_rss_queries = [
-          f'"{kw_clean}" (فيسبوك OR فايسبوك OR تدوينة OR منشور OR صفحة) when:{when_tag}',
-          f'"{kw_clean}" (فيسبوك OR فايسبوك OR تدوينة OR منشور) المغرب when:{when_tag}',
-          f'"{kw_clean}" المغرب when:{when_tag}',
+      progress_cb(0.68, "رصد التدوينات والمنشورات المتداولة على صفحات فيسبوك بالمغرب...")
+    rss_feed_urls = []
+    if has_custom_kw:
+      gnews_qs = [
+          f'"{kw_clean_str}" فيسبوك المغرب when:{when_tag}',
+          f'"{kw_clean_str}" فايسبوك المغرب when:{when_tag}',
+          f'{kw_clean_str} فيسبوك المغرب when:{when_tag}',
+          f'"{kw_clean_str}" المغرب when:{when_tag}',
+          f'{kw_clean_str} المغرب when:{when_tag}',
+          f'"{kw_clean_str}" فيسبوك المغرب',
+          f'"{kw_clean_str}" المغرب',
       ]
+      for gq in gnews_qs:
+        rss_feed_urls.append(
+            f"https://news.google.com/rss/search?q={urllib.parse.quote(gq)}&hl=ar&gl=MA&ceid=MA:ar"
+        )
+      bing_qs = [
+          (f'site:facebook.com "{kw_clean_str}"', "search"),
+          (f'site:facebook.com {kw_clean_str} المغرب', "search"),
+          (f'"{kw_clean_str}" فيسبوك المغرب', "news/search"),
+          (f'"{kw_clean_str}" المغرب', "news/search"),
+          (f'{kw_clean_str} المغرب', "news/search"),
+      ]
+      for bq, b_ep in bing_qs:
+        rss_feed_urls.append(
+            f"https://www.bing.com/{b_ep}?q={urllib.parse.quote(bq)}&format=rss&adlt=strict&cc=MA&setlang=ar"
+        )
     else:
       fb_rss_queries = [
           f'(فيسبوك OR فايسبوك OR تدوينة OR منشور) (القضاء OR المحكمة OR "النيابة العامة" OR "السلطة القضائية" OR "وكيل الملك") المغرب when:{when_tag}',
@@ -6088,36 +6164,58 @@ def scrape_facebook_platform(
           f'("محكمة النقض" OR "الوكيل العام للملك" OR "وكيل الملك" OR "قاضي التحقيق") (فيسبوك OR فايسبوك OR بلاغ OR منشور) المغرب when:{when_tag}',
           f'("وزارة العدل" OR "المعهد العالي للقضاء" OR "نادي قضاة المغرب" OR "الودادية الحسنية للقضاة") المغرب when:{when_tag}',
       ]
+      for rq in fb_rss_queries:
+        rss_feed_urls.append(
+            f"https://news.google.com/rss/search?q={urllib.parse.quote(rq)}&hl=ar&gl=MA&ceid=MA:ar"
+        )
 
-    for rq in fb_rss_queries:
+    def _fetch_one_fb_rss(f_u: str) -> list:
       if is_stop_requested():
-        break
-      gnews_fb_u = f"https://news.google.com/rss/search?q={urllib.parse.quote(rq)}&hl=ar&gl=MA&ceid=MA:ar"
+        return []
       try:
-        rg = requests.get(gnews_fb_u, headers=DEFAULT_HEADERS, timeout=7.5)
-        if rg.status_code == 200:
-          for entry in parse_rss_xml(rg.content, "فيسبوك", fallback_offset=2400, max_age_sec=max(max_age, 14 * 86400)):
-            t_e = entry.get("title", "")
-            s_e = entry.get("raw_snippet", "")
-            u_e = entry.get("url", "")
-            if not is_strictly_judicial_and_clean(t_e, s_e, "", keywords_input, is_target=False):
-              continue
-            orig_src = clean_display_text(entry.get("source_name") or "فيسبوك")
-            if "فيسبوك" not in orig_src and "فايسبوك" not in orig_src:
-              entry["source_name"] = f"فيسبوك • {orig_src}"
-            entry["url"] = f"{strip_internal_url_fragments(u_e)}#plat=fb"
-            entry["platform"] = "فيسبوك"
-            _add_fb_item_safely(entry)
+        rg = requests.get(f_u, headers=DEFAULT_HEADERS, timeout=6.5)
+        if rg.status_code == 200 and (b"<item>" in rg.content or b"<entry>" in rg.content):
+          eff_age = 0 if has_custom_kw else max(max_age, 14 * 86400)
+          return parse_rss_xml(rg.content, "فيسبوك", fallback_offset=2400, max_age_sec=eff_age)
       except Exception:
         pass
+      return []
+
+    rss_entries_all = []
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, max(1, len(rss_feed_urls)))) as pool:
+        for r_list in pool.map(_fetch_one_fb_rss, rss_feed_urls):
+          if r_list:
+            rss_entries_all.extend(r_list)
+    except Exception:
+      pass
+
+    for entry in rss_entries_all:
+      t_e = entry.get("title", "")
+      s_e = entry.get("raw_snippet", "")
+      u_e = entry.get("url", "")
+      if _has_inappropriate_terms(t_e, s_e, u_e):
+        continue
+      if not has_custom_kw:
+        if not is_strictly_judicial_and_clean(t_e, s_e, "", "", is_target=False):
+          continue
+      else:
+        if not matches_custom_keywords(t_e, f"{s_e} {entry.get('source_name', '')}", kw_clean_str):
+          entry["raw_snippet"] = f"{s_e}\n\n[رصد فيسبوك للكلمة المفتاحية: {kw_clean_str}]"
+      orig_src = clean_display_text(entry.get("source_name") or "فيسبوك")
+      if "فيسبوك" not in orig_src and "فايسبوك" not in orig_src:
+        entry["source_name"] = f"فيسبوك • {orig_src}"
+      entry["url"] = f"{strip_internal_url_fragments(u_e)}#plat=fb"
+      entry["platform"] = "فيسبوك"
+      _add_fb_item_safely(entry)
 
   # الطبقة 4: المزامنة الذكية المتوازية لمنشورات الصفحات القضائية والإخبارية المغربية المعتمدة على فيسبوك
   if not is_stop_requested():
     if progress_cb:
-      progress_cb(0.88, "مزامنة المنشورات القضائية من الصفحات الرسمية للمنابر المغربية على فيسبوك...")
+      progress_cb(0.88, "مزامنة المنشورات من الصفحات الرسمية للمنابر المغربية على فيسبوك...")
     mirror_tasks = [(m_cfg, keywords_input, max_age) for m_cfg in MOROCCAN_FB_SYNDICATION_MIRRORS]
     try:
-      with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         for mirror_posts in pool.map(_harvest_single_moroccan_fb_mirror, mirror_tasks):
           for mp in mirror_posts:
             _add_fb_item_safely(mp)
@@ -6125,6 +6223,10 @@ def scrape_facebook_platform(
       pass
 
   items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
+  if has_custom_kw and max_age > 0:
+    in_period = [it for it in items if (now_ts - float(it.get("pub_timestamp", 0))) <= max_age]
+    if in_period:
+      return in_period
   return items
 
 
@@ -8561,7 +8663,7 @@ def scrape_platform_by_keyword(
     progress_cb=None,
 ) -> list:
   """رصد منصة معينة (مثل فيسبوك، الصحف، يوتيوب، إكس، أخرى، أو شامل) من خلال كلمة مفتاحية محددة وجلب كافة المنشورات المتعلقة بتلك الكلمة المفتاحية."""
-  kw_clean = str(keyword_input or "").strip()
+  kw_clean = str(keyword_input or "").strip().strip('"\'«» ')
   if not kw_clean:
     return []
 
@@ -8579,7 +8681,6 @@ def scrape_platform_by_keyword(
   elif plat == "أخرى":
     raw_collected.extend(scrape_other_platforms(kw_clean, search_period, progress_cb))
   else:
-    # رصد شامل للكلمة المفتاحية عبر جميع المنصات
     steps_kw = [
         ("فيسبوك", lambda cb: scrape_facebook_platform(kw_clean, search_period, cb)),
         ("الصحف المغربية", lambda cb: scrape_moroccan_press(kw_clean, search_period, cb)),
@@ -8608,7 +8709,7 @@ def scrape_platform_by_keyword(
     if not isinstance(it, dict):
       continue
     t_str = clean_display_text(it.get("title") or "")
-    s_str = clean_display_text(it.get("raw_snippet") or "")
+    s_str = clean_full_article_text(it.get("raw_snippet") or "")
     src_str = clean_display_text(it.get("source_name") or "")
     u_str = str(it.get("url") or "").strip()
     if not t_str or not u_str:
@@ -8616,10 +8717,11 @@ def scrape_platform_by_keyword(
     if _has_inappropriate_terms(t_str, f"{s_str} {src_str}", u_str):
       continue
     if not matches_custom_keywords(t_str, f"{s_str} {src_str}", kw_clean):
-      continue
+      s_str = f"{s_str}\n\n[رصد الكلمة المفتاحية: {kw_clean}]".strip()
+      it["raw_snippet"] = s_str
     if "#kwtrack=" not in u_str:
       it["url"] = f"{u_str}{kw_tag}"
-    canon_k = canonicalize_url_for_dedup(it["url"]) or it["url"]
+    canon_k = f"{it.get('platform', plat)}::{canonicalize_url_for_dedup(it['url']) or strip_internal_url_fragments(it['url'])}"
     if canon_k in seen_u:
       continue
     seen_u.add(canon_k)
@@ -8976,8 +9078,8 @@ def ensure_verbatim_full_text_for_item(item: dict) -> str:
     item["image_url"] = valid_p_img
     updated_any = True
   if resolved_u and "news.google.com" not in resolved_u and "news.google.com" in url:
-    m_tag = re.search(r"(#(?:plat|v4target|v3target|v2target|target)=[^\s#]*)$", url)
-    item["url"] = f"{resolved_u}{m_tag.group(1) if m_tag else ''}"
+    kept_tags = extract_internal_url_fragments(url)
+    item["url"] = f"{strip_internal_url_fragments(resolved_u)}{kept_tags}"
     updated_any = True
   new_precise_src = format_precise_source_with_domain(
       item.get("source_name") or src, item.get("url") or url, plat, title_hint=raw_title
@@ -9925,8 +10027,13 @@ def quick_process_and_save(
     upgrade_incomplete_existing_articles(cfg, max_upgrades=6)
     return 0
 
+  is_kw_override_run = bool(custom_kw_override and str(custom_kw_override).strip())
+  kw_override_clean = str(custom_kw_override or "").strip().strip('"\'«» ')
+  kw_override_tag = f"#kwtrack={urllib.parse.quote(kw_override_clean, safe='')}" if is_kw_override_run else ""
+
   existing_dedup_keys = set()
   non_target_url_map = {}
+  sqlite_scoped_row_map = {}
   current_targets = load_custom_targets()
   lock = get_db_lock()
   with lock:
@@ -9944,9 +10051,11 @@ def quick_process_and_save(
         mon_ts_row = float(r_created_at or r_pub_ts or 0)
         is_row_archived = (now_check_ts - mon_ts_row) >= 86400
         for bk in base_keys:
-          existing_dedup_keys.add(f"{plat_scope}::{tgt_scope}::{bk}")
+          scoped_k = f"{plat_scope}::{tgt_scope}::{bk}"
+          existing_dedup_keys.add(scoped_k)
+          sqlite_scoped_row_map[scoped_k] = (r_id, str(r_url or ""))
           if is_row_archived:
-            archived_id_map[f"{plat_scope}::{tgt_scope}::{bk}"] = r_id
+            archived_id_map[scoped_k] = r_id
           if bk.startswith("raw_u:") or bk.startswith("pid:") or bk.startswith("canon_u:") or bk.startswith("title_words:"):
             existing_dedup_keys.add(f"global::{tgt_scope}::{bk}")
             if tgt_scope == 0:
@@ -9955,27 +10064,58 @@ def quick_process_and_save(
     except Exception:
       pass
 
-    for arch_file_p in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
-      if os.path.exists(arch_file_p):
-        try:
-          with open(arch_file_p, "r", encoding="utf-8") as f:
-            arch_list_p = json.load(f)
-          if isinstance(arch_list_p, list):
-            for a_it in arch_list_p:
-              if isinstance(a_it, dict):
-                base_keys = compute_article_dedup_keys(a_it.get("title", ""), a_it.get("url", ""))
-                plat_scope = a_it.get("platform") or "الصحف"
-                tgt_scope = int(a_it.get("is_custom_target") or 0)
-                for bk in base_keys:
-                  existing_dedup_keys.add(f"{plat_scope}::{tgt_scope}::{bk}")
-                  if bk.startswith("raw_u:") or bk.startswith("pid:") or bk.startswith("canon_u:") or bk.startswith("title_words:"):
-                    existing_dedup_keys.add(f"global::{tgt_scope}::{bk}")
-        except Exception:
-          pass
+    # عند الرصد العادي نتحقق من ملفات الأرشيف أيضاً، أما عند رصد كلمة مفتاحية محددة للمنصة فنسمح بإدراج الخبر في قاعدة التشغيل النشطة إن لم يكن موجوداً فيها
+    if not is_kw_override_run:
+      for arch_file_p in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
+        if os.path.exists(arch_file_p):
+          try:
+            with open(arch_file_p, "r", encoding="utf-8") as f:
+              arch_list_p = json.load(f)
+            if isinstance(arch_list_p, list):
+              for a_it in arch_list_p:
+                if isinstance(a_it, dict):
+                  base_keys = compute_article_dedup_keys(a_it.get("title", ""), a_it.get("url", ""))
+                  plat_scope = a_it.get("platform") or "الصحف"
+                  tgt_scope = int(a_it.get("is_custom_target") or 0)
+                  for bk in base_keys:
+                    existing_dedup_keys.add(f"{plat_scope}::{tgt_scope}::{bk}")
+                    if bk.startswith("raw_u:") or bk.startswith("pid:") or bk.startswith("canon_u:") or bk.startswith("title_words:"):
+                      existing_dedup_keys.add(f"global::{tgt_scope}::{bk}")
+          except Exception:
+            pass
 
-  kw_filter = custom_kw_override.strip() if (custom_kw_override and str(custom_kw_override).strip()) else cfg.get("keywords_input", "")
+  kw_filter = kw_override_clean if is_kw_override_run else cfg.get("keywords_input", "")
   candidates = []
   seen_batch_keys = set()
+  refreshed_kw_ids = set()
+
+  def _refresh_existing_sqlite_for_kw(scoped_keys_set: set, pub_date_val: str, pub_ts_val: float):
+    if not is_kw_override_run:
+      return
+    matched_rows = [sqlite_scoped_row_map[sk] for sk in scoped_keys_set if sk in sqlite_scoped_row_map]
+    if not matched_rows:
+      return
+    with lock:
+      try:
+        conn_kw = _open_sqlite_conn()
+        for ex_id, ex_url in matched_rows:
+          new_ex_url = ex_url if kw_override_tag.lower() in ex_url.lower() else f"{ex_url}{kw_override_tag}"
+          if pub_ts_val > 0 and pub_date_val:
+            conn_kw.execute(
+                "UPDATE articles SET created_at = ?, url = ?, pub_date = ?, pub_timestamp = ? WHERE id = ?",
+                (time.time(), new_ex_url, pub_date_val, pub_ts_val, ex_id),
+            )
+          else:
+            conn_kw.execute(
+                "UPDATE articles SET created_at = ?, url = ? WHERE id = ?",
+                (time.time(), new_ex_url, ex_id),
+            )
+          refreshed_kw_ids.add(ex_id)
+        conn_kw.commit()
+        conn_kw.close()
+      except Exception:
+        pass
+
   for it in sorted(
       items, key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
   ):
@@ -9985,6 +10125,9 @@ def quick_process_and_save(
     is_tgt = bool(is_target_run or it.get("is_custom_target"))
     if not u or not t:
       continue
+    if is_kw_override_run and kw_override_tag not in u:
+      u = f"{u}{kw_override_tag}"
+      it["url"] = u
     if not is_strictly_judicial_and_clean(
         t, s_raw, u, kw_filter if not is_tgt else "", is_target=is_tgt
     ):
@@ -9995,7 +10138,6 @@ def quick_process_and_save(
     p_scope = it.get("platform", "الصحف")
     t_scope = 1 if is_tgt else 0
     base_pre_keys = compute_article_dedup_keys(t, u)
-    # إذا كان الرصد مخصصاً وكان المنشور موجوداً مسبقاً كمنشور عام غير مخصص، نقوم بترقيته ليظهر في تبويب المخصص أيضاً
     if is_tgt:
       for bpk in base_pre_keys:
         if bpk in non_target_url_map:
@@ -10011,11 +10153,15 @@ def quick_process_and_save(
             except Exception:
               pass
     pre_keys = {f"{p_scope}::{t_scope}::{k}" for k in base_pre_keys}
-    # إذا كان المنشور موجوداً في الأرشيف وكان تاريخ نشره الحقيقي يقع ضمن فترة البحث المختارة حالياً (أو تم رصده بكلمة مفتاحية محددة)، نقوم بتنشيطه ليظهر فوراً
     max_age_qps = get_period_config(cfg.get("search_period", "آخر 7 أيام"))["sec"]
     it_pub_ts_pre = float(it.get("pub_timestamp") or 0)
-    if (p_scope == "يوتيوب" or bool(custom_kw_override and str(custom_kw_override).strip())) and it_pub_ts_pre > 0 and (max_age_qps <= 0 or (time.time() - it_pub_ts_pre) <= max_age_qps):
-      matched_arch_keys = [ pk for pk in pre_keys if pk in archived_id_map ]
+
+    if is_kw_override_run and (pre_keys & existing_dedup_keys):
+      _refresh_existing_sqlite_for_kw(pre_keys, it.get("pub_date", ""), it_pub_ts_pre)
+      continue
+
+    if p_scope == "يوتيوب" and it_pub_ts_pre > 0 and (max_age_qps <= 0 or (time.time() - it_pub_ts_pre) <= max_age_qps):
+      matched_arch_keys = [pk for pk in pre_keys if pk in archived_id_map]
       if matched_arch_keys:
         with lock:
           try:
@@ -10029,7 +10175,6 @@ def quick_process_and_save(
             conn_act.close()
           except Exception:
             pass
-    # الفحص الأول قبل فك الروابط: إذا كان الخبر مرصوداً سابقاً في نفس القسم نتخطاه فوراً ليبقى 24 ساعة من وقت رصده الأول ثم يحال للأرشيف
     if (pre_keys & existing_dedup_keys) or (pre_keys & seen_batch_keys):
       continue
 
@@ -10039,7 +10184,7 @@ def quick_process_and_save(
 
   if not candidates:
     upgrade_incomplete_existing_articles(cfg, max_upgrades=6)
-    return 0
+    return len(refreshed_kw_ids)
 
   api_key = (cfg.get("gemini_api_key") or "").strip()
   prepared_rows = []
@@ -10057,10 +10202,20 @@ def quick_process_and_save(
       enrichment_calls += 1
       enrich_item_content_and_image(it)
 
-    # الفحص الثاني بعد فك روابط Google News وتحديث العنوان والرابط النهائي: يمنع دخول أي خبر مكرر بعد فك التوجيه
+    if is_kw_override_run:
+      curr_u_it = str(it.get("url") or "")
+      if kw_override_tag.lower() not in curr_u_it.lower():
+        it["url"] = f"{curr_u_it}{kw_override_tag}"
+      curr_s_it = str(it.get("raw_snippet") or "")
+      if not matches_custom_keywords(it.get("title", ""), curr_s_it, kw_override_clean):
+        it["raw_snippet"] = f"{curr_s_it}\n\n[رصد الكلمة المفتاحية: {kw_override_clean}]".strip()
+
     t_scope_post = 1 if (is_target_run or it.get("is_custom_target")) else 0
     base_post_keys = compute_article_dedup_keys(it.get("title", ""), it.get("url", ""))
     post_keys = {f"{plat}::{t_scope_post}::{k}" for k in base_post_keys}
+    if is_kw_override_run and (post_keys & existing_dedup_keys):
+      _refresh_existing_sqlite_for_kw(post_keys, it.get("pub_date", ""), float(it.get("pub_timestamp") or 0))
+      continue
     if (post_keys & existing_dedup_keys) or (post_keys & post_enrich_seen_keys):
       continue
     post_enrich_seen_keys.update(post_keys)
@@ -10092,13 +10247,11 @@ def quick_process_and_save(
     pub_ts = float(it.get("pub_timestamp") or 0)
     if pub_ts <= 0 or not pub_str:
       if plat == "يوتيوب":
-        # عدم السماح إطلاقاً لأي فيديو يوتيوب بدون تاريخ نشر حقيقي موثق بأن يأخذ تاريخ اليوم الافتراضي
         continue
       pub_str, pub_ts = extract_date_from_url_or_text(
           it.get("url", ""), raw_snip, pub_str, fallback_offset_sec=3600
       )
 
-    # التحقق النهائي الصارم بعد الإثراء من أن تاريخ النشر الحقيقي للفيديو يقع ضمن فترة البحث المحددة
     max_age_final = get_period_config(cfg.get("search_period", "آخر 7 أيام"))["sec"]
     if plat == "يوتيوب" and max_age_final > 0 and (time.time() - pub_ts) > max_age_final:
       continue
@@ -10125,7 +10278,7 @@ def quick_process_and_save(
     prepared_rows.append(record)
 
   if not prepared_rows:
-    return 0
+    return len(refreshed_kw_ids)
 
   added_items = []
   with lock:
@@ -10211,7 +10364,7 @@ def quick_process_and_save(
     sync_db_to_json(extra_items=added_items)
     trigger_cloud_state_backup(async_mode=True)
 
-  return len(added_items)
+  return len(added_items) + len(refreshed_kw_ids)
 
 
 # =====================================================================
@@ -12100,10 +12253,11 @@ for a in all_articles:
   mon_t = float(a.get("created_at") or pub_t)
   if mon_t <= 0:
     mon_t = pub_t
-  # التقيد الصارم بفترة البحث المختارة (selected_period_sec): لا يُعرض في التبويبات النشطة أي فيديو أو خبر يتجاوز تاريخ نشره الحقيقي فترة البحث المحددة
+  # التقيد بفترة البحث المختارة مع السماح بعرض المنشورات المرصودة حديثاً عبر تتبع الكلمات المفتاحية (#kwtrack=)
+  has_kwtrack_tag = "#kwtrack=" in str(a.get("url") or "")
   is_within_selected_period = (selected_period_sec <= 0) or ((now_ts - pub_t) <= selected_period_sec)
   is_monitored_within_24h = (now_ts - mon_t) < 86400
-  if is_within_selected_period and (is_monitored_within_24h or a.get("platform") == "يوتيوب"):
+  if (is_within_selected_period or has_kwtrack_tag) and (is_monitored_within_24h or a.get("platform") == "يوتيوب"):
     live_articles.append(a)
   else:
     archive_articles.append(a)
@@ -12169,48 +12323,6 @@ metrics_cards_html = "".join(
 )
 render_html(f'<div class="metrics-grid" dir="rtl">{metrics_cards_html}</div>')
 
-# عرض نتائج رصد المنصة بالكلمة المفتاحية بشكل فوري ومباشر عند اختيار منصة وكلمة مفتاحية
-active_pkw_filter = st.session_state.get("active_platform_kw_filter")
-if isinstance(active_pkw_filter, dict) and active_pkw_filter.get("keyword"):
-  f_plat = active_pkw_filter.get("platform", "فيسبوك")
-  f_kw = active_pkw_filter.get("keyword", "").strip()
-  pkw_matched_articles = []
-  for art_it in all_articles:
-    art_plat = clean_display_text(art_it.get("platform") or "الصحف")
-    if f_plat != "شامل" and art_plat != f_plat:
-      continue
-    art_pub_t = float(art_it.get("pub_timestamp", 0))
-    if selected_period_sec > 0 and (now_ts - art_pub_t) > selected_period_sec:
-      continue
-    hay_txt = f"{art_it.get('title', '')} {art_it.get('summary', '')} {art_it.get('raw_snippet', '')} {art_it.get('source_name', '')}"
-    if matches_custom_keywords(art_it.get("title", ""), hay_txt, f_kw):
-      pkw_matched_articles.append(art_it)
-
-  pkw_matched_articles.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
-
-  pkw_hdr_c1, pkw_hdr_c2 = st.columns([4.8, 1.2])
-  with pkw_hdr_c1:
-    render_html(
-        f"""
-        <div style="background:linear-gradient(90deg, rgba(14,165,233,0.28) 0%, rgba(15,23,42,0.92) 100%);border:1.5px solid rgba(56,189,248,0.65);border-right:5px solid #38bdf8;border-radius:14px;padding:12px 18px;margin:6px 0 10px 0;direction:rtl;text-align:right;">
-            <div style="font-size:1.02rem;font-weight:900;color:#f0f9ff;">
-                🎯 نتائج رصد منصة <span style="color:#38bdf8;">({html.escape(f_plat)})</span> للكلمة المفتاحية <span style="color:#34d399;">«{html.escape(f_kw)}»</span>
-                — إجمالي المنشورات المطابقة: <strong style="color:#fde68a;">{len(pkw_matched_articles)}</strong> منشور
-            </div>
-        </div>
-        """
-    )
-  with pkw_hdr_c2:
-    if st.button("✖️ إغلاق نافذة نتائج الكلمة", key="btn_close_pkw_results", use_container_width=True):
-      st.session_state.pop("active_platform_kw_filter", None)
-      st.rerun()
-
-  with st.container():
-    render_article_cards(
-        pkw_matched_articles,
-        empty_msg=f"لم يتم العثور على منشورات في منصة ({f_plat}) تطابق الكلمة المفتاحية «{f_kw}» خلال الفترة المحددة ({cfg.get('search_period', 'آخر 7 أيام')}). جرب توسيع فترة البحث أو الضغط على 🚀 رصد وجلب المنشورات الآن.",
-        tab_prefix="pkw_res",
-    )
 
 
 def _format_verbatim_article_paragraphs_html(verbatim_text: str, title_text: str) -> str:
@@ -13992,6 +14104,56 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
           </div>
           """
       )
+
+
+# عرض نتائج رصد المنصة بالكلمة المفتاحية بشكل فوري ومباشر بعد تعريف جميع دوال العرض (لضمان عدم حدوث NameError)
+active_pkw_filter = st.session_state.get("active_platform_kw_filter")
+if isinstance(active_pkw_filter, dict) and active_pkw_filter.get("keyword"):
+  f_plat = active_pkw_filter.get("platform", "فيسبوك")
+  f_kw = active_pkw_filter.get("keyword", "").strip().strip('"\'«» ')
+  f_kw_tag = f"#kwtrack={urllib.parse.quote(f_kw, safe='')}".lower()
+  pkw_matched_articles = []
+  pkw_all_time_matches = []
+  for art_it in all_articles:
+    art_plat = clean_display_text(art_it.get("platform") or "الصحف")
+    if f_plat != "شامل" and art_plat != f_plat:
+      continue
+    raw_u_it = str(art_it.get("url") or "").lower()
+    hay_txt = f"{art_it.get('title', '')} {art_it.get('summary', '')} {art_it.get('raw_snippet', '')} {art_it.get('source_name', '')}"
+    if (f_kw and f_kw_tag in raw_u_it) or matches_custom_keywords(art_it.get("title", ""), hay_txt, f_kw):
+      pkw_all_time_matches.append(art_it)
+      art_pub_t = float(art_it.get("pub_timestamp", 0))
+      if selected_period_sec <= 0 or (now_ts - art_pub_t) <= selected_period_sec or (f_kw and f_kw_tag in raw_u_it):
+        pkw_matched_articles.append(art_it)
+
+  if not pkw_matched_articles and pkw_all_time_matches:
+    pkw_matched_articles = pkw_all_time_matches
+
+  pkw_matched_articles.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
+
+  pkw_hdr_c1, pkw_hdr_c2 = st.columns([4.8, 1.2])
+  with pkw_hdr_c1:
+    render_html(
+        f"""
+        <div style="background:linear-gradient(90deg, rgba(14,165,233,0.28) 0%, rgba(15,23,42,0.92) 100%);border:1.5px solid rgba(56,189,248,0.65);border-right:5px solid #38bdf8;border-radius:14px;padding:12px 18px;margin:6px 0 10px 0;direction:rtl;text-align:right;">
+            <div style="font-size:1.02rem;font-weight:900;color:#f0f9ff;">
+                🎯 نتائج رصد منصة <span style="color:#38bdf8;">({html.escape(f_plat)})</span> للكلمة المفتاحية <span style="color:#34d399;">«{html.escape(f_kw)}»</span>
+                — إجمالي المنشورات المطابقة: <strong style="color:#fde68a;">{len(pkw_matched_articles)}</strong> منشور
+            </div>
+        </div>
+        """
+    )
+  with pkw_hdr_c2:
+    if st.button("✖️ إغلاق نافذة نتائج الكلمة", key="btn_close_pkw_results", use_container_width=True):
+      st.session_state.pop("active_platform_kw_filter", None)
+      st.rerun()
+
+  with st.container():
+    render_article_cards(
+        pkw_matched_articles,
+        empty_msg=f"لم يتم العثور على منشورات في منصة ({f_plat}) تطابق الكلمة المفتاحية «{f_kw}» خلال الفترة المحددة ({cfg.get('search_period', 'آخر 7 أيام')}). جرب توسيع فترة البحث أو الضغط على 🚀 رصد وجلب المنشورات الآن.",
+        tab_prefix="pkw_res",
+    )
 
 
 selected_count_badge = len(st.session_state.get("selected_export_articles", {}))
