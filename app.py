@@ -61,7 +61,7 @@ DEFAULT_TG_TOKEN = "8806182263:AAFw5HbBup_TRif3FHvZP0QFYj0YPI4mb6c"
 DEFAULT_TG_CHAT_ID = "1357905784"
 PLATFORM_OFFICIAL_NAME = "المرصد القضائي"
 LEGACY_PLATFORM_NAME = "المرصد الوطني للعدالة والقضاء"
-DAEMON_CODE_VERSION = "marsad_qadai_v5_2026_10_20"
+DAEMON_CODE_VERSION = "marsad_qadai_v6_2026_10_21_strict_moroccan_judicial"
 
 GEMINI_MODELS_FALLBACK = [
     "gemini-2.5-flash",
@@ -87,16 +87,13 @@ DEFAULT_JUDICIAL_QUERIES = [
     "المسطرة الجنائية المغرب",
 ]
 
+# مصطلحات قضائية وعدلية مغربية خالصة (تدل بذاتها قطعيّاً على الشأن القضائي والعدلي بالمغرب)
 STRICT_JUDICIAL_UNAMBIGUOUS = [
     "المجلس الأعلى للسلطة القضائية",
     "المجلس الاعلى للسلطة القضائية",
-    "المجلس الأعلى للقضاء",
-    "السلطة القضائية",
-    "الشؤون القضائية",
     "المفتشية العامة للشؤون القضائية",
-    "رئاسة النيابة العامة",
+    "رئاسة النيابة العامة بالمغرب",
     "النيابة العامة بالمغرب",
-    "محكمة النقض",
     "المعهد العالي للقضاء",
     "الودادية الحسنية للقضاة",
     "نادي قضاة المغرب",
@@ -104,11 +101,10 @@ STRICT_JUDICIAL_UNAMBIGUOUS = [
     "عبد النباوي",
     "هشام البلاوي",
     "مولاي الحسن الداكي",
+    "الحسن الداكي",
+    "عبد اللطيف وهبي",
     "الوكيل العام للملك",
     "وكيل الملك",
-    "قاضي التحقيق",
-    "قاضي التطبيق",
-    "قاضي الأحداث",
     "القضاء المغربي",
     "القضاء بالمغرب",
     "القضاء في المغرب",
@@ -118,28 +114,88 @@ STRICT_JUDICIAL_UNAMBIGUOUS = [
     "القضاة في المغرب",
     "قضاة المغرب",
     "قضاة المملكة",
-    "منظومة العدالة",
-    "إصلاح العدالة",
-    "تحديث العدالة",
-    "رقمنة العدالة",
-    "رقمنة المحاكم",
     "المحاكم المغربية",
     "محاكم المملكة",
+    "بوابة المحاكم المغربية",
+    "محكمة النقض بالرباط",
+    "وزارة العدل المغربية",
+    "وزير العدل المغربي",
+    "الفرقة الوطنية للشرطة القضائية",
+]
+
+# مصطلحات قضائية وعدلية وقانونية عامة (يشترط لقبولها توفر سياق مغربي صريح وموثق)
+JUDICIAL_GENERAL_TERMS = [
+    "المجلس الأعلى للقضاء",
+    "السلطة القضائية",
+    "الشؤون القضائية",
+    "رئاسة النيابة العامة",
+    "النيابة العامة",
+    "محكمة النقض",
     "محكمة الاستئناف",
     "المحكمة الابتدائية",
     "المحكمة الإدارية",
     "المحكمة التجارية",
     "المحكمة الدستورية",
+    "المحاكم الإدارية",
+    "المحاكم التجارية",
+    "المحاكم الابتدائية",
+    "محاكم الاستئناف",
+    "قضاء الأسرة",
+    "قسم قضاء الأسرة",
+    "قضاء القرب",
+    "قاضي التحقيق",
+    "قاضي التطبيق",
+    "قاضي الأحداث",
+    "قاضي التوثيق",
+    "المستشار المقرر",
+    "هيئة الحكم",
+    "غرفة الجنايات",
+    "الغرفة الجنائية",
+    "الغرفة الجنحية",
+    "الغرفة المدنية",
+    "الغرفة العقارية",
+    "الغرفة التجارية",
+    "الغرفة الإدارية",
+    "القضاء",
+    "قضائي",
+    "قضائية",
+    "القضائي",
+    "القضائية",
+    "القضاة",
+    "قضاة",
+    "القاضي",
+    "للقضاة",
+    "المحاكم",
+    "محكمة",
+    "العدالة",
+    "عدلي",
+    "عدلية",
+    "منظومة العدالة",
+    "إصلاح العدالة",
+    "تحديث العدالة",
+    "رقمنة العدالة",
+    "رقمنة المحاكم",
+    "وزارة العدل",
+    "وزير العدل",
     "المسطرة الجنائية",
     "المسطرة المدنية",
     "القانون الجنائي",
+    "مدونة الأسرة",
     "التنظيم القضائي",
     "العقوبات البديلة",
     "قانون العقوبات البديلة",
     "الاعتقال الاحتياطي",
+    "السوار الإلكتروني",
+    "الحراسة النظرية",
+    "التحقيق الإعدادي",
+    "المتابعة القضائية",
+    "متابعة قضائية",
+    "حكم قضائي",
+    "أحكام قضائية",
+    "قرار قضائي",
+    "ملف قضائي",
     "الأمن القضائي",
     "النجاعة القضائية",
-    "الاجتهاد القضائية",
     "الاجتهاد القضائي",
     "السنة القضائية",
     "افتتاح السنة القضائية",
@@ -150,39 +206,39 @@ STRICT_JUDICIAL_UNAMBIGUOUS = [
     "استقلال القضاء",
     "استقلالية القضاء",
     "أخلاقيات القضاء",
-]
-
-JUDICIAL_GENERAL_TERMS = [
-    "الشؤون القضائية",
-    "السلطة القضائية",
-    "النيابة العامة",
-    "القضاء",
-    "قضائي",
-    "قضائية",
-    "القضاة",
-    "قضاة",
-    "القاضي",
-    "للقضاة",
-    "المحاكم",
-    "محكمة",
-    "العدالة",
-    "وزارة العدل",
-    "وزير العدل",
-    "هيئة الحكم",
-    "الغرفة الجنائية",
-    "الغرفة الجنحية",
     "هيئة المحامين",
+    "جمعية هيئات المحامين",
+    "نقيب المحامين",
+    "المحامون",
+    "المحامين",
+    "مهنة المحاماة",
     "الضابطة القضائية",
     "الشرطة القضائية",
     "المفوضين القضائيين",
+    "المفوضون القضائيون",
+    "مفوض قضائي",
+    "هيئة العدول",
+    "خطة العدالة",
+    "كتابة الضبط",
+    "هيئة كتابة الضبط",
+    "الخبراء القضائيون",
+    "التراجمة المحلفون",
+    "الموثقون",
+    "هيئة الموثقين",
     "هيئة الدفاع",
     "المحاكمة العادلة",
+    "المحاكمة عن بعد",
+    "السجل العدلي",
+    "السجن المحلي",
 ]
 
+# مؤشرات السياق المغربي الصريحة (تُطابق ككلمات كاملة فقط لمنع أي التباس لفظي مع كلمات عامة)
 MOROCCAN_CONTEXT_TERMS = [
     "المغرب",
     "مغربي",
     "مغربية",
+    "مغاربة",
+    "المغاربة",
     "بالمغرب",
     "المملكة المغربية",
     "الرباط",
@@ -197,7 +253,6 @@ MOROCCAN_CONTEXT_TERMS = [
     "تطوان",
     "القنيطرة",
     "سلا",
-    "العيون",
     "الداخلة",
     "بني ملال",
     "آسفي",
@@ -224,20 +279,28 @@ MOROCCAN_CONTEXT_TERMS = [
     "خنيفرة",
     "جرسيف",
     "تاوريرت",
-    "بركان",
     "سيدي قاسم",
     "سيدي سليمان",
     "بن جرير",
     "اليوسفية",
+    "مدينة العيون",
+    "استئنافية العيون",
+    "ابتدائية العيون",
+    "مدينة بركان",
+    "ابتدائية بركان",
+    "إقليم بركان",
     "عبد النباوي",
-    "وهبي",
-    "البلاوي",
+    "عبد اللطيف وهبي",
+    "هشام البلاوي",
+    "الحسن الداكي",
+    "الداكي",
+    "الوكيل العام للملك",
+    "وكيل الملك",
     "هسبريس",
-    "أخبارنا",
-    "العمق",
-    "كود",
-    "الصباح",
-    "برلمان",
+    "أخبارنا المغربية",
+    "العمق المغربي",
+    "جريدة الصباح",
+    "برلمان كوم",
     "زنقة 20",
     "اليوم 24",
     "الأيام 24",
@@ -246,34 +309,181 @@ MOROCCAN_CONTEXT_TERMS = [
     "أكادير 24",
     "طنجة 24",
     "ناظورسيتي",
-    "snrt",
-    "snrtnews",
-    "2m",
     "القناة الثانية",
     "القناة الأولى",
-    "medi1",
     "مدي 1",
     "ميدي 1",
-    "فبراير",
-    "febrayer",
     "هبة بريس",
-    "hibapress",
-    "le360",
-    "al3omk",
-    "alyaoum24",
-    "madar21",
-    "alayam24",
-    "goud",
-    "akhbarona",
-    "kech24",
-    "tanja24",
-    "agadir24",
-    "chouftv",
     "شوف تيفي",
-    "الدار",
-    "تيلكيل",
-    "الداكي",
 ]
+
+# قائمة صارمة لاستبعاد أخبار التكنولوجيا، مايكروسوفت، تحديثات وأعطال منصة فيسبوك/ميتا، والأخبار الدولية أو الرياضية غير القضائية
+BLOCKED_NON_JUDICIAL_AND_FOREIGN_TERMS = [
+    "مايكروسوفت",
+    "ميكروسوفت",
+    "microsoft",
+    "ويندوز",
+    "windows 10",
+    "windows 11",
+    "office 365",
+    "إكس بوكس",
+    "xbox",
+    "بلايستيشن",
+    "playstation",
+    "آيفون",
+    "iphone",
+    "آيباد",
+    "ipad",
+    "أندرويد",
+    "android",
+    "سامسونج",
+    "samsung",
+    "هواوي",
+    "شاومي",
+    "عطل فيسبوك",
+    "عطل فايسبوك",
+    "توقف فيسبوك",
+    "تحديث فيسبوك",
+    "تحديث تطبيق فيسبوك",
+    "ميزة جديدة في فيسبوك",
+    "ميزة جديدة في واتساب",
+    "تحديث واتساب",
+    "عطل واتساب",
+    "عطل انستغرام",
+    "مارك زوكربيرغ",
+    "زوكربيرغ",
+    "zuckerberg",
+    "شركة ميتا",
+    "أرباح ميتا",
+    "سهم ميتا",
+    "أسهم ميتا",
+    "تطبيق ثريدز",
+    "خوارزمية فيسبوك",
+    "الربح من فيسبوك",
+    "إعلانات فيسبوك",
+    "استرجاع حساب فيسبوك",
+    "تأمين حساب فيسبوك",
+    "القضاء المصري",
+    "محكمة النقض المصرية",
+    "النيابة العامة المصرية",
+    "النائب العام المصري",
+    "مجلس الدولة المصري",
+    "محكمة جنايات القاهرة",
+    "محكمة جنايات الجيزة",
+    "محكمة الأسرة بمصر",
+    "القضاء التونسي",
+    "القضاء الجزائري",
+    "القضاء اللبناني",
+    "القضاء السوري",
+    "القضاء العراقي",
+    "القضاء الأردني",
+    "القضاء الكويتي",
+    "القضاء السوداني",
+    "القضاء الليبي",
+    "القضاء اليمني",
+    "القضاء الإيراني",
+    "السلطة القضائية الإيرانية",
+    "السلطة القضائية في إيران",
+    "المحكمة العليا الأمريكية",
+    "المحكمة العليا الإسرائيلية",
+    "القضاء الإسرائيلي",
+    "القضاء الفرنسي",
+    "القضاء الإسباني",
+    "القضاء البريطاني",
+    "الكنيست",
+    "الكونغرس الأمريكي",
+    "البنتاغون",
+    "دوري أبطال أوروبا",
+    "دوري أبطال أفريقيا",
+    "ريال مدريد",
+    "برشلونة",
+    "مانشستر سيتي",
+    "مانشستر يونايتد",
+    "ليفربول",
+    "توقعات الأبراج",
+    "حظك اليوم",
+]
+
+BLOCKED_NON_JUDICIAL_DOMAINS = (
+    "microsoft.com",
+    "msn.com",
+    "live.com",
+    "office.com",
+    "windows.com",
+    "xbox.com",
+    "apple.com",
+    "about.fb.com",
+    "investor.fb.com",
+    "meta.com",
+    "developers.facebook.com",
+    "techcrunch.com",
+    "theverge.com",
+    "aitnews.com",
+    "unlimit-tech.com",
+    "arageek.com",
+    "youm7.com",
+    "masrawy.com",
+    "elwatannews.com",
+    "shorouknews.com",
+    "almasryalyoum.com",
+    "vetogate.com",
+    "akhbarelyom.com",
+    "elbalad.news",
+    "annahar.com",
+    "echoroukonline.com",
+    "ennaharonline.com",
+    "elkhabar.com",
+    "mosaiquefm.net",
+    "jawharafm.net",
+    "babnet.net",
+    "turess.com",
+    "irna.ir",
+    "tasnimnews.com",
+    "mehrnews.com",
+    "sana.sy",
+    "petra.gov.jo",
+    "spa.gov.sa",
+    "wam.ae",
+    "kuna.net.kw",
+    "qna.org.qa",
+)
+
+MOROCCAN_TRUSTED_MEDIA_DOMAINS = (
+    "hespress.com",
+    "al3omk.com",
+    "alyaoum24.com",
+    "madar21.com",
+    "alayam24.com",
+    "akhbarona.com",
+    "goud.ma",
+    "assabah.ma",
+    "rue20.com",
+    "kech24.com",
+    "agadir24.info",
+    "sabahagadir.com",
+    "tanja24.com",
+    "barlamane.com",
+    "le360.ma",
+    "hibapress.com",
+    "nadorcity.com",
+    "thevoice.ma",
+    "snrtnews.com",
+    "mapexpress.ma",
+    "mapnews.ma",
+    "2m.ma",
+    "medi1tv.com",
+    "aljarida24.ma",
+    "febrayer.com",
+    "lakome2.com",
+    "anfaspress.com",
+    "achtari24.com",
+    "chattpress.com",
+    "alittihad.info",
+    "cspj.ma",
+    "pmp.ma",
+    "justice.gov.ma",
+    "mahakim.ma",
+)
 
 BLOCKED_INAPPROPRIATE_TERMS = [
     "سكس",
@@ -601,7 +811,8 @@ def clean_full_article_text(val: str) -> str:
       if not paragraphs or paragraphs[-1] != line:
         paragraphs.append(line)
   res_full = "\n\n".join(paragraphs).strip()
-  return res_full.replace("المرصد الوطني للعدالة والقضاء", "المرصد القضائي")
+  res_full = re.sub(r"\s*\[(?:رصد فيسبوك|رصد)[^\]]*الكلمة المفتاحية:[^\]]*\]", "", res_full)
+  return res_full.replace("المرصد الوطني للعدالة والقضاء", "المرصد القضائي").strip()
 
 
 def _arabic_token_matches_in_text(tok: str, norm_text: str) -> bool:
@@ -668,6 +879,7 @@ def clean_display_text(val: str) -> str:
   txt = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]", "", txt)
   txt = re.sub(r"<[^>]+>", " ", txt)
   txt = re.sub(r"[\r\n\t]+", " ", txt)
+  txt = re.sub(r"\[(?:رصد فيسبوك|رصد)[^\]]*الكلمة المفتاحية:[^\]]*\]", " ", txt)
   txt = re.sub(r"\s+", " ", txt).strip()
   return txt.replace("المرصد الوطني للعدالة والقضاء", "المرصد القضائي")
 
@@ -1138,6 +1350,79 @@ def is_summary_just_title(title: str, summary: str) -> bool:
   return False
 
 
+_MOROCCAN_FB_OFFICIAL_HANDLES = {
+    "pmpmaroc",
+    "cspj.ma",
+    "justice.gov.ma",
+    "hespress",
+    "al3omk",
+    "alyaoum24",
+    "madar21com",
+    "alayam24",
+    "goudmag",
+    "akhbarona.page",
+    "rue20.ma",
+    "kech24",
+    "tanja24",
+    "barlamane",
+    "agadir24",
+}
+
+
+def _contains_whole_arabic_phrase(norm_text: str, phrase: str) -> bool:
+  """التحقق الصارم من وجود المصطلح أو اسم المدينة ككلمة كاملة مستقلة في النص المطبّع (وليس كجزء من كلمة أخرى مثل فاس في فاسد أو سلا في سلاح)."""
+  norm_p = normalize_arabic_for_dedup(phrase)
+  if not norm_p:
+    return False
+  if " " in norm_p:
+    if re.search(rf"(?<![\u0600-\u06FFa-z0-9]){re.escape(norm_p)}(?![\u0600-\u06FFa-z0-9])", norm_text):
+      return True
+    first_w, rest_w = norm_p.split(" ", 1)
+    first_stem = re.sub(r"^(?:وال|بال|لل|فال|كال|ال)", "", first_w)
+    if len(first_stem) >= 3:
+      pat_multi = rf"(?<![\u0600-\u06FFa-z0-9])(?:ال|وال|بال|لل|فال|كال|و|ف|ب|ل)?{re.escape(first_stem)}\s+{re.escape(rest_w)}(?![\u0600-\u06FFa-z0-9])"
+      if re.search(pat_multi, norm_text):
+        return True
+    return False
+  stem = re.sub(r"^(?:وال|بال|لل|فال|كال|ال)", "", norm_p)
+  if len(stem) < 2:
+    return False
+  pat = rf"(?<![\u0600-\u06FFa-z0-9])(?:ال|وال|بال|لل|فال|كال|و|ف|ب|ل)?{re.escape(stem)}(?![\u0600-\u06FFa-z0-9])"
+  return bool(re.search(pat, norm_text))
+
+
+def has_authentic_moroccan_context(title: str, snippet: str = "", url: str = "") -> bool:
+  """التحقق الدقيق من أن الخبر أو المنشور يرتبط فعلياً بالمغرب (مؤسسة قضائية مغربية، أو مدينة مغربية ككلمة كاملة، أو منبر إعلامي مغربي معتمد)."""
+  u_unwrapped = clean_social_post_url(url) if url else ""
+  u_low = u_unwrapped.lower()
+  dom = _extract_clean_domain(u_unwrapped)
+
+  if dom:
+    if dom.endswith(".ma") or any(dom == md or dom.endswith("." + md) for md in MOROCCAN_TRUSTED_MEDIA_DOMAINS):
+      return True
+    if "facebook.com" in dom:
+      try:
+        p_parts = [urllib.parse.unquote(x).strip().lower() for x in urllib.parse.urlparse(u_unwrapped).path.strip("/").split("/") if x.strip()]
+        if p_parts and p_parts[0] in _MOROCCAN_FB_OFFICIAL_HANDLES:
+          return True
+      except Exception:
+        pass
+
+  norm_combined = normalize_arabic_for_dedup(f"{title or ''} {snippet or ''}")
+  if not norm_combined:
+    return False
+
+  for term in STRICT_JUDICIAL_UNAMBIGUOUS:
+    if _contains_whole_arabic_phrase(norm_combined, term):
+      return True
+
+  for m_term in MOROCCAN_CONTEXT_TERMS:
+    if _contains_whole_arabic_phrase(norm_combined, m_term):
+      return True
+
+  return False
+
+
 def is_strictly_judicial_and_clean(
     title: str,
     snippet: str = "",
@@ -1145,6 +1430,7 @@ def is_strictly_judicial_and_clean(
     keywords_input: str = "",
     is_target: bool = False,
 ) -> bool:
+  """الفلتر القضائي المغربي الصارم: يضمن جلب الأخبار والمنشورات ذات البعد القضائي والعدلي التي تهم المغرب حصراً، ويستبعد أخبار التكنولوجيا وميكروسوفت وفيسبوك كمنصة والأخبار الدولية والعامة."""
   t_clean = clean_display_text(title)
   s_clean = clean_display_text(snippet)
   u_clean = str(url or "").lower()
@@ -1156,13 +1442,35 @@ def is_strictly_judicial_and_clean(
     if bad_word in combined_with_url:
       return False
 
-  if len(t_clean) < 3 and len(s_clean) < 3:
+  if len(t_clean) < 5 and len(s_clean) < 5:
     return False
 
-  # رفض أي رابط لمنصات التواصل الاجتماعي يوجه إلى الصفحة العامة أو القناة بدلاً من المنشور/الفيديو بعينه
+  # 1) حظر صارم لروابط التكنولوجيا وميكروسوفت وصفحات المساعدة/السياسات الخاصة بفيسبوك والمواقع الأجنبية غير المغربية
   if url:
     u_unwrapped = clean_social_post_url(url)
-    u_dom = urllib.parse.urlparse(u_unwrapped).netloc.lower()
+    u_unwrapped_low = u_unwrapped.lower()
+    u_dom = _extract_clean_domain(u_unwrapped)
+    if any(u_dom == bd or u_dom.endswith("." + bd) for bd in BLOCKED_NON_JUDICIAL_DOMAINS):
+      return False
+    if any(
+        bad_fb_p in u_unwrapped_low
+        for bad_fb_p in (
+            "facebook.com/help",
+            "facebook.com/legal",
+            "facebook.com/policies",
+            "facebook.com/privacy",
+            "facebook.com/business",
+            "facebook.com/ads",
+            "facebook.com/gaming",
+            "facebook.com/marketplace",
+            "developers.facebook.com",
+            "about.fb.com",
+            "support.microsoft.com",
+            "go.microsoft.com",
+            "learn.microsoft.com",
+        )
+    ):
+      return False
     if any(
         d in u_dom
         for d in [
@@ -1178,7 +1486,14 @@ def is_strictly_judicial_and_clean(
       if is_target and not is_direct_social_post_url(u_unwrapped, "فيسبوك"):
         return False
 
-  # إذا كان المنشور مرصوداً عبر ميزة تتبع كلمة مفتاحية على منصة معينة (#kwtrack=...)، نتحقق من مطابقته للكلمة المفتاحية ونقبله فوراً
+  # 2) حظر صارم لأخبار التكنولوجيا وميكروسوفت وتحديثات/أعطال منصة فيسبوك والأخبار الدولية غير المغربية
+  for non_jud_term in BLOCKED_NON_JUDICIAL_AND_FOREIGN_TERMS:
+    nj_low = non_jud_term.lower()
+    nj_norm = normalize_arabic_for_dedup(non_jud_term)
+    if nj_low in combined or (nj_norm and _contains_whole_arabic_phrase(norm_combined, non_jud_term)):
+      return False
+
+  # 3) استخراج الكلمة المفتاحية المتتبعة (#kwtrack=...) إن وجدت والتحقق الصارم من وجودها الفعلي في النص
   m_kwtrack = re.search(r"#kwtrack=([^&#\s]+)", str(url or ""))
   if m_kwtrack and not (keywords_input and str(keywords_input).strip()):
     try:
@@ -1193,50 +1508,27 @@ def is_strictly_judicial_and_clean(
     if not matches_custom_keywords(t_clean, s_clean, keywords_input):
       return False
 
-  # بالنسبة للرصد المخصص أو عند تحديد كلمة مفتاحية صريحة من طرف المستخدم، نعتمد مطابقة الكلمة المفتاحية وسلامة المحتوى
+  # بالنسبة للرصد المخصص (القنوات والصفحات التي أضافها المستخدم يدوياً في قائمة الرصد المخصص)
   if is_target:
     return True
 
-  if has_explicit_kw:
-    arabic_chars_kw = re.findall(r"[\u0600-\u06FF]", f"{t_clean} {s_clean}")
-    if len(arabic_chars_kw) >= 5:
-      return True
-
   arabic_chars = re.findall(r"[\u0600-\u06FF]", f"{t_clean} {s_clean}")
-  if len(arabic_chars) < 6:
+  if len(arabic_chars) < 8:
     return False
 
+  # 4) التحقق الإلزامي الصارم من توفر (البعد القضائي والعدلي) + (الارتباط بالمغرب حصراً) حتى في حال البحث بكلمة مفتاحية!
   for term in STRICT_JUDICIAL_UNAMBIGUOUS:
-    if term.lower() in combined:
+    if _contains_whole_arabic_phrase(norm_combined, term):
       return True
-    norm_term = normalize_arabic_for_dedup(term)
-    if norm_term and norm_term in norm_combined:
-      return True
-    # دعم اللواصق العربية المتصلة بأول كلمة في المصطلح القضائي (مثل: للمجلس الأعلى للسلطة القضائية / بالسلطة القضائية / للشؤون القضائية)
-    if norm_term.startswith("ال") and len(norm_term) >= 6:
-      stem_term = norm_term[2:]
-      if stem_term in norm_combined:
-        return True
 
   has_general_judicial = False
   for term in JUDICIAL_GENERAL_TERMS:
-    if term.lower() in combined:
-      has_general_judicial = True
-      break
-    norm_g = normalize_arabic_for_dedup(term)
-    if norm_g and (norm_g in norm_combined or (norm_g.startswith("ال") and len(norm_g) >= 5 and norm_g[2:] in norm_combined)):
+    if _contains_whole_arabic_phrase(norm_combined, term):
       has_general_judicial = True
       break
 
-  if has_general_judicial:
-    has_morocco_ctx = (
-        any(m.lower() in combined_with_url for m in MOROCCAN_CONTEXT_TERMS)
-        or any(normalize_arabic_for_dedup(m) in norm_combined for m in MOROCCAN_CONTEXT_TERMS if len(m) >= 3)
-        or ".ma/" in u_clean
-        or any(s["domain"] in u_clean for s in MOROCCAN_PRESS_SITES)
-    )
-    if has_morocco_ctx:
-      return True
+  if has_general_judicial and has_authentic_moroccan_context(t_clean, s_clean, url):
+    return True
 
   return False
 
@@ -2866,10 +3158,6 @@ def purge_invalid_articles_from_db():
               mon_t = new_mon_t
               date_updates.append((real_pstr, real_pts, new_mon_t, d["id"]))
 
-        is_archived_item = ((now_ts - mon_t) >= 86400) or ((now_ts - pub_t) >= 86400 and abs(mon_t - pub_t) < 120)
-        # لا نحذف العناصر المحفوظة في الأرشيف إطلاقاً طالما أنها نظيفة
-        if is_archived_item:
-          continue
         is_tgt = bool(d.get("is_custom_target"))
         if not is_strictly_judicial_and_clean(
             t_str, snip, u_str, "", is_target=is_tgt
@@ -2941,10 +3229,12 @@ def purge_invalid_articles_from_db():
             cleaned_arch = [
                 item for item in arch_data
                 if isinstance(item, dict)
-                and not _has_inappropriate_terms(
+                and is_strictly_judicial_and_clean(
                     item.get("title", ""),
                     f"{item.get('summary', '')} {item.get('raw_snippet', '')}",
                     item.get("url", ""),
+                    "",
+                    is_target=bool(item.get("is_custom_target", 0)),
                 )
             ]
             if len(cleaned_arch) != len(arch_data):
@@ -3381,6 +3671,14 @@ def restore_state_from_telegram_cloud(force: bool = False) -> bool:
             pass
       for it_c in cloud_articles:
         if isinstance(it_c, dict) and it_c.get("url"):
+          if not is_strictly_judicial_and_clean(
+              it_c.get("title", ""),
+              f"{it_c.get('summary', '')} {it_c.get('raw_snippet', '')}",
+              it_c.get("url", ""),
+              "",
+              is_target=bool(it_c.get("is_custom_target", 0)),
+          ):
+            continue
           it_c["telegram_sent"] = 1
           if it_c["url"] not in merged_arch:
             merged_arch[it_c["url"]] = it_c
@@ -3624,10 +3922,12 @@ def sync_db_to_json(extra_items: list = None):
             for item in existing_json:
               if not isinstance(item, dict) or not item.get("url"):
                 continue
-              if _has_inappropriate_terms(
+              if not is_strictly_judicial_and_clean(
                   item.get("title", ""),
                   f"{item.get('summary', '')} {item.get('raw_snippet', '')}",
                   item.get("url", ""),
+                  "",
+                  is_target=bool(item.get("is_custom_target", 0)),
               ):
                 continue
               merged_by_url[item["url"]] = item
@@ -3719,7 +4019,7 @@ def restore_db_from_json_if_needed():
           is_tgt = int(item.get("is_custom_target", 0))
           if not t_clean or not u_str:
             continue
-          if _has_inappropriate_terms(t_clean, f"{s_clean} {raw_s}", u_str):
+          if not is_strictly_judicial_and_clean(t_clean, f"{s_clean} {raw_s}", u_str, "", is_target=bool(is_tgt)):
             continue
 
           if is_summary_just_title(t_clean, s_clean):
@@ -3796,17 +4096,13 @@ def fetch_articles_from_db():
         u_str = d.get("url", "")
         if _has_inappropriate_terms(t_str, snip_str, u_str):
           continue
-        pub_t = float(d.get("pub_timestamp") or 0)
-        mon_t = float(d.get("created_at") or pub_t)
-        is_archived = ((now_ts - mon_t) >= 86400) or ((now_ts - pub_t) >= 86400 and abs(mon_t - pub_t) < 120)
-        if not is_archived:
-          is_tgt = bool(d.get("is_custom_target", 0))
-          if not is_strictly_judicial_and_clean(
-              t_str, snip_str, u_str, "", is_target=is_tgt
-          ):
-            continue
-          if is_tgt and not belongs_to_any_custom_target(d, current_targets):
-            continue
+        is_tgt = bool(d.get("is_custom_target", 0))
+        if not is_strictly_judicial_and_clean(
+            t_str, snip_str, u_str, "", is_target=is_tgt
+        ):
+          continue
+        if is_tgt and not belongs_to_any_custom_target(d, current_targets):
+          continue
         d["source_name"] = format_precise_source_with_domain(
             d.get("source_name") or d.get("platform") or "الصحف",
             u_str,
@@ -5799,7 +6095,7 @@ def _build_synthesized_fb_post_url(raw_u: str, post_text: str, fb_handle: str = 
 
 
 def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
-  """جلب المنشورات المتزامنة مع الصفحات الرسمية للمنابر القضائية والإعلامية المغربية على فيسبوك (يتجاوز حظر IP لفيسبوك 100%)."""
+  """جلب المنشورات القضائية والعدلية المغربية المتزامنة مع الصفحات الرسمية للمنابر القضائية والإعلامية المغربية على فيسبوك."""
   mirror_cfg, kw_input, max_age_sec = args_tuple
   if is_stop_requested():
     return []
@@ -5817,10 +6113,9 @@ def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
       else ["القضاء", "النيابة العامة", "المحكمة"]
   )
 
-  # تحديد أصل الموقع مع مراعاة www.
   base_host = f"www.{dom}" if dom in ("hespress.com", "alayam24.com", "goud.ma", "akhbarona.com", "kech24.com", "barlamane.com") else dom
 
-  # 1) فحص واجهة WordPress REST API المباشرة لاستخراج المنشورات الكاملة وصورها عالية الدقة
+  # 1) فحص واجهة WordPress REST API المباشرة لاستخراج المنشورات القضائية المغربية الكاملة وصورها عالية الدقة
   for sterm in search_terms[:2]:
     if is_stop_requested():
       break
@@ -5838,15 +6133,9 @@ def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
             full_txt = clean_full_article_text(raw_html_c)
             if not raw_t or len(full_txt) < 35:
               continue
-            if _has_inappropriate_terms(raw_t, full_txt, ""):
+            # التحقق الصارم من أن المنشور ذو بعد قضائي/عدلي ويخص المغرب ويطابق الكلمة المفتاحية إن وجدت
+            if not is_strictly_judicial_and_clean(raw_t, full_txt, f"https://{base_host}", kw_input, is_target=False):
               continue
-            if not has_custom_kw:
-              if not is_strictly_judicial_and_clean(raw_t, full_txt, "", "", is_target=False):
-                continue
-            else:
-              # عند البحث بكلمة مفتاحية صريحة عبر ?search= الخاصة بووردبريس، نتحقق من التطابق المرن أو نرفق الكلمة في السياق
-              if not matches_custom_keywords(raw_t, full_txt, kw_input):
-                full_txt = f"{full_txt}\n\n[رصد فيسبوك حول الكلمة المفتاحية: {sterm}]"
 
             m_emb_fb = re.search(
                 r"https?://(?:www\.|m\.|web\.)?facebook\.com/[^\"'\s<>\\]+/(?:posts|videos|photos|reel)/[^\"'\s<>\\]+",
@@ -5879,7 +6168,7 @@ def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
     except Exception:
       pass
 
-  # 2) فحص خلاصة RSS المباشرة للمنبر واستخلاص المنشورات المتزامنة على صفحته بفيسبوك
+  # 2) فحص خلاصة RSS المباشرة للمنبر المغربي واستخلاص المنشورات القضائية المغربية حصراً
   feed_candidates = [f"https://{base_host}/?s={urllib.parse.quote(search_terms[0])}&feed=rss2"]
   if rss_main and not has_custom_kw:
     feed_candidates.append(rss_main)
@@ -5893,14 +6182,8 @@ def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
         for entry in parse_rss_xml(rf.content, "فيسبوك", default_source=fb_badge, max_age_sec=effective_max_age):
           t_e = entry.get("title", "")
           s_e = entry.get("raw_snippet", "")
-          if _has_inappropriate_terms(t_e, s_e, ""):
+          if not is_strictly_judicial_and_clean(t_e, s_e, f"https://{base_host}", kw_input, is_target=False):
             continue
-          if not has_custom_kw:
-            if not is_strictly_judicial_and_clean(t_e, s_e, "", "", is_target=False):
-              continue
-          else:
-            if not matches_custom_keywords(t_e, s_e, kw_input):
-              entry["raw_snippet"] = f"{s_e}\n\n[رصد فيسبوك حول الكلمة المفتاحية: {search_terms[0]}]"
           fb_u = _build_synthesized_fb_post_url("", f"{t_e} {s_e[:120]}", fb_handle=fb_handle)
           entry["url"] = f"{fb_u}#plat=fb"
           entry["platform"] = "فيسبوك"
@@ -5917,7 +6200,7 @@ def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
 def scrape_facebook_platform(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ):
-  """محرك ذكي متطور ومتوازي لتجاوز قيود فيسبوك وجلب المنشورات والأخبار القضائية أو المرتبطة بأي كلمة مفتاحية محددة بدقة وموثوقية عالية."""
+  """محرك ذكي ودقيق لرصد المنشورات والأخبار ذات البعد القضائي والعدلي التي تهم المغرب حصراً على منصة فيسبوك."""
   items = []
   seen_urls = set()
   seen_norm_titles = set()
@@ -5935,12 +6218,13 @@ def scrape_facebook_platform(
     t_c = clean_display_text(cand_item.get("title") or "")
     s_c = clean_full_article_text(cand_item.get("raw_snippet") or "") or t_c
     u_c = clean_social_post_url(cand_item.get("url") or "")
-    if not t_c or len(t_c) < 8 or not u_c:
+    if not t_c or len(t_c) < 10 or not u_c:
       return
-    if _has_inappropriate_terms(t_c, s_c, u_c):
+    # تحقق صارم ومزدوج قبل قبول أي منشور فيسبوك: يجب أن يكون قضائياً/عدلياً ومرتبطاً بالمغرب حصراً
+    if not is_strictly_judicial_and_clean(t_c, s_c, u_c, kw_clean_str, is_target=False):
       return
     norm_t = normalize_arabic_for_dedup(strip_source_suffix_from_title(t_c))
-    if not norm_t or len(norm_t) < 8:
+    if not norm_t or len(norm_t) < 10:
       return
     t_head = norm_t[:55]
     if u_c in seen_urls or t_head in seen_norm_titles:
@@ -5948,8 +6232,6 @@ def scrape_facebook_platform(
     seen_urls.add(u_c)
     seen_norm_titles.add(t_head)
     cand_item["title"] = t_c
-    if has_custom_kw and not matches_custom_keywords(t_c, s_c, kw_clean_str):
-      s_c = f"{s_c}\n\n[رصد فيسبوك للكلمة المفتاحية: {kw_clean_str}]"
     cand_item["raw_snippet"] = s_c
     cand_item["url"] = f"{u_c}#plat=fb{kw_track_fragment}"
     cand_item["platform"] = "فيسبوك"
@@ -5966,7 +6248,7 @@ def scrape_facebook_platform(
       "Upgrade-Insecure-Requests": "1",
   })
 
-  # الطبقة 1: الفحص المباشر لأداة الخط الزمني لصفحات المؤسسات القضائية (سريع ومتوازي)
+  # الطبقة 1: الفحص المباشر لأداة الخط الزمني لصفحات المؤسسات القضائية والمنابر الوطنية المغربية على فيسبوك
   pages_to_probe = MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES[:4] if has_custom_kw else MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES[:9]
   for p_idx, (fb_handle, fb_badge) in enumerate(pages_to_probe):
     if is_stop_requested():
@@ -5974,10 +6256,9 @@ def scrape_facebook_platform(
     if progress_cb:
       progress_cb(
           min(0.22, (p_idx + 1) / max(1, 25)),
-          f"فحص منشورات {fb_badge} الحية...",
+          f"فحص منشورات {fb_badge} القضائية بالمغرب...",
       )
     page_u = f"https://www.facebook.com/{fb_handle}"
-    is_pure_judicial_page = fb_handle in ("pmpmaroc", "cspj.ma", "justice.gov.ma")
 
     plugin_posts = _scrape_facebook_plugin_timeline(
         page_u,
@@ -6017,41 +6298,31 @@ def scrape_facebook_platform(
       u_p = clean_social_post_url(p.get("url", ""))
       if not u_p:
         continue
-      if not is_strictly_judicial_and_clean(
-          p.get("title", ""),
-          p.get("raw_snippet", ""),
-          u_p,
-          keywords_input,
-          is_target=is_pure_judicial_page and not has_custom_kw,
-      ):
-        continue
       p["source_name"] = fb_badge
       _add_fb_item_safely(p)
 
-  # الطبقة 2: استخلاص المنشورات بشكل متوازي من محركات البحث في فيسبوك (Bing HTML, Yahoo HTML, DuckDuckGo POST, Bing RSS, DDGS)
+  # الطبقة 2: استخلاص المنشورات القضائية المغربية حصراً من فهارس site:facebook.com
   if has_custom_kw:
     custom_kws = [k.strip().strip('"\'«» ') for k in re.split(r"[,،\n]+", keywords_input) if k.strip().strip('"\'«» ')]
     fb_queries = []
     for kw in custom_kws[:3]:
-      fb_queries.append(f'site:facebook.com "{kw}"')
-      fb_queries.append(f'site:facebook.com {kw} المغرب')
-      fb_queries.append(f'facebook.com/posts "{kw}"')
-      fb_queries.append(f'facebook.com/videos "{kw}"')
-      fb_queries.append(f'"{kw}" فيسبوك المغرب')
-      fb_queries.append(f'"{kw}" فايسبوك المغرب')
+      fb_queries.append(f'site:facebook.com "{kw}" (القضاء OR المحكمة OR العدالة OR "النيابة العامة" OR "السلطة القضائية") المغرب')
+      fb_queries.append(f'site:facebook.com "{kw}" المغرب')
+      fb_queries.append(f'site:facebook.com/posts "{kw}" المغرب')
+      fb_queries.append(f'site:facebook.com/videos "{kw}" المغرب')
   else:
     fb_queries = [
-        'site:facebook.com "المجلس الأعلى للسلطة القضائية"',
+        'site:facebook.com "المجلس الأعلى للسلطة القضائية" المغرب',
         'site:facebook.com "رئاسة النيابة العامة" المغرب',
-        'site:facebook.com "محكمة النقض" OR "محكمة الاستئناف" المغرب',
-        'site:facebook.com "الوكيل العام للملك" OR "وكيل الملك" المغرب',
-        'site:facebook.com "القضاء المغربي" OR "وزارة العدل" المغرب',
-        'facebook.com/posts "القضاء" OR "النيابة العامة" المغرب',
+        'site:facebook.com ("الوكيل العام للملك" OR "وكيل الملك") المغرب',
+        'site:facebook.com ("محكمة النقض" OR "محكمة الاستئناف" OR "المحكمة الابتدائية") المغرب',
+        'site:facebook.com ("القضاء المغربي" OR "المحاكم المغربية" OR "وزارة العدل") المغرب',
+        'site:facebook.com ("نادي قضاة المغرب" OR "الودادية الحسنية للقضاة" OR "المعهد العالي للقضاء")',
     ]
 
   if not is_stop_requested():
     if progress_cb:
-      progress_cb(0.42, "استخلاص المنشورات المتطابقة من فهارس فيسبوك ومحركات البحث...")
+      progress_cb(0.42, "استخلاص المنشورات القضائية المغربية من فهارس فيسبوك...")
 
     def _run_one_fb_web_query(fq_str: str) -> list:
       if is_stop_requested():
@@ -6071,43 +6342,31 @@ def scrape_facebook_platform(
       if is_stop_requested():
         break
       raw_u = clean_social_post_url(entry.get("url", ""))
-      if not raw_u:
-        continue
-      is_fb_domain = ("facebook.com" in raw_u.lower() or "fb.watch" in raw_u.lower())
-      if not is_fb_domain and not has_custom_kw:
+      if not raw_u or ("facebook.com" not in raw_u.lower() and "fb.watch" not in raw_u.lower()):
         continue
 
       raw_snip = _clean_fb_follower_boilerplate(entry.get("raw_snippet", ""))
       raw_title = _clean_fb_follower_boilerplate(_clean_social_page_title(entry.get("title", "")))
       combined_post_txt = f"{raw_title} — {raw_snip}" if (raw_title and raw_snip and raw_title not in raw_snip) else (raw_snip or raw_title)
 
-      if len(combined_post_txt) < 16:
+      if len(combined_post_txt) < 22:
         continue
 
-      if is_fb_domain:
-        if not is_direct_social_post_url(raw_u, "فيسبوك"):
-          resolved_u = resolve_direct_facebook_post_url(raw_snip, raw_title)
-          if resolved_u and is_direct_social_post_url(resolved_u, "فيسبوك"):
-            raw_u = resolved_u
-          else:
-            raw_u = _build_synthesized_fb_post_url(raw_u, combined_post_txt)
-        src_lbl = _extract_fb_page_label_from_entry(raw_u, entry.get("title", ""))
-      else:
-        dom_lbl = _extract_clean_domain(raw_u) or "منصة فيسبوك"
-        src_lbl = f"فيسبوك • {MOROCCAN_SITE_DOMAIN_MAP.get(dom_lbl, dom_lbl)}"
+      if not is_direct_social_post_url(raw_u, "فيسبوك"):
+        resolved_u = resolve_direct_facebook_post_url(raw_snip, raw_title)
+        if resolved_u and is_direct_social_post_url(resolved_u, "فيسبوك"):
+          raw_u = resolved_u
+        else:
+          raw_u = _build_synthesized_fb_post_url(raw_u, combined_post_txt)
 
-      display_title = raw_snip[:115] + ("..." if len(raw_snip) > 115 else "") if (is_fb_domain and len(raw_snip) >= 28) else (raw_title[:115] or raw_snip[:115])
-      if not display_title or len(display_title) < 10:
+      display_title = raw_snip[:115] + ("..." if len(raw_snip) > 115 else "") if len(raw_snip) >= 28 else raw_title[:115]
+      if not display_title or len(display_title) < 12:
         continue
 
-      if not has_custom_kw:
-        if not is_strictly_judicial_and_clean(
-            display_title, combined_post_txt, raw_u, "", is_target=False
-        ):
-          continue
-      else:
-        if _has_inappropriate_terms(display_title, combined_post_txt, raw_u):
-          continue
+      if not is_strictly_judicial_and_clean(
+          display_title, combined_post_txt, raw_u, kw_clean_str, is_target=False
+      ):
+        continue
 
       pub_str, pub_ts = extract_date_from_url_or_text(
           raw_u, combined_post_txt, entry.get("pub_date", ""), fallback_offset_sec=2400
@@ -6115,6 +6374,7 @@ def scrape_facebook_platform(
       if not has_custom_kw and max_age > 0 and (now_ts - pub_ts) > max(max_age, 14 * 86400):
         continue
 
+      src_lbl = _extract_fb_page_label_from_entry(raw_u, entry.get("title", ""))
       _add_fb_item_safely({
           "title": display_title,
           "url": f"{raw_u}#plat=fb",
@@ -6126,31 +6386,26 @@ def scrape_facebook_platform(
           "image_url": entry.get("image_url", ""),
       })
 
-  # الطبقة 3: الرصد المتوازي للتدوينات والمنشورات على فيسبوك عبر خلاصات Google News RSS و Bing News/Web RSS
+  # الطبقة 3: الرصد المتوازي للبلاغات والأخبار القضائية والعدلية المغربية المتداولة على صفحات فيسبوك بالمغرب
   if not is_stop_requested():
     if progress_cb:
-      progress_cb(0.68, "رصد التدوينات والمنشورات المتداولة على صفحات فيسبوك بالمغرب...")
+      progress_cb(0.68, "رصد البلاغات والمنشورات القضائية والعدلية الخاصة بالمغرب...")
     rss_feed_urls = []
     if has_custom_kw:
       gnews_qs = [
-          f'"{kw_clean_str}" فيسبوك المغرب when:{when_tag}',
-          f'"{kw_clean_str}" فايسبوك المغرب when:{when_tag}',
-          f'{kw_clean_str} فيسبوك المغرب when:{when_tag}',
+          f'"{kw_clean_str}" (القضاء OR المحكمة OR العدالة OR "النيابة العامة" OR "السلطة القضائية" OR "وكيل الملك" OR "وزارة العدل") المغرب when:{when_tag}',
+          f'{kw_clean_str} (القضاء OR المحكمة OR العدالة OR "النيابة العامة" OR "السلطة القضائية") المغرب when:{when_tag}',
           f'"{kw_clean_str}" المغرب when:{when_tag}',
-          f'{kw_clean_str} المغرب when:{when_tag}',
-          f'"{kw_clean_str}" فيسبوك المغرب',
-          f'"{kw_clean_str}" المغرب',
+          f'"{kw_clean_str}" (القضاء OR المحكمة OR العدالة OR "النيابة العامة") المغرب',
       ]
       for gq in gnews_qs:
         rss_feed_urls.append(
             f"https://news.google.com/rss/search?q={urllib.parse.quote(gq)}&hl=ar&gl=MA&ceid=MA:ar"
         )
       bing_qs = [
-          (f'site:facebook.com "{kw_clean_str}"', "search"),
-          (f'site:facebook.com {kw_clean_str} المغرب', "search"),
-          (f'"{kw_clean_str}" فيسبوك المغرب', "news/search"),
-          (f'"{kw_clean_str}" المغرب', "news/search"),
-          (f'{kw_clean_str} المغرب', "news/search"),
+          (f'site:facebook.com "{kw_clean_str}" القضاء المغرب', "search"),
+          (f'site:facebook.com "{kw_clean_str}" المغرب', "search"),
+          (f'"{kw_clean_str}" (القضاء OR المحكمة OR العدالة) المغرب', "news/search"),
       ]
       for bq, b_ep in bing_qs:
         rss_feed_urls.append(
@@ -6158,11 +6413,12 @@ def scrape_facebook_platform(
         )
     else:
       fb_rss_queries = [
-          f'(فيسبوك OR فايسبوك OR تدوينة OR منشور) (القضاء OR المحكمة OR "النيابة العامة" OR "السلطة القضائية" OR "وكيل الملك") المغرب when:{when_tag}',
           f'"المجلس الأعلى للسلطة القضائية" المغرب when:{when_tag}',
           f'"رئاسة النيابة العامة" المغرب when:{when_tag}',
-          f'("محكمة النقض" OR "الوكيل العام للملك" OR "وكيل الملك" OR "قاضي التحقيق") (فيسبوك OR فايسبوك OR بلاغ OR منشور) المغرب when:{when_tag}',
-          f'("وزارة العدل" OR "المعهد العالي للقضاء" OR "نادي قضاة المغرب" OR "الودادية الحسنية للقضاة") المغرب when:{when_tag}',
+          f'("الوكيل العام للملك" OR "وكيل الملك" OR "قاضي التحقيق") المحكمة المغرب when:{when_tag}',
+          f'("محكمة النقض" OR "محكمة الاستئناف" OR "المحكمة الابتدائية") القضاء المغرب when:{when_tag}',
+          f'("وزارة العدل" OR "المعهد العالي للقضاء" OR "نادي قضاة المغرب" OR "الودادية الحسنية للقضاة" OR "المفتشية العامة للشؤون القضائية") المغرب when:{when_tag}',
+          f'("العقوبات البديلة" OR "المسطرة الجنائية" OR "منظومة العدالة" OR "إصلاح العدالة") المغرب when:{when_tag}',
       ]
       for rq in fb_rss_queries:
         rss_feed_urls.append(
@@ -6194,14 +6450,8 @@ def scrape_facebook_platform(
       t_e = entry.get("title", "")
       s_e = entry.get("raw_snippet", "")
       u_e = entry.get("url", "")
-      if _has_inappropriate_terms(t_e, s_e, u_e):
+      if not is_strictly_judicial_and_clean(t_e, s_e, u_e, kw_clean_str, is_target=False):
         continue
-      if not has_custom_kw:
-        if not is_strictly_judicial_and_clean(t_e, s_e, "", "", is_target=False):
-          continue
-      else:
-        if not matches_custom_keywords(t_e, f"{s_e} {entry.get('source_name', '')}", kw_clean_str):
-          entry["raw_snippet"] = f"{s_e}\n\n[رصد فيسبوك للكلمة المفتاحية: {kw_clean_str}]"
       orig_src = clean_display_text(entry.get("source_name") or "فيسبوك")
       if "فيسبوك" not in orig_src and "فايسبوك" not in orig_src:
         entry["source_name"] = f"فيسبوك • {orig_src}"
@@ -6212,7 +6462,7 @@ def scrape_facebook_platform(
   # الطبقة 4: المزامنة الذكية المتوازية لمنشورات الصفحات القضائية والإخبارية المغربية المعتمدة على فيسبوك
   if not is_stop_requested():
     if progress_cb:
-      progress_cb(0.88, "مزامنة المنشورات من الصفحات الرسمية للمنابر المغربية على فيسبوك...")
+      progress_cb(0.88, "مزامنة المنشورات القضائية والعدلية من الصفحات الرسمية للمنابر المغربية على فيسبوك...")
     mirror_tasks = [(m_cfg, keywords_input, max_age) for m_cfg in MOROCCAN_FB_SYNDICATION_MIRRORS]
     try:
       with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
@@ -8716,9 +8966,8 @@ def scrape_platform_by_keyword(
       continue
     if _has_inappropriate_terms(t_str, f"{s_str} {src_str}", u_str):
       continue
-    if not matches_custom_keywords(t_str, f"{s_str} {src_str}", kw_clean):
-      s_str = f"{s_str}\n\n[رصد الكلمة المفتاحية: {kw_clean}]".strip()
-      it["raw_snippet"] = s_str
+    if not is_strictly_judicial_and_clean(t_str, s_str, u_str, kw_clean, is_target=False):
+      continue
     if "#kwtrack=" not in u_str:
       it["url"] = f"{u_str}{kw_tag}"
     canon_k = f"{it.get('platform', plat)}::{canonicalize_url_for_dedup(it['url']) or strip_internal_url_fragments(it['url'])}"
@@ -10207,8 +10456,8 @@ def quick_process_and_save(
       if kw_override_tag.lower() not in curr_u_it.lower():
         it["url"] = f"{curr_u_it}{kw_override_tag}"
       curr_s_it = str(it.get("raw_snippet") or "")
-      if not matches_custom_keywords(it.get("title", ""), curr_s_it, kw_override_clean):
-        it["raw_snippet"] = f"{curr_s_it}\n\n[رصد الكلمة المفتاحية: {kw_override_clean}]".strip()
+      if not is_strictly_judicial_and_clean(it.get("title", ""), curr_s_it, it.get("url", ""), kw_override_clean, is_target=False):
+        continue
 
     t_scope_post = 1 if (is_target_run or it.get("is_custom_target")) else 0
     base_post_keys = compute_article_dedup_keys(it.get("title", ""), it.get("url", ""))
