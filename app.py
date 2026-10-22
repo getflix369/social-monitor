@@ -1,5 +1,6 @@
 import base64
 import concurrent.futures
+import functools
 import hashlib
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -61,7 +62,7 @@ DEFAULT_TG_TOKEN = "8806182263:AAFw5HbBup_TRif3FHvZP0QFYj0YPI4mb6c"
 DEFAULT_TG_CHAT_ID = "1357905784"
 PLATFORM_OFFICIAL_NAME = "المرصد القضائي"
 LEGACY_PLATFORM_NAME = "المرصد الوطني للعدالة والقضاء"
-DAEMON_CODE_VERSION = "marsad_qadai_v6_2026_10_21_strict_moroccan_judicial"
+DAEMON_CODE_VERSION = "marsad_qadai_v7_2026_10_22_turbo_nonblocking"
 
 GEMINI_MODELS_FALLBACK = [
     "gemini-2.5-flash",
@@ -857,6 +858,7 @@ def matches_custom_keywords(title: str, snippet: str, keywords_input: str) -> bo
   return False
 
 
+@functools.lru_cache(maxsize=8192)
 def clean_display_text(val: str) -> str:
   if not val:
     return ""
@@ -912,6 +914,7 @@ def strip_source_suffix_from_title(title: str) -> str:
   return t
 
 
+@functools.lru_cache(maxsize=8192)
 def normalize_arabic_for_dedup(text: str) -> str:
   """تطبيع النص العربي بدقة عالية لكشف الأخبار والمنشورات المكررة حتى مع اختلاف التشكيل أو علامات الترقيم أو الهمزات."""
   if not text:
@@ -1369,26 +1372,47 @@ _MOROCCAN_FB_OFFICIAL_HANDLES = {
 }
 
 
-def _contains_whole_arabic_phrase(norm_text: str, phrase: str) -> bool:
-  """التحقق الصارم من وجود المصطلح أو اسم المدينة ككلمة كاملة مستقلة في النص المطبّع (وليس كجزء من كلمة أخرى مثل فاس في فاسد أو سلا في سلاح)."""
+@functools.lru_cache(maxsize=4096)
+def _get_compiled_arabic_phrase_matcher(phrase: str):
+  """تجهيز وتخزين التعبير النمطي المترجم مسبقاً (Pre-compiled Regex) مع الجذر النصي السريع لمنع إعادة بناء الـ Regex آلاف المرات."""
   norm_p = normalize_arabic_for_dedup(phrase)
   if not norm_p:
-    return False
+    return None
   if " " in norm_p:
-    if re.search(rf"(?<![\u0600-\u06FFa-z0-9]){re.escape(norm_p)}(?![\u0600-\u06FFa-z0-9])", norm_text):
-      return True
+    rx_exact = re.compile(rf"(?<![\u0600-\u06FFa-z0-9]){re.escape(norm_p)}(?![\u0600-\u06FFa-z0-9])")
     first_w, rest_w = norm_p.split(" ", 1)
     first_stem = re.sub(r"^(?:وال|بال|لل|فال|كال|ال)", "", first_w)
+    rx_multi = None
     if len(first_stem) >= 3:
-      pat_multi = rf"(?<![\u0600-\u06FFa-z0-9])(?:ال|وال|بال|لل|فال|كال|و|ف|ب|ل)?{re.escape(first_stem)}\s+{re.escape(rest_w)}(?![\u0600-\u06FFa-z0-9])"
-      if re.search(pat_multi, norm_text):
-        return True
-    return False
+      rx_multi = re.compile(
+          rf"(?<![\u0600-\u06FFa-z0-9])(?:ال|وال|بال|لل|فال|كال|و|ف|ب|ل)?{re.escape(first_stem)}\s+{re.escape(rest_w)}(?![\u0600-\u06FFa-z0-9])"
+      )
+    fast_sub = rest_w if len(rest_w) >= 2 else norm_p
+    return ("multi", fast_sub, norm_p, rx_exact, rx_multi)
   stem = re.sub(r"^(?:وال|بال|لل|فال|كال|ال)", "", norm_p)
   if len(stem) < 2:
+    return None
+  rx_single = re.compile(
+      rf"(?<![\u0600-\u06FFa-z0-9])(?:ال|وال|بال|لل|فال|كال|و|ف|ب|ل)?{re.escape(stem)}(?![\u0600-\u06FFa-z0-9])"
+  )
+  return ("single", stem, norm_p, rx_single, None)
+
+
+def _contains_whole_arabic_phrase(norm_text: str, phrase: str) -> bool:
+  """التحقق الفائق السرعة والصرامة من وجود المصطلح أو اسم المدينة ككلمة كاملة مستقلة في النص المطبّع."""
+  if not norm_text or not phrase:
     return False
-  pat = rf"(?<![\u0600-\u06FFa-z0-9])(?:ال|وال|بال|لل|فال|كال|و|ف|ب|ل)?{re.escape(stem)}(?![\u0600-\u06FFa-z0-9])"
-  return bool(re.search(pat, norm_text))
+  matcher = _get_compiled_arabic_phrase_matcher(phrase)
+  if matcher is None:
+    return False
+  kind, fast_sub, norm_p, rx1, rx2 = matcher
+  if fast_sub not in norm_text and norm_p not in norm_text:
+    return False
+  if rx1.search(norm_text):
+    return True
+  if rx2 is not None and rx2.search(norm_text):
+    return True
+  return False
 
 
 def has_authentic_moroccan_context(title: str, snippet: str = "", url: str = "") -> bool:
@@ -2827,6 +2851,7 @@ def _create_shared_runtime():
       "db_lock": _MODULE_DB_LOCK,
       "scan_lock": _MODULE_SCAN_LOCK,
       "stop_requested": False,
+      "abort_bg_for_manual": False,
       "active_scan": None,
       "daemon_started": False,
       "bg_scanning": False,
@@ -2839,6 +2864,11 @@ def _create_shared_runtime():
       "last_cloud_push_ts": 0.0,
       "fulltext_checked_ids": set(),
       "gemini_tts_cooldown_until": 0.0,
+      "db_initialized_version": "",
+      "db_version_counter": 1,
+      "cached_articles_list": None,
+      "cached_articles_sig": None,
+      "last_auto_completed_ts": 0.0,
   }
 
 
@@ -2849,6 +2879,17 @@ else:
 
   def get_shared_runtime():
     return _FALLBACK_RUNTIME
+
+
+def invalidate_articles_cache():
+  """إبطال ذاكرة التخزين المؤقت للأخبار عند إضافة أو تعديل أو حذف أي سجل لضمان تحديث الواجهة فوراً."""
+  try:
+    rt = get_shared_runtime()
+    rt["db_version_counter"] = int(rt.get("db_version_counter", 1)) + 1
+    rt["cached_articles_list"] = None
+    rt["cached_articles_sig"] = None
+  except Exception:
+    pass
 
 
 def get_db_lock():
@@ -2879,9 +2920,12 @@ def request_stop_scan():
 
 
 def clear_stop_scan():
+  """تصفير طلب الإيقاف وإعطاء الأولوية الفورية للرصد اليدوي عند النقر على أي زر تشغيل."""
   try:
     rt = get_shared_runtime()
     rt["stop_requested"] = False
+    if rt.get("bg_scanning", False):
+      rt["abort_bg_for_manual"] = True
   except Exception:
     pass
   try:
@@ -2892,16 +2936,27 @@ def clear_stop_scan():
 
 
 def is_stop_requested() -> bool:
+  """التحقق الذكي من طلب الإيقاف مع الفصل التام بين خيط الرصد التلقائي الخلفي وبين الرصد اليدوي للمستخدم."""
+  t_name = threading.current_thread().name or ""
+  is_bg_thread = (
+      t_name.startswith("JusticeAutoMonitor")
+      or t_name.startswith("OnLoadAsyncCycle")
+      or t_name.startswith("DeferredStartup")
+  )
   try:
-    if get_shared_runtime().get("stop_requested", False):
+    rt = get_shared_runtime()
+    if is_bg_thread:
+      return bool(rt.get("abort_bg_for_manual", False))
+    if rt.get("stop_requested", False):
       return True
   except Exception:
     pass
-  try:
-    if st is not None:
-      return bool(st.session_state.get("stop_scan", False))
-  except Exception:
-    pass
+  if not is_bg_thread:
+    try:
+      if st is not None:
+        return bool(st.session_state.get("stop_scan", False))
+    except Exception:
+      pass
   return False
 
 
@@ -3046,11 +3101,15 @@ def _ensure_schema_on_conn(conn):
   conn.commit()
 
 
-def load_custom_targets():
+def load_custom_targets(force_disk: bool = False):
+  rt = get_shared_runtime()
+  if not force_disk and isinstance(rt.get("_cached_custom_targets"), list):
+    return [dict(x) for x in rt["_cached_custom_targets"]]
   default_targets = [
       {"url": "https://www.hespress.com", "keyword": ""},
       {"url": "https://www.youtube.com/@Hespress", "keyword": ""},
   ]
+  res = default_targets
   if os.path.exists(CUSTOM_TARGETS_FILE):
     try:
       with open(CUSTOM_TARGETS_FILE, "r", encoding="utf-8") as f:
@@ -3063,10 +3122,11 @@ def load_custom_targets():
                 "url": item["url"].strip(),
                 "keyword": item.get("keyword", "").strip(),
             })
-        return cleaned
+        res = cleaned
     except Exception:
       pass
-  return default_targets
+  rt["_cached_custom_targets"] = [dict(x) for x in res]
+  return res
 
 
 def _has_inappropriate_terms(title: str, snippet: str, url: str) -> bool:
@@ -3103,19 +3163,10 @@ def purge_invalid_articles_from_db():
       pass
 
   yt_verified_meta_map = {}
-  if yt_candidates_to_verify:
-    def _verify_one_db_yt(item_tuple):
-      row_id, vid_k, old_pts, old_cat = item_tuple
-      meta = fetch_youtube_video_exact_metadata(vid_k)
-      return row_id, vid_k, meta, old_pts, old_cat
-
-    try:
-      with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
-        for row_id, vid_k, meta, old_pts, old_cat in pool.map(_verify_one_db_yt, yt_candidates_to_verify[:60]):
-          verified_yt_ids_set.add(vid_k)
-          yt_verified_meta_map[vid_k] = meta
-    except Exception:
-      pass
+  for _, vid_k, _, _ in yt_candidates_to_verify:
+    verified_yt_ids_set.add(vid_k)
+    if vid_k in _YT_EXACT_META_CACHE:
+      yt_verified_meta_map[vid_k] = _YT_EXACT_META_CACHE[vid_k]
 
   with lock:
     removed_any = False
@@ -3189,6 +3240,8 @@ def purge_invalid_articles_from_db():
     except Exception:
       pass
 
+  # تحديث ملفات الأرشيف خارج قفل SQLite لمنع حجز الواجهة
+  if True:
     # تحديث تواريخ يوتيوب المصححة داخل ملفات الأرشيف JSON أيضاً
     if yt_verified_meta_map:
       for arch_path in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
@@ -3870,9 +3923,21 @@ def trigger_cloud_state_backup(async_mode: bool = True):
     ).start()
 
 
-def init_db():
+def init_db(force: bool = False):
+  """تهيئة فائقة السرعة لقاعدة البيانات تعمل مرة واحدة فقط عند إقلاع الخادم وتنفذ المزامنة السحابية في الخلفية دون تجميد الأزرار."""
+  rt = get_shared_runtime()
+  if not force and rt.get("db_initialized_version") == DAEMON_CODE_VERSION:
+    return
+
   lock = get_db_lock()
   with lock:
+    if (
+        not force
+        and rt.get("db_initialized_version") == DAEMON_CODE_VERSION
+        and os.path.exists(DB_FILE)
+    ):
+      return
+
     if not os.path.exists(DB_FILE):
       for candidate_src in (PERSISTENT_HOME_DB, REPO_DB_FILE):
         if os.path.exists(candidate_src) and os.path.getsize(candidate_src) > 0:
@@ -3885,8 +3950,12 @@ def init_db():
     try:
       conn = _open_sqlite_conn()
       _ensure_schema_on_conn(conn)
+      c = conn.cursor()
+      c.execute("SELECT COUNT(*) FROM articles")
+      row_count = int((c.fetchone() or [0])[0])
       conn.close()
     except sqlite3.DatabaseError:
+      row_count = 0
       try:
         if os.path.exists(DB_FILE):
           os.remove(DB_FILE)
@@ -3896,17 +3965,38 @@ def init_db():
       except Exception:
         pass
     except Exception:
+      row_count = 0
+
+    if row_count == 0:
+      _merge_external_sqlite_into_runtime(REPO_DB_FILE)
+      _merge_external_sqlite_into_runtime(PERSISTENT_HOME_DB)
+      restore_db_from_json_if_needed()
+
+    rt["db_initialized_version"] = DAEMON_CODE_VERSION
+    invalidate_articles_cache()
+
+  def _deferred_startup_maintenance():
+    try:
+      restored_cloud = restore_state_from_telegram_cloud()
+      _merge_external_sqlite_into_runtime(REPO_DB_FILE)
+      _merge_external_sqlite_into_runtime(PERSISTENT_HOME_DB)
+      if restored_cloud:
+        restore_db_from_json_if_needed()
+      purge_invalid_articles_from_db()
+      deduplicate_and_seed_telegram_ledger()
+      sync_db_to_json()
+      invalidate_articles_cache()
+    except Exception:
       pass
 
-    # استعادة الأرشيف وسجل تلغرام والبيانات من سحابة تلغرام أولاً في حال تم تصفير الحاوية على السيرفر السحابي
-    restore_state_from_telegram_cloud()
-    # دمج جميع قواعد البيانات وملفات الأرشيف الدائمة في كل مرة يتم فيها تشغيل أو تحديث الكود لضمان عدم ضياع الأرشيف أبداً
-    _merge_external_sqlite_into_runtime(REPO_DB_FILE)
-    _merge_external_sqlite_into_runtime(PERSISTENT_HOME_DB)
-    restore_db_from_json_if_needed()
-    purge_invalid_articles_from_db()
-    deduplicate_and_seed_telegram_ledger()
-    sync_db_to_json()
+  if os.environ.get("CRON_MODE") == "1":
+    _deferred_startup_maintenance()
+  else:
+    threading.Thread(
+        target=_deferred_startup_maintenance,
+        daemon=True,
+        name="DeferredStartupMaintenance",
+    ).start()
 
 
 def sync_db_to_json(extra_items: list = None):
@@ -4075,9 +4165,16 @@ def restore_db_from_json_if_needed():
       pass
 
 
-def fetch_articles_from_db():
-  lock = get_db_lock()
+def fetch_articles_from_db(force_refresh: bool = False):
+  """جلب الأخبار المرصودة مع تخزين مؤقت فوري في الذاكرة (RAM Cache) لضمان استجابة الواجهة والأزرار في أجزاء من الألف من الثانية."""
+  rt = get_shared_runtime()
   current_targets = load_custom_targets()
+  targets_sig = tuple(sorted((t.get("url", ""), t.get("keyword", "")) for t in current_targets))
+  cache_sig = (rt.get("db_version_counter", 1), targets_sig)
+  if not force_refresh and rt.get("cached_articles_sig") == cache_sig and isinstance(rt.get("cached_articles_list"), list):
+    return [dict(x) for x in rt["cached_articles_list"]]
+
+  lock = get_db_lock()
   now_ts = time.time()
   with lock:
     db_rows = []
@@ -4129,6 +4226,8 @@ def fetch_articles_from_db():
           continue
         seen_display_keys.update(scoped_dk)
         unique_rows.append(r)
+      rt["cached_articles_list"] = [dict(x) for x in unique_rows]
+      rt["cached_articles_sig"] = cache_sig
       return unique_rows
 
     for arch_file in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
@@ -4146,13 +4245,18 @@ def fetch_articles_from_db():
                     d.get("url", ""),
                 )
             ]
-            return sorted(
+            sorted_arch = sorted(
                 valid_data,
                 key=lambda x: float(x.get("pub_timestamp", 0)),
                 reverse=True,
             )
+            rt["cached_articles_list"] = [dict(x) for x in sorted_arch]
+            rt["cached_articles_sig"] = cache_sig
+            return sorted_arch
         except Exception:
           pass
+    rt["cached_articles_list"] = []
+    rt["cached_articles_sig"] = cache_sig
     return []
 
 
@@ -4160,6 +4264,7 @@ def fetch_articles_from_db():
 # 6. إدارة الإعدادات والروابط المخصصة وحالة الرصد الدوري وفترة البحث
 # =====================================================================
 def load_credentials():
+  rt = get_shared_runtime()
   cfg = {
       "gemini_api_key": "",
       "telegram_bot_token": DEFAULT_TG_TOKEN,
@@ -4169,11 +4274,14 @@ def load_credentials():
       "auto_monitor": True,
       "monitor_interval": "كل 15 دقيقة",
   }
-  if os.path.exists(CREDENTIALS_FILE):
+  if isinstance(rt.get("_cached_credentials_disk"), dict):
+    cfg.update(rt["_cached_credentials_disk"])
+  elif os.path.exists(CREDENTIALS_FILE):
     try:
       with open(CREDENTIALS_FILE, "r", encoding="utf-8") as f:
         saved = json.load(f)
       if isinstance(saved, dict):
+        rt["_cached_credentials_disk"] = dict(saved)
         cfg.update(saved)
     except Exception:
       pass
@@ -4234,6 +4342,7 @@ def load_credentials():
 
 def save_credentials(cfg):
   try:
+    get_shared_runtime()["_cached_credentials_disk"] = dict(cfg)
     with open(CREDENTIALS_FILE, "w", encoding="utf-8") as f:
       json.dump(cfg, f, ensure_ascii=False, indent=2)
   except Exception:
@@ -4247,22 +4356,27 @@ def save_custom_targets(targets):
         for t in targets
         if t.get("url", "").strip()
     ]
+    get_shared_runtime()["_cached_custom_targets"] = [dict(x) for x in cleaned]
     with open(CUSTOM_TARGETS_FILE, "w", encoding="utf-8") as f:
       json.dump(cleaned, f, ensure_ascii=False, indent=2)
-    purge_invalid_articles_from_db()
+    invalidate_articles_cache()
+    threading.Thread(target=purge_invalid_articles_from_db, daemon=True).start()
     trigger_cloud_state_backup(async_mode=True)
   except Exception:
     pass
 
 
 def load_platform_keyword_trackers() -> list:
-  """تحميل قائمة قواعد تتبع المنصات بالكلمات المفتاحية (المنصة + الكلمة المفتاحية المراد تتبعها)."""
+  """تحميل قائمة قواعد تتبع المنصات بالكلمات المفتاحية مع تخزين مؤقت في الذاكرة لسرعة الاستجابة."""
+  rt = get_shared_runtime()
+  if isinstance(rt.get("_cached_kw_trackers"), list):
+    return [dict(x) for x in rt["_cached_kw_trackers"]]
+  cleaned = []
   if os.path.exists(PLATFORM_KEYWORD_TRACKERS_FILE):
     try:
       with open(PLATFORM_KEYWORD_TRACKERS_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
       if isinstance(data, list):
-        cleaned = []
         seen = set()
         for item in data:
           if isinstance(item, dict):
@@ -4272,10 +4386,10 @@ def load_platform_keyword_trackers() -> list:
             if kw and sig not in seen:
               seen.add(sig)
               cleaned.append({"platform": plat, "keyword": kw})
-        return cleaned
     except Exception:
       pass
-  return []
+  rt["_cached_kw_trackers"] = [dict(x) for x in cleaned]
+  return cleaned
 
 
 def save_platform_keyword_trackers(trackers: list):
@@ -4291,6 +4405,7 @@ def save_platform_keyword_trackers(trackers: list):
         if kw and sig not in seen:
           seen.add(sig)
           cleaned.append({"platform": plat, "keyword": kw})
+    get_shared_runtime()["_cached_kw_trackers"] = [dict(x) for x in cleaned]
     with open(PLATFORM_KEYWORD_TRACKERS_FILE, "w", encoding="utf-8") as f:
       json.dump(cleaned, f, ensure_ascii=False, indent=2)
     trigger_cloud_state_backup(async_mode=True)
@@ -4299,6 +4414,9 @@ def save_platform_keyword_trackers(trackers: list):
 
 
 def load_monitor_state():
+  rt = get_shared_runtime()
+  if isinstance(rt.get("_cached_monitor_state"), dict):
+    return dict(rt["_cached_monitor_state"])
   state = {"last_auto_run": 0.0, "last_auto_added": 0, "total_auto_cycles": 0}
   if os.path.exists(MONITOR_STATE_FILE):
     try:
@@ -4308,11 +4426,13 @@ def load_monitor_state():
         state.update(data)
     except Exception:
       pass
+  rt["_cached_monitor_state"] = dict(state)
   return state
 
 
 def save_monitor_state(state):
   try:
+    get_shared_runtime()["_cached_monitor_state"] = dict(state)
     with open(MONITOR_STATE_FILE, "w", encoding="utf-8") as f:
       json.dump(state, f, ensure_ascii=False, indent=2)
   except Exception:
@@ -4969,6 +5089,7 @@ def parse_rss_xml(
 def scrape_moroccan_press(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ):
+  """رصد متوازٍ فائق السرعة للصحافة الوطنية المغربية عبر الخلاصات المباشرة وGoogle News وBing News."""
   items = []
   seen_urls = set()
   queries = build_search_queries(keywords_input)
@@ -4982,129 +5103,76 @@ def scrape_moroccan_press(
       MOROCCAN_PRESS_SITES[i : i + batch_size]
       for i in range(0, len(MOROCCAN_PRESS_SITES), batch_size)
   ]
-  total_steps = len(direct_sites[:6]) + len(queries) + len(site_batches)
-  step = 0
-
   search_term_wp = (
       keywords_input.strip().split(",")[0].strip()
       if keywords_input.strip()
       else "القضاء"
   )
-  for site_info in direct_sites[:6]:
-    if is_stop_requested():
-      break
-    step += 1
-    if progress_cb:
-      progress_cb(
-          min(0.95, step / max(1, total_steps)),
-          f"فحص الخلاصة المباشرة لجريدة {site_info['name']}...",
-      )
-    wp_search_rss = f"https://{site_info['domain']}/?s={urllib.parse.quote(search_term_wp)}&feed=rss2"
-    for feed_u in [wp_search_rss, site_info["rss"]]:
-      try:
-        rf = requests.get(feed_u, headers=DEFAULT_HEADERS, timeout=6)
-        if rf.status_code == 200 and (
-            b"<rss" in rf.content or b"<feed" in rf.content
-        ):
-          for entry in parse_rss_xml(
-              rf.content,
-              "الصحف",
-              default_source=site_info["name"],
-              max_age_sec=max_age,
-          ):
-            if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
-                entry["title"],
-                entry["raw_snippet"],
-                entry["url"],
-                keywords_input,
-            ):
-              seen_urls.add(entry["url"])
-              items.append(entry)
-          break
-      except Exception:
-        pass
-
-  for q in queries:
-    if is_stop_requested():
-      break
-    step += 1
-    if progress_cb:
-      progress_cb(
-          min(0.95, step / max(1, total_steps)), f"رصد الصحافة الوطنية: {q}"
-      )
-    bing_news_u = (
-        f"https://www.bing.com/news/search?q={urllib.parse.quote(q)}"
-        "&format=rss&adlt=strict&cc=MA&setlang=ar"
-    )
-    try:
-      rb = requests.get(bing_news_u, headers=DEFAULT_HEADERS, timeout=8)
-      if rb.status_code == 200 and b"<item>" in rb.content:
-        for entry in parse_rss_xml(rb.content, "الصحف", max_age_sec=max_age):
-          if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
-              entry["title"],
-              entry["raw_snippet"],
-              entry["url"],
-              keywords_input,
-          ):
-            seen_urls.add(entry["url"])
-            items.append(entry)
-    except Exception:
-      pass
-
-    rss_url = (
-        "https://news.google.com/rss/search?q="
-        f"{urllib.parse.quote(f'{q} when:{when_tag}')}&hl=ar&gl=MA&ceid=MA:ar"
-    )
-    try:
-      r = requests.get(rss_url, headers=DEFAULT_HEADERS, timeout=10)
-      if r.status_code == 200:
-        for entry in parse_rss_xml(r.content, "الصحف", max_age_sec=max_age):
-          if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
-              entry["title"],
-              entry["raw_snippet"],
-              entry["url"],
-              keywords_input,
-          ):
-            seen_urls.add(entry["url"])
-            items.append(entry)
-    except Exception:
-      pass
-
   core_kw = (
       queries[0]
       if keywords_input.strip()
       else "(القضاء OR العدالة OR المحكمة OR النيابة العامة OR السلطة القضائية)"
   )
+
+  tasks = []
+  for site_info in direct_sites[:8]:
+    wp_u = f"https://{site_info['domain']}/?s={urllib.parse.quote(search_term_wp)}&feed=rss2"
+    tasks.append(("direct", f"فحص الخلاصة المباشرة لجريدة {site_info['name']}...", [wp_u, site_info["rss"]], site_info["name"]))
+
+  for q in queries:
+    bing_u = f"https://www.bing.com/news/search?q={urllib.parse.quote(q)}&format=rss&adlt=strict&cc=MA&setlang=ar"
+    gnews_u = f"https://news.google.com/rss/search?q={urllib.parse.quote(f'{q} when:{when_tag}')}&hl=ar&gl=MA&ceid=MA:ar"
+    tasks.append(("query", f"رصد الصحافة الوطنية: {q}", [bing_u, gnews_u], ""))
+
   for batch in site_batches:
-    if is_stop_requested():
-      break
-    step += 1
     names_label = "، ".join(s["name"] for s in batch[:2])
-    if progress_cb:
-      progress_cb(
-          min(0.98, step / max(1, total_steps)),
-          f"مسح الصحف المغربية ({names_label}...)",
-      )
     sites_expr = " OR ".join(f"site:{s['domain']}" for s in batch)
     full_q = f"({sites_expr}) {core_kw} when:{when_tag}"
-    rss_url = (
-        "https://news.google.com/rss/search?q="
-        f"{urllib.parse.quote(full_q)}&hl=ar&gl=MA&ceid=MA:ar"
-    )
-    try:
-      r = requests.get(rss_url, headers=DEFAULT_HEADERS, timeout=10)
-      if r.status_code == 200:
-        for entry in parse_rss_xml(r.content, "الصحف", max_age_sec=max_age):
-          if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
-              entry["title"],
-              entry["raw_snippet"],
-              entry["url"],
-              keywords_input,
-          ):
+    rss_u = f"https://news.google.com/rss/search?q={urllib.parse.quote(full_q)}&hl=ar&gl=MA&ceid=MA:ar"
+    tasks.append(("batch", f"مسح الصحف المغربية ({names_label}...)", [rss_u], ""))
+
+  def _run_press_task(task_tuple):
+    t_kind, t_label, url_list, def_src = task_tuple
+    if is_stop_requested():
+      return t_label, []
+    found = []
+    for u_feed in url_list:
+      if is_stop_requested():
+        break
+      try:
+        r = requests.get(u_feed, headers=DEFAULT_HEADERS, timeout=4.5)
+        if r.status_code == 200 and (b"<rss" in r.content or b"<feed" in r.content or b"<item>" in r.content):
+          parsed_entries = parse_rss_xml(r.content, "الصحف", default_source=def_src, max_age_sec=max_age)
+          for entry in parsed_entries:
+            if is_strictly_judicial_and_clean(entry["title"], entry["raw_snippet"], entry["url"], keywords_input):
+              found.append(entry)
+          if t_kind == "direct" and found:
+            break
+      except Exception:
+        pass
+    return t_label, found
+
+  total_tasks = max(1, len(tasks))
+  completed_tasks = 0
+  try:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+      future_map = {pool.submit(_run_press_task, t): t for t in tasks}
+      for fut in concurrent.futures.as_completed(future_map):
+        if is_stop_requested():
+          break
+        completed_tasks += 1
+        try:
+          t_lbl, entries_list = fut.result()
+        except Exception:
+          t_lbl, entries_list = "مسح الصحافة الوطنية...", []
+        if progress_cb:
+          progress_cb(min(0.96, completed_tasks / total_tasks), t_lbl)
+        for entry in entries_list:
+          if entry["url"] not in seen_urls:
             seen_urls.add(entry["url"])
             items.append(entry)
-    except Exception:
-      pass
+  except Exception:
+    pass
 
   return items
 
@@ -6562,111 +6630,121 @@ def _multi_engine_web_search(
         "image_url": extract_thumbnail_for_item(u, "", platform),
     })
 
-  # 1) محرك Bing Web Search HTML المباشر (الأقوى في فهرسة صفحات ومنشورات فيسبوك العربية والمغربية)
-  bing_html_url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count={max_results}&setlang=ar&cc=MA"
-  try:
-    rb_html = requests.get(bing_html_url, headers=DEFAULT_HEADERS, timeout=8)
-    if rb_html.status_code == 200 and rb_html.text and BeautifulSoup is not None:
-      soup_b = BeautifulSoup(rb_html.text, "html.parser")
-      for li_el in soup_b.select("li.b_algo, div.b_algo"):
-        a_el = li_el.select_one("h2 a[href], a[href]")
-        if not a_el:
-          continue
-        href = a_el.get("href", "").strip()
-        title_txt = clean_display_text(a_el.get_text(" ", strip=True))
-        snip_el = li_el.select_one("div.b_caption p, p.b_lineclamp2, p.b_lineclamp3, p.b_lineclamp4, .b_caption")
-        snip_txt = (
-            clean_display_text(snip_el.get_text(" ", strip=True))
-            if snip_el
-            else ""
-        )
-        _add_candidate(href, title_txt, snip_txt)
-  except Exception:
-    pass
+  cand_lock = threading.Lock()
+  orig_add_candidate = _add_candidate
 
-  # 2) محرك Yahoo Search HTML (موسع ليدعم جميع قوالب Yahoo الحديثة)
-  yahoo_url = f"https://search.yahoo.com/search?p={urllib.parse.quote(query)}&n={max_results}"
-  try:
-    ry = requests.get(yahoo_url, headers=DEFAULT_HEADERS, timeout=8)
-    if ry.status_code == 200 and ry.text and BeautifulSoup is not None:
-      soup_y = BeautifulSoup(ry.text, "html.parser")
-      for algo in soup_y.select("div.algo, div.dd.algo, li div.algo-sr, div.Sr"):
-        a_el = algo.select_one("h3 a[href], div.compTitle a[href], a.ac-algo[href], a[href]")
-        if not a_el:
-          continue
-        href = a_el.get("href", "").strip()
-        title_txt = clean_display_text(a_el.get_text(" ", strip=True))
-        snip_el = algo.select_one("div.compText, p, span.fc-falcon")
-        snip_txt = (
-            clean_display_text(snip_el.get_text(" ", strip=True))
-            if snip_el
-            else ""
-        )
-        _add_candidate(href, title_txt, snip_txt)
-  except Exception:
-    pass
+  def _threadsafe_add_candidate(raw_href: str, raw_title: str, raw_body: str, raw_date: str = ""):
+    with cand_lock:
+      orig_add_candidate(raw_href, raw_title, raw_body, raw_date)
 
-  # 3) محرك DuckDuckGo HTML عبر طلب POST (يتجاوز حظر الـ 202 الذي يحدث مع طلبات GET على السحابة)
-  ddg_post_headers = dict(DEFAULT_HEADERS)
-  ddg_post_headers.update({
-      "Referer": "https://html.duckduckgo.com/",
-      "Origin": "https://html.duckduckgo.com",
-      "Content-Type": "application/x-www-form-urlencoded",
-  })
-  try:
-    rd = requests.post(
-        "https://html.duckduckgo.com/html/",
-        data={"q": query, "kl": "xa-ar"},
-        headers=ddg_post_headers,
-        timeout=8,
-    )
-    if rd.status_code == 200 and rd.text and BeautifulSoup is not None:
-      soup_d = BeautifulSoup(rd.text, "html.parser")
-      for res_box in soup_d.select("div.result, div.web-result, div.results_links"):
-        a_el = res_box.select_one("a.result__a[href], h2 a[href]")
-        if not a_el:
-          continue
-        href = a_el.get("href", "").strip()
-        title_txt = clean_display_text(a_el.get_text(" ", strip=True))
-        snip_el = res_box.select_one(".result__snippet, a.result__snippet")
-        snip_txt = (
-            clean_display_text(snip_el.get_text(" ", strip=True))
-            if snip_el
-            else ""
-        )
-        _add_candidate(href, title_txt, snip_txt)
-  except Exception:
-    pass
-
-  # 4) محرك Bing Search RSS & Bing News RSS
-  for bing_base in [
-      "https://www.bing.com/search?q=",
-      "https://www.bing.com/news/search?q=",
-  ]:
-    bing_u = (
-        f"{bing_base}{urllib.parse.quote(query)}"
-        "&format=rss&adlt=strict&cc=MA&setlang=ar"
-    )
+  def _eng_bing_html():
+    if is_stop_requested():
+      return
+    bing_html_url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count={max_results}&setlang=ar&cc=MA"
     try:
-      rb = requests.get(bing_u, headers=DEFAULT_HEADERS, timeout=7)
+      rb_html = requests.get(bing_html_url, headers=DEFAULT_HEADERS, timeout=4.5)
+      if rb_html.status_code == 200 and rb_html.text and BeautifulSoup is not None:
+        soup_b = BeautifulSoup(rb_html.text, "html.parser")
+        for li_el in soup_b.select("li.b_algo, div.b_algo"):
+          a_el = li_el.select_one("h2 a[href], a[href]")
+          if not a_el:
+            continue
+          href = a_el.get("href", "").strip()
+          title_txt = clean_display_text(a_el.get_text(" ", strip=True))
+          snip_el = li_el.select_one("div.b_caption p, p.b_lineclamp2, p.b_lineclamp3, p.b_lineclamp4, .b_caption")
+          snip_txt = clean_display_text(snip_el.get_text(" ", strip=True)) if snip_el else ""
+          _threadsafe_add_candidate(href, title_txt, snip_txt)
+    except Exception:
+      pass
+
+  def _eng_yahoo_html():
+    if is_stop_requested():
+      return
+    yahoo_url = f"https://search.yahoo.com/search?p={urllib.parse.quote(query)}&n={max_results}"
+    try:
+      ry = requests.get(yahoo_url, headers=DEFAULT_HEADERS, timeout=4.5)
+      if ry.status_code == 200 and ry.text and BeautifulSoup is not None:
+        soup_y = BeautifulSoup(ry.text, "html.parser")
+        for algo in soup_y.select("div.algo, div.dd.algo, li div.algo-sr, div.Sr"):
+          a_el = algo.select_one("h3 a[href], div.compTitle a[href], a.ac-algo[href], a[href]")
+          if not a_el:
+            continue
+          href = a_el.get("href", "").strip()
+          title_txt = clean_display_text(a_el.get_text(" ", strip=True))
+          snip_el = algo.select_one("div.compText, p, span.fc-falcon")
+          snip_txt = clean_display_text(snip_el.get_text(" ", strip=True)) if snip_el else ""
+          _threadsafe_add_candidate(href, title_txt, snip_txt)
+    except Exception:
+      pass
+
+  def _eng_ddg_post():
+    if is_stop_requested():
+      return
+    ddg_post_headers = dict(DEFAULT_HEADERS)
+    ddg_post_headers.update({
+        "Referer": "https://html.duckduckgo.com/",
+        "Origin": "https://html.duckduckgo.com",
+        "Content-Type": "application/x-www-form-urlencoded",
+    })
+    try:
+      rd = requests.post(
+          "https://html.duckduckgo.com/html/",
+          data={"q": query, "kl": "xa-ar"},
+          headers=ddg_post_headers,
+          timeout=4.5,
+      )
+      if rd.status_code == 200 and rd.text and BeautifulSoup is not None:
+        soup_d = BeautifulSoup(rd.text, "html.parser")
+        for res_box in soup_d.select("div.result, div.web-result, div.results_links"):
+          a_el = res_box.select_one("a.result__a[href], h2 a[href]")
+          if not a_el:
+            continue
+          href = a_el.get("href", "").strip()
+          title_txt = clean_display_text(a_el.get_text(" ", strip=True))
+          snip_el = res_box.select_one(".result__snippet, a.result__snippet")
+          snip_txt = clean_display_text(snip_el.get_text(" ", strip=True)) if snip_el else ""
+          _threadsafe_add_candidate(href, title_txt, snip_txt)
+    except Exception:
+      pass
+
+  def _eng_bing_rss(bing_base: str):
+    if is_stop_requested():
+      return
+    bing_u = f"{bing_base}{urllib.parse.quote(query)}&format=rss&adlt=strict&cc=MA&setlang=ar"
+    try:
+      rb = requests.get(bing_u, headers=DEFAULT_HEADERS, timeout=4.5)
       if rb.status_code == 200 and b"<item>" in rb.content:
-        for entry in parse_rss_xml(
+        parsed_b = parse_rss_xml(
             rb.content,
             platform,
             default_source=default_source or platform,
             fallback_offset=3600,
             max_age_sec=0,
-        ):
-          u_e = clean_social_post_url(entry.get("url", ""))
-          if u_e and u_e not in seen_u:
-            seen_u.add(u_e)
-            entry["url"] = u_e
-            collected.append(entry)
+        )
+        with cand_lock:
+          for entry in parsed_b:
+            u_e = clean_social_post_url(entry.get("url", ""))
+            if u_e and u_e not in seen_u:
+              seen_u.add(u_e)
+              entry["url"] = u_e
+              collected.append(entry)
     except Exception:
       pass
 
-  # 5) مكتبة DDGS الاحتياطية
-  if DDGS is not None and len(collected) < max_results:
+  try:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+      futs = [
+          pool.submit(_eng_bing_html),
+          pool.submit(_eng_yahoo_html),
+          pool.submit(_eng_ddg_post),
+          pool.submit(_eng_bing_rss, "https://www.bing.com/search?q="),
+          pool.submit(_eng_bing_rss, "https://www.bing.com/news/search?q="),
+      ]
+      concurrent.futures.wait(futs, timeout=5.5)
+  except Exception:
+    pass
+
+  if DDGS is not None and len(collected) < 4 and not is_stop_requested():
     try:
       with DDGS() as ddgs:
         for res in ddgs.text(
@@ -6676,7 +6754,7 @@ def _multi_engine_web_search(
             timelimit=None,
             max_results=max_results,
         ):
-          _add_candidate(
+          _threadsafe_add_candidate(
               res.get("href") or res.get("url") or "",
               res.get("title") or "",
               res.get("body") or "",
@@ -10313,7 +10391,8 @@ def quick_process_and_save(
     except Exception:
       pass
 
-    # عند الرصد العادي نتحقق من ملفات الأرشيف أيضاً، أما عند رصد كلمة مفتاحية محددة للمنصة فنسمح بإدراج الخبر في قاعدة التشغيل النشطة إن لم يكن موجوداً فيها
+  # خارج قفل قاعدة البيانات لمنع أي تجميد للواجهة أثناء قراءة ملفات الأرشيف
+  if True:
     if not is_kw_override_run:
       for arch_file_p in (ARCHIVE_JSON_FILE, PERSISTENT_HOME_ARCHIVE_JSON):
         if os.path.exists(arch_file_p):
@@ -10432,24 +10511,37 @@ def quick_process_and_save(
     candidates.append(it)
 
   if not candidates:
-    upgrade_incomplete_existing_articles(cfg, max_upgrades=6)
+    if refreshed_kw_ids:
+      invalidate_articles_cache()
     return len(refreshed_kw_ids)
 
+  # إثراء المتون والصور بالتوازي (Parallel Enrichment) لأحدث 16 عنصراً مرشحاً لتسريع الرصد ومنع تجميد الواجهة
+  to_enrich = candidates[:16]
+  if to_enrich and not is_stop_requested():
+    def _enrich_worker(cand_it):
+      if not is_stop_requested():
+        try:
+          enrich_item_content_and_image(cand_it)
+        except Exception:
+          pass
+      return cand_it
+
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_enrich_worker, to_enrich))
+    except Exception:
+      pass
+
   api_key = (cfg.get("gemini_api_key") or "").strip()
-  prepared_rows = []
+  filtered_candidates = []
   post_enrich_seen_keys = set()
-  ai_calls = 0
-  enrichment_calls = 0
+  max_age_final = get_period_config(cfg.get("search_period", "آخر 7 أيام"))["sec"]
 
   for it in candidates:
     if is_stop_requested():
       break
     plat = it.get("platform", "الصحف")
     src = clean_display_text(it.get("source_name") or plat)
-
-    if enrichment_calls < 28:
-      enrichment_calls += 1
-      enrich_item_content_and_image(it)
 
     if is_kw_override_run:
       curr_u_it = str(it.get("url") or "")
@@ -10476,21 +10568,9 @@ def quick_process_and_save(
         source_url_hint=it.get("source_domain_hint", ""),
         title_hint=it.get("title", ""),
     )
+    it["source_name"] = src
     raw_snip = clean_display_text(it.get("raw_snippet") or "")
-    img_url = clean_and_validate_image_url((it.get("image_url") or "").strip(), it.get("url") or "", plat)
-
-    if ai_calls < 12 and api_key:
-      ai_res = analyze_with_gemini(it, api_key)
-      ai_calls += 1
-    else:
-      ai_res = {
-          "summary": build_extractive_arabic_summary(
-              it["title"], raw_snip, plat, src
-          ),
-          "sentiment": "محايد",
-          "category": "شؤون قضائية",
-          "relevance_score": 86,
-      }
+    it["image_url"] = clean_and_validate_image_url((it.get("image_url") or "").strip(), it.get("url") or "", plat)
 
     pub_str = it.get("pub_date") or ""
     pub_ts = float(it.get("pub_timestamp") or 0)
@@ -10500,34 +10580,66 @@ def quick_process_and_save(
       pub_str, pub_ts = extract_date_from_url_or_text(
           it.get("url", ""), raw_snip, pub_str, fallback_offset_sec=3600
       )
+      it["pub_date"] = pub_str
+      it["pub_timestamp"] = pub_ts
 
-    max_age_final = get_period_config(cfg.get("search_period", "آخر 7 أيام"))["sec"]
     if plat == "يوتيوب" and max_age_final > 0 and (time.time() - pub_ts) > max_age_final:
       continue
 
+    filtered_candidates.append(it)
+
+  if not filtered_candidates:
+    if refreshed_kw_ids:
+      invalidate_articles_cache()
+    return len(refreshed_kw_ids)
+
+  # تلخيص موازٍ عبر Gemini AI لأحدث 8 عناصر مرشحة واستخلاص فوري للبقية
+  ai_results_map = {}
+  if api_key and not is_stop_requested():
+    ai_targets = filtered_candidates[:8]
+    def _ai_worker(idx_and_it):
+      idx_c, cand_it = idx_and_it
+      if is_stop_requested():
+        return idx_c, None
+      return idx_c, analyze_with_gemini(cand_it, api_key)
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        for idx_c, res_ai in pool.map(_ai_worker, enumerate(ai_targets)):
+          if res_ai:
+            ai_results_map[idx_c] = res_ai
+    except Exception:
+      pass
+
+  prepared_rows = []
+  for idx_c, it in enumerate(filtered_candidates):
+    plat = it.get("platform", "الصحف")
+    src = it.get("source_name", plat)
+    raw_snip = clean_display_text(it.get("raw_snippet") or "")
+    ai_res = ai_results_map.get(idx_c) or {
+        "summary": build_extractive_arabic_summary(it["title"], raw_snip, plat, src),
+        "sentiment": "محايد",
+        "category": "شؤون قضائية",
+        "relevance_score": 86,
+    }
+    pub_ts = float(it.get("pub_timestamp") or 0)
     record = {
         "title": it["title"],
         "summary": clean_display_text(ai_res["summary"]),
         "source_name": src,
         "platform": plat,
         "url": (it.get("url") or "").strip(),
-        "pub_date": pub_str,
+        "pub_date": it.get("pub_date") or "",
         "pub_timestamp": pub_ts,
         "sentiment": clean_display_text(ai_res["sentiment"]),
         "category": clean_display_text(ai_res["category"]),
         "relevance_score": int(ai_res["relevance_score"]),
-        "is_custom_target": (
-            1 if (is_target_run or it.get("is_custom_target")) else 0
-        ),
+        "is_custom_target": (1 if (is_target_run or it.get("is_custom_target")) else 0),
         "raw_snippet": clean_full_article_text(it.get("raw_snippet") or "")[:15000],
-        "image_url": img_url,
+        "image_url": it.get("image_url") or "",
         "created_at": time.time(),
         "telegram_sent": 1 if (time.time() - pub_ts) >= 86400 else 0,
     }
     prepared_rows.append(record)
-
-  if not prepared_rows:
-    return len(refreshed_kw_ids)
 
   added_items = []
   with lock:
@@ -10547,13 +10659,13 @@ def quick_process_and_save(
             continue
           c.execute(
               """
-                        INSERT OR IGNORE INTO articles (
-                            title, summary, source_name, platform, url,
-                            pub_date, pub_timestamp, sentiment, category,
-                            relevance_score, is_custom_target, raw_snippet,
-                            image_url, created_at, telegram_sent
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
+              INSERT OR IGNORE INTO articles (
+                  title, summary, source_name, platform, url,
+                  pub_date, pub_timestamp, sentiment, category,
+                  relevance_score, is_custom_target, raw_snippet,
+                  image_url, created_at, telegram_sent
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              """,
               (
                   rec["title"],
                   rec["summary"],
@@ -10584,34 +10696,50 @@ def quick_process_and_save(
             conn.close()
           except Exception:
             pass
-        time.sleep(0.25)
+        time.sleep(0.15)
 
-  upgrade_incomplete_existing_articles(cfg, max_upgrades=4)
+  if added_items or refreshed_kw_ids:
+    invalidate_articles_cache()
 
-  if added_items:
-    fresh_for_tg = [r for r in added_items if int(r.get("telegram_sent", 0)) == 0]
-    for rec in fresh_for_tg[:10]:
-      send_telegram_alert(rec, cfg)
-      rec["telegram_sent"] = 1
-    with lock:
-      ledger_now = load_telegram_sent_ledger()
-      for rec in added_items:
-        rec["telegram_sent"] = 1
-        ledger_now.update(compute_article_dedup_keys(rec["title"], rec["url"]))
-      save_telegram_sent_ledger(ledger_now)
-      try:
-        conn = _open_sqlite_conn()
-        c = conn.cursor()
-        c.executemany(
-            "UPDATE articles SET telegram_sent = 1 WHERE url = ?",
-            [(r["url"],) for r in added_items],
-        )
-        conn.commit()
-        conn.close()
-      except Exception:
-        pass
-    sync_db_to_json(extra_items=added_items)
-    trigger_cloud_state_backup(async_mode=True)
+  def _async_post_save_pipeline(newly_added: list, cfg_snap: dict):
+    try:
+      if newly_added:
+        fresh_for_tg = [r for r in newly_added if int(r.get("telegram_sent", 0)) == 0]
+        for rec in fresh_for_tg[:10]:
+          send_telegram_alert(rec, cfg_snap)
+          rec["telegram_sent"] = 1
+        with lock:
+          ledger_now = load_telegram_sent_ledger()
+          for rec in newly_added:
+            rec["telegram_sent"] = 1
+            ledger_now.update(compute_article_dedup_keys(rec["title"], rec["url"]))
+          save_telegram_sent_ledger(ledger_now)
+          try:
+            conn_tg = _open_sqlite_conn()
+            c_tg = conn_tg.cursor()
+            c_tg.executemany(
+                "UPDATE articles SET telegram_sent = 1 WHERE url = ?",
+                [(r["url"],) for r in newly_added],
+            )
+            conn_tg.commit()
+            conn_tg.close()
+          except Exception:
+            pass
+        sync_db_to_json(extra_items=newly_added)
+        trigger_cloud_state_backup(async_mode=True)
+      upgrade_incomplete_existing_articles(cfg_snap, max_upgrades=3)
+    except Exception:
+      pass
+
+  if os.environ.get("CRON_MODE") == "1":
+    _async_post_save_pipeline(added_items, dict(cfg))
+  else:
+    threading.Thread(
+        target=_async_post_save_pipeline,
+        args=(list(added_items), dict(cfg)),
+        daemon=True,
+        name="AsyncPostSavePipeline",
+    ).start()
 
   return len(added_items) + len(refreshed_kw_ids)
 
@@ -10620,15 +10748,19 @@ def quick_process_and_save(
 # 11. محرك الرصد الدوري الأوتوماتيكي (خلفية السيرفر + GitHub Actions)
 # =====================================================================
 def run_headless_background_cycle() -> int:
+  rt = get_shared_runtime()
+  if rt.get("active_scan") is not None:
+    return 0
+
   scan_lock = get_scan_lock()
   if not scan_lock.acquire(blocking=False):
     return 0
 
   try:
-    rt = get_shared_runtime()
     rt["bg_scanning"] = True
+    rt["abort_bg_for_manual"] = False
   except Exception:
-    rt = None
+    pass
 
   try:
     init_db()
@@ -10642,23 +10774,30 @@ def run_headless_background_cycle() -> int:
     save_monitor_state(m_state)
 
     raw_items = []
-    raw_items.extend(scrape_moroccan_press(kw, s_period))
-    raw_items.extend(scrape_youtube_platform(kw, s_period))
-    raw_items.extend(scrape_facebook_platform(kw, s_period))
-    raw_items.extend(scrape_x_platform(kw, s_period))
-    raw_items.extend(scrape_other_platforms(kw, s_period))
+    for scraper_fn in (
+        lambda: scrape_moroccan_press(kw, s_period),
+        lambda: scrape_youtube_platform(kw, s_period),
+        lambda: scrape_facebook_platform(kw, s_period),
+        lambda: scrape_x_platform(kw, s_period),
+        lambda: scrape_other_platforms(kw, s_period),
+    ):
+      if is_stop_requested() or rt.get("active_scan") is not None:
+        break
+      raw_items.extend(scraper_fn())
 
-    added_general = quick_process_and_save(raw_items, cfg, is_target_run=False)
+    added_general = 0
+    if raw_items and not is_stop_requested():
+      added_general = quick_process_and_save(raw_items, cfg, is_target_run=False)
 
     added_targets = 0
-    if targets:
+    if targets and not is_stop_requested() and rt.get("active_scan") is None:
       t_items = scrape_custom_targets(targets, kw, s_period)
       added_targets = quick_process_and_save(t_items, cfg, is_target_run=True)
 
     added_kw_trackers = 0
     kw_trackers_list = load_platform_keyword_trackers()
     for kwt in kw_trackers_list:
-      if is_stop_requested():
+      if is_stop_requested() or rt.get("active_scan") is not None:
         break
       t_plat_k = kwt.get("platform", "فيسبوك")
       t_word_k = kwt.get("keyword", "").strip()
@@ -10674,12 +10813,16 @@ def run_headless_background_cycle() -> int:
     m_state["last_auto_added"] = total_added
     m_state["total_auto_cycles"] = int(m_state.get("total_auto_cycles", 0)) + 1
     save_monitor_state(m_state)
+    rt["last_auto_completed_ts"] = time.time()
+    if total_added > 0:
+      invalidate_articles_cache()
     return total_added
   except Exception:
     return 0
   finally:
     if rt is not None:
       rt["bg_scanning"] = False
+      rt["abort_bg_for_manual"] = False
     try:
       scan_lock.release()
     except Exception:
@@ -10761,23 +10904,26 @@ def _neutralize_and_patch_legacy_daemon_threads():
 
 
 def ensure_background_daemon():
-  _detect_public_app_url()
-  _neutralize_and_patch_legacy_daemon_threads()
   rt = get_shared_runtime()
   if rt.get("daemon_started", False) and rt.get("daemon_version") == DAEMON_CODE_VERSION:
     return
   rt["daemon_started"] = True
   rt["daemon_version"] = DAEMON_CODE_VERSION
   my_version = DAEMON_CODE_VERSION
+  _detect_public_app_url()
+  threading.Thread(
+      target=_neutralize_and_patch_legacy_daemon_threads,
+      daemon=True,
+      name="LegacyDaemonNeutralizer",
+  ).start()
 
   def _daemon_loop():
-    time.sleep(2)
+    time.sleep(1.5)
     last_keepalive = 0.0
     while True:
       if rt.get("daemon_version") != my_version:
         break
       now_t = time.time()
-      # نبضة Keep-Alive كل 3 دقائق لمنع خمول السيرفر
       if now_t - last_keepalive >= 180:
         last_keepalive = now_t
         try:
@@ -10785,10 +10931,10 @@ def ensure_background_daemon():
         except Exception:
           pass
       try:
-        cfg = load_credentials()
-        if cfg.get("auto_monitor", True):
+        cfg_d = load_credentials()
+        if cfg_d.get("auto_monitor", True) and rt.get("active_scan") is None and not rt.get("bg_scanning", False):
           interval_sec = INTERVAL_MAP.get(
-              cfg.get("monitor_interval", "كل 15 دقيقة"), 900
+              cfg_d.get("monitor_interval", "كل 15 دقيقة"), 900
           )
           state = load_monitor_state()
           last_run = float(state.get("last_auto_run", 0))
@@ -10796,7 +10942,7 @@ def ensure_background_daemon():
             run_headless_background_cycle()
       except Exception:
         pass
-      time.sleep(25)
+      time.sleep(12)
 
   t = threading.Thread(
       target=_daemon_loop, daemon=True, name=f"JusticeAutoMonitor_{DAEMON_CODE_VERSION}"
@@ -11933,11 +12079,17 @@ jobs:
   )
 
   st.markdown("### 🗄️ النسخ الاحتياطي")
-  all_db_articles = fetch_articles_from_db()
-  json_export_str = json.dumps(all_db_articles, ensure_ascii=False, indent=2)
+  if os.path.exists(ARCHIVE_JSON_FILE) and os.path.getsize(ARCHIVE_JSON_FILE) > 2:
+    try:
+      with open(ARCHIVE_JSON_FILE, "rb") as f_arch_dl:
+        json_export_bytes = f_arch_dl.read()
+    except Exception:
+      json_export_bytes = b"[]"
+  else:
+    json_export_bytes = json.dumps(fetch_articles_from_db(), ensure_ascii=False, indent=2).encode("utf-8")
   st.download_button(
       "⬇️ تحميل أرشيف البيانات (JSON)",
-      data=json_export_str.encode("utf-8"),
+      data=json_export_bytes,
       file_name="المرصد_القضائي_أرشيف.json",
       mime="application/json",
   )
@@ -13785,11 +13937,11 @@ def render_article_cards(
   }
 
   api_key_curr = (cfg.get("gemini_api_key") or "").strip()
-  rt_shared = get_shared_runtime()
-  checked_ft_ids = rt_shared.setdefault("fulltext_checked_ids", set())
-  live_fetches_done = 0
+  page_limit_key = f"page_limit_{tab_prefix}"
+  curr_page_limit = int(st.session_state.get(page_limit_key, 25))
+  visible_items = items_list[:curr_page_limit]
 
-  for idx, item in enumerate(items_list):
+  for idx, item in enumerate(visible_items):
     plat = clean_display_text(item.get("platform") or "الصحف")
     css_cls = plat_css_map.get(plat, "plat-press")
     type_badge_txt = plat_type_label.get(plat, plat)
@@ -13805,25 +13957,6 @@ def render_article_cards(
     raw_url = str(item.get("url") or "#").strip()
     clean_link_url = clean_social_post_url(raw_url)
     raw_img_candidate = clean_and_validate_image_url((item.get("image_url") or "").strip(), clean_link_url, plat)
-
-    # جلب النص الكامل والرابط المباشر والصورة تلقائياً للمقالات غير المفحوصة سابقاً (بحد أقصى 3 مقالات في الدورة لمنع أي بطء)
-    if (
-        stable_art_id not in checked_ft_ids
-        and live_fetches_done < 3
-        and (
-            "news.google.com" in clean_link_url
-            or not raw_img_candidate
-            or len(raw_full_text) < 380
-            or normalize_arabic_for_dedup(raw_full_text) == normalize_arabic_for_dedup(raw_summary)
-            or normalize_arabic_for_dedup(raw_full_text) == normalize_arabic_for_dedup(raw_title)
-        )
-    ):
-      checked_ft_ids.add(stable_art_id)
-      live_fetches_done += 1
-      raw_full_text = ensure_verbatim_full_text_for_item(item)
-      raw_url = str(item.get("url") or raw_url).strip()
-      clean_link_url = clean_social_post_url(raw_url)
-      raw_img_candidate = clean_and_validate_image_url((item.get("image_url") or "").strip(), clean_link_url, plat)
 
     # تحديد اسم المصدر بدقة مع الدومين (اسم الموقع + الدومين) لجميع الأخبار الجديدة والقديمة
     raw_src = format_precise_source_with_domain(
@@ -14073,6 +14206,16 @@ def render_article_cards(
             else:
               st.warning("⚠️ تعذر إرسال الملف الصوتي حالياً، يرجى التحقق من إعدادات بوت تلغرام")
 
+  if len(items_list) > curr_page_limit:
+    rem_count = len(items_list) - curr_page_limit
+    if st.button(
+        f"➕ عرض المزيد من المنشورات في هذا القسم (متبقي {rem_count} منشور)",
+        key=f"btn_more_{tab_prefix}_{curr_page_limit}",
+        use_container_width=True,
+    ):
+      st.session_state[page_limit_key] = curr_page_limit + 25
+      st.rerun()
+
 
 # =====================================================================
 # 18. مركز البحث في الأخبار المرصودة (الحالية والمؤرشفة) وتجميع وتصدير تقارير Word و PDF
@@ -14293,7 +14436,8 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
     )
     return
 
-  display_limit = 50
+  hub_limit_key = f"{key_prefix}_display_limit"
+  display_limit = int(st.session_state.get(hub_limit_key, 20))
   for r_idx, item in enumerate(matched_results[:display_limit]):
     aid = get_stable_article_id(item)
     is_sel = aid in selected_map
@@ -14353,6 +14497,15 @@ def render_monitored_search_and_export_hub(all_monitored_pool: list, live_pool: 
           </div>
           """
       )
+
+  if len(matched_results) > display_limit:
+    if st.button(
+        f"➕ عرض المزيد من نتائج البحث ({len(matched_results) - display_limit} نتيجة إضافية)",
+        key=f"{key_prefix}_more_btn_{display_limit}",
+        use_container_width=True,
+    ):
+      st.session_state[hub_limit_key] = display_limit + 25
+      st.rerun()
 
 
 # عرض نتائج رصد المنصة بالكلمة المفتاحية بشكل فوري ومباشر بعد تعريف جميع دوال العرض (لضمان عدم حدوث NameError)
@@ -14488,13 +14641,16 @@ with tabs[8]:
   )
 
 # =====================================================================
-# 19. فحص الرصد الدوري غير المتزامن (بدون تجميد الواجهة أو قفل SQLite)
+# 19. فحص الرصد الدوري غير المتزامن (بدون تجميد الواجهة أو إعادة تحميل قسرية)
 # =====================================================================
-if cfg.get("auto_monitor", True):
+def _check_and_trigger_auto_monitor():
+  if not cfg.get("auto_monitor", True):
+    return
   interval_sec = INTERVAL_MAP.get(
       cfg.get("monitor_interval", "كل 15 دقيقة"), 900
   )
-  last_run_ts = float(monitor_state.get("last_auto_run", 0))
+  m_st = load_monitor_state()
+  last_run_ts = float(m_st.get("last_auto_run", 0))
   if (
       time.time() - last_run_ts >= interval_sec
       and not rt_state.get("bg_scanning", False)
@@ -14506,23 +14662,40 @@ if cfg.get("auto_monitor", True):
         name="OnLoadAsyncCycle",
     ).start()
 
-  if not st.session_state.get("active_tts_audio") and not st.session_state.get("active_yt_transcripts"):
-    render_html("""
-      <script>
-      (function() {
-        // نبضات Keep-Alive صامتة كل 40 ثانية لمنع قطع اتصال WebSocket أو دخول السيرفر في وضع السبات
-        setInterval(function() {
-          try {
-            fetch(window.location.origin + "/_stcore/health", { method: "GET", cache: "no-store" }).catch(function(){});
-          } catch (e) {}
-        }, 40000);
-        // تفعيل WakeLock لمنع خمول التبويب إن كان المتصفح يدعم ذلك
-        if ("wakeLock" in navigator) {
-          try { navigator.wakeLock.request("screen").catch(function(){}); } catch (e) {}
-        }
-        setTimeout(function() {
-          window.parent.location.reload();
-        }, 90000);
-      })();
-      </script>
-      """)
+
+_check_and_trigger_auto_monitor()
+
+if hasattr(st, "fragment"):
+  try:
+    @st.fragment(run_every="60s")
+    def _auto_monitor_Silent_heartbeat():
+      _check_and_trigger_auto_monitor()
+      last_bg_done = float(rt_state.get("last_auto_completed_ts", 0.0))
+      seen_bg_done = float(st.session_state.get("_seen_auto_completed_ts", 0.0))
+      if last_bg_done > seen_bg_done:
+        st.session_state["_seen_auto_completed_ts"] = last_bg_done
+        m_st_now = load_monitor_state()
+        if int(m_st_now.get("last_auto_added", 0)) > 0 and rt_state.get("active_scan") is None:
+          st.rerun()
+
+    _auto_monitor_Silent_heartbeat()
+  except Exception:
+    pass
+
+if cfg.get("auto_monitor", True):
+  render_html("""
+    <script>
+    (function() {
+      if (window.__marsadKeepAliveStarted) return;
+      window.__marsadKeepAliveStarted = true;
+      setInterval(function() {
+        try {
+          fetch(window.location.origin + "/_stcore/health", { method: "GET", cache: "no-store" }).catch(function(){});
+        } catch (e) {}
+      }, 45000);
+      if ("wakeLock" in navigator) {
+        try { navigator.wakeLock.request("screen").catch(function(){}); } catch (e) {}
+      }
+    })();
+    </script>
+    """)
