@@ -3190,6 +3190,12 @@ def _ensure_schema_on_conn(conn):
         "CREATE INDEX IF NOT EXISTS idx_pub_ts ON articles(pub_timestamp DESC)"
     )
     c.execute("CREATE INDEX IF NOT EXISTS idx_platform ON articles(platform)")
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS telegram_sent_history (
+        dedup_key TEXT PRIMARY KEY,
+        sent_at REAL DEFAULT 0
+    )
+    """)
   except Exception:
     pass
   conn.commit()
@@ -3400,7 +3406,7 @@ def purge_invalid_articles_from_db():
 
 
 def load_telegram_sent_ledger() -> set:
-  """تحميل سجل البصمات المرسلة سابقاً إلى تلغرام لمنع تكرار الإرسال نهائياً."""
+  """تحميل سجل البصمات المرسلة سابقاً إلى تلغرام لمنع تكرار الإرسال نهائياً، مع المزامنة المزدوجة بين SQLite وملف JSON."""
   ledger = set()
   if os.path.exists(TELEGRAM_LEDGER_FILE):
     try:
@@ -3410,18 +3416,51 @@ def load_telegram_sent_ledger() -> set:
         ledger.update(str(x) for x in data if x)
     except Exception:
       pass
+  if os.path.exists(DB_FILE):
+    try:
+      conn = _open_sqlite_conn()
+      c = conn.cursor()
+      c.execute("CREATE TABLE IF NOT EXISTS telegram_sent_history (dedup_key TEXT PRIMARY KEY, sent_at REAL DEFAULT 0)")
+      c.execute("SELECT dedup_key FROM telegram_sent_history")
+      for row in c.fetchall():
+        if row[0]:
+          ledger.add(str(row[0]))
+      c.execute("SELECT title, url FROM articles WHERE telegram_sent = 1")
+      for t_row, u_row in c.fetchall():
+        keys = compute_article_dedup_keys(t_row or "", u_row or "")
+        ledger.update(keys)
+      conn.close()
+    except Exception:
+      pass
   return ledger
 
 
 def save_telegram_sent_ledger(ledger: set):
+  """حفظ سجل تلغرام في كل من ملف JSON وجدول telegram_sent_history في SQLite لضمان عدم ضياعه نهائياً عند إعادة تشغيل السيرفر أو وضع السبات."""
+  if not ledger:
+    return
   try:
-    trimmed = sorted(list(ledger))[-8000:]
+    trimmed = sorted(list(ledger))[-10000:]
     tmp_p = f"{TELEGRAM_LEDGER_FILE}.tmp"
     with open(tmp_p, "w", encoding="utf-8") as f:
       json.dump(trimmed, f, ensure_ascii=False)
     os.replace(tmp_p, TELEGRAM_LEDGER_FILE)
   except Exception:
     pass
+  if os.path.exists(DB_FILE):
+    try:
+      conn = _open_sqlite_conn()
+      c = conn.cursor()
+      c.execute("CREATE TABLE IF NOT EXISTS telegram_sent_history (dedup_key TEXT PRIMARY KEY, sent_at REAL DEFAULT 0)")
+      now_t = time.time()
+      c.executemany(
+          "INSERT OR IGNORE INTO telegram_sent_history (dedup_key, sent_at) VALUES (?, ?)",
+          [(str(k), now_t) for k in ledger if k],
+      )
+      conn.commit()
+      conn.close()
+    except Exception:
+      pass
 
 
 def deduplicate_and_seed_telegram_ledger():
@@ -3567,6 +3606,23 @@ def ensure_telegram_bot_branding_updated(token: str = "", chat_id: str = "", for
   rt["tg_branding_updated"] = True
 
   def _sync_branding_worker():
+    # 0) تسجيل أوامر وقائمة بوت تلغرام الرسمية عبر setMyCommands
+    try:
+      commands_payload = {
+          "commands": [
+              {"command": "all", "description": "🌐 جميع المستجدات القضائية"},
+              {"command": "press", "description": "📰 الصحف والمواقع الإخبارية"},
+              {"command": "facebook", "description": "🟦 منشورات فيسبوك المباشرة"},
+              {"command": "youtube", "description": "🟥 تغطيات يوتيوب القضائية"},
+              {"command": "x", "description": "⬛ منشورات منصة إكس (تويتر)"},
+              {"command": "custom", "description": "🎯 رصد الصفحات المخصصة"},
+              {"command": "status", "description": "📊 حالة الرصد والإحصائيات"},
+          ]
+      }
+      requests.post(f"https://api.telegram.org/bot{token}/setMyCommands", json=commands_payload, timeout=6)
+    except Exception:
+      pass
+
     # 1) تحديث اسم البوت لجميع واجهات اللغات (الافتراضية، العربية، الفرنسية، الإنجليزية)
     for lang_c in ("", "ar", "fr", "en"):
       try:
@@ -6200,6 +6256,32 @@ def _extract_fb_page_label_from_entry(url: str, title: str) -> str:
   return "فيسبوك"
 
 
+MOROCCAN_JUDICIAL_AND_PRESS_X_ACCOUNTS = [
+    ("Justice_gov_ma", "إكس • وزارة العدل المغربية"),
+    ("CSPJ_Maroc", "إكس • المجلس الأعلى للسلطة القضائية"),
+    ("PMPMaroc", "إكس • رئاسة النيابة العامة"),
+    ("DGSN_MAROC", "إكس • المديرية العامة للأمن الوطني"),
+    ("al3omk", "إكس • العمق المغربي"),
+    ("alyaoum24", "إكس • اليوم 24"),
+    ("madar21com", "إكس • مدار 21"),
+    ("Hespress", "إكس • هسبريس"),
+    ("2MInteractive", "إكس • القناة الثانية 2M"),
+    ("SNRTnews", "إكس • SNRTnews"),
+    ("Medi1TV", "إكس • مدي 1 تيفي"),
+]
+
+MOROCCAN_X_SYNDICATION_MIRRORS = [
+    {"x_handle": "al3omk", "badge": "إكس • العمق المغربي", "domain": "al3omk.com", "rss": "https://al3omk.com/feed"},
+    {"x_handle": "alyaoum24", "badge": "إكس • اليوم 24", "domain": "alyaoum24.com", "rss": "https://alyaoum24.com/feed"},
+    {"x_handle": "madar21com", "badge": "إكس • مدار 21", "domain": "madar21.com", "rss": "https://madar21.com/feed"},
+    {"x_handle": "alayam24", "badge": "إكس • الأيام 24", "domain": "alayam24.com", "rss": "https://www.alayam24.com/feed"},
+    {"x_handle": "goudmag", "badge": "إكس • كود", "domain": "goud.ma", "rss": "https://www.goud.ma/feed"},
+    {"x_handle": "akhbarona", "badge": "إكس • أخبارنا", "domain": "akhbarona.com", "rss": "https://www.akhbarona.com/feed"},
+    {"x_handle": "rue20", "badge": "إكس • زنقة 20", "domain": "rue20.com", "rss": "https://rue20.com/feed"},
+    {"x_handle": "barlamane", "badge": "إكس • برلمان.كوم", "domain": "barlamane.com", "rss": "https://www.barlamane.com/feed"},
+]
+
+
 MOROCCAN_JUDICIAL_AND_PRESS_FB_PAGES = [
     ("pmpmaroc", "فيسبوك • رئاسة النيابة العامة"),
     ("cspj.ma", "فيسبوك • المجلس الأعلى للسلطة القضائية"),
@@ -6259,6 +6341,77 @@ def _build_synthesized_fb_post_url(raw_u: str, post_text: str, fb_handle: str = 
   if u_clean and is_direct_social_post_url(u_clean, "فيسبوك"):
     return u_clean
   return ""
+
+
+def _harvest_single_moroccan_x_mirror(args_tuple: tuple) -> list:
+  """استخراج روابط تغريدات ومنشورات إكس/تويتر الحقيقية المضمنة فعلياً داخل المقالات القضائية المغربية حصراً."""
+  mirror_cfg, kw_input, max_age_sec = args_tuple
+  if is_stop_requested():
+    return []
+  dom = mirror_cfg["domain"]
+  x_badge = mirror_cfg["badge"]
+  x_h = mirror_cfg["x_handle"].lower()
+  out_posts = []
+  now_ts = time.time()
+  has_custom_kw = bool(kw_input and str(kw_input).strip())
+
+  search_terms = (
+      [k.strip().strip('"\x27«» ') for k in re.split(r"[,،\n]+", str(kw_input)) if k.strip().strip('"\x27«» ')][:2]
+      if has_custom_kw
+      else ["القضاء", "النيابة العامة"]
+  )
+  base_host = f"www.{dom}" if dom in ("alayam24.com", "goud.ma", "akhbarona.com", "kech24.com", "barlamane.com") else dom
+
+  for sterm in search_terms[:1]:
+    if is_stop_requested():
+      break
+    wp_api = f"https://{base_host}/wp-json/wp/v2/posts?search={urllib.parse.quote(sterm)}&per_page=6&_embed=1"
+    try:
+      r_wp = requests.get(wp_api, headers=DEFAULT_HEADERS, timeout=4.0)
+      if r_wp.status_code == 200:
+        posts_json = r_wp.json()
+        if isinstance(posts_json, list):
+          for p_obj in posts_json:
+            if not isinstance(p_obj, dict):
+              continue
+            raw_t = clean_display_text(p_obj.get("title", {}).get("rendered", ""))
+            raw_html_c = p_obj.get("content", {}).get("rendered", "") or ""
+            if "twitter.com" not in raw_html_c.lower() and "x.com" not in raw_html_c.lower():
+              continue
+            m_emb_x = re.search(
+                r'https?://(?:www\.|mobile\.)?(?:twitter\.com|x\.com)/([A-Za-z0-9_]{1,30})/(?:status|statuses)/(\d{8,})',
+                raw_html_c,
+                re.IGNORECASE,
+            )
+            if not m_emb_x:
+              continue
+            tw_user = m_emb_x.group(1).strip()
+            tw_id = m_emb_x.group(2).strip()
+            x_post_u = f"https://x.com/{tw_user}/status/{tw_id}"
+            full_txt = clean_full_article_text(raw_html_c)
+            if not raw_t or len(full_txt) < 30:
+              continue
+            if not is_strictly_judicial_and_clean(raw_t, full_txt, x_post_u, kw_input, is_target=False):
+              continue
+            pub_iso = str(p_obj.get("date_gmt") or p_obj.get("date") or "").strip()
+            pub_str, pub_ts = extract_date_from_url_or_text(x_post_u, full_txt, pub_iso, fallback_offset_sec=1800)
+            if not has_custom_kw and max_age_sec > 0 and (now_ts - pub_ts) > max(max_age_sec, 14 * 86400):
+              continue
+            img_u = _extract_wp_media_from_post_json(p_obj, x_post_u)
+            out_posts.append({
+                "title": raw_t,
+                "url": f"{x_post_u}#plat=x",
+                "raw_snippet": full_txt[:15000],
+                "source_name": f"إكس • @{tw_user}",
+                "platform": "إكس",
+                "pub_date": pub_str,
+                "pub_timestamp": pub_ts,
+                "image_url": img_u,
+            })
+    except Exception:
+      pass
+
+  return out_posts
 
 
 def _harvest_single_moroccan_fb_mirror(args_tuple: tuple) -> list:
@@ -6549,16 +6702,190 @@ def scrape_facebook_platform(
   return items
 
 
+def _extract_x_handle_and_status(url: str) -> tuple:
+  """استخراج اسم الحساب والمعرف الرقمي للتغريدة من رابط إكس/تويتر بدقة."""
+  u = clean_social_post_url(url)
+  if not u:
+    return "", ""
+  m = re.search(r'https?://(?:www\.|mobile\.)?(?:twitter\.com|x\.com)/([A-Za-z0-9_]{1,30})/(?:status|statuses)/(\d{8,})', u, re.IGNORECASE)
+  if m:
+    return m.group(1).strip(), m.group(2).strip()
+  return "", ""
+
+
 def scrape_x_platform(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ):
-  return _multi_engine_social_search(
-      "إكس",
-      ["x.com", "twitter.com"],
-      keywords_input,
-      search_period,
-      progress_cb,
-  )
+  """محرك رصد منصة إكس (Twitter سابقاً) فائق الكفاءة:
+  - يستهدف روابط التغريدات المباشرة الحقيقية (status/statuses) حصراً
+  - يفحص حسابات المؤسسات القضائية المغربية ووسائل الإعلام الوطنية
+  - يستخرج التغريدات القضائية المغربية المضمنة في التغطيات الإعلامية
+  - ينفذ استعلامات بحث محددة بدقة عبر محركات البحث المتعددة مع التطهير القضائي الصارم."""
+  items = []
+  seen_urls = set()
+  seen_norm_titles = set()
+  seen_status_ids = set()
+  p_cfg = get_period_config(search_period)
+  max_age = p_cfg["sec"]
+  now_ts = time.time()
+  has_custom_kw = bool(keywords_input and str(keywords_input).strip())
+  kw_clean_str = str(keywords_input or "").strip().strip('"\x27«» ')
+  kw_track_fragment = f"#kwtrack={urllib.parse.quote(kw_clean_str, safe='')}" if has_custom_kw else ""
+
+  def _add_x_item_safely(cand_item: dict):
+    if not cand_item or not isinstance(cand_item, dict):
+      return
+    t_c = clean_display_text(cand_item.get("title") or "")
+    s_c = clean_full_article_text(cand_item.get("raw_snippet") or "") or t_c
+    u_c = clean_social_post_url(cand_item.get("url") or "")
+    if not t_c or len(t_c) < 10 or not u_c:
+      return
+    u_handle, u_status = _extract_x_handle_and_status(u_c)
+    if not u_status:
+      if not is_direct_social_post_url(u_c, "إكس"):
+        return
+      m_st = re.search(r"/(?:status|statuses)/(\d{8,})", u_c, re.IGNORECASE)
+      u_status = m_st.group(1) if m_st else ""
+    if u_status and u_status in seen_status_ids:
+      return
+    if not is_strictly_judicial_and_clean(t_c, s_c, u_c, kw_clean_str, is_target=False):
+      return
+    norm_t = normalize_arabic_for_dedup(strip_source_suffix_from_title(t_c))
+    if not norm_t or len(norm_t) < 10:
+      return
+    t_head = norm_t[:55]
+    if u_c in seen_urls or t_head in seen_norm_titles:
+      return
+    seen_urls.add(u_c)
+    if u_status:
+      seen_status_ids.add(u_status)
+    seen_norm_titles.add(t_head)
+    cand_item["title"] = t_c
+    cand_item["raw_snippet"] = s_c[:2500]
+    canonical_x_url = f"https://x.com/{u_handle or 'i'}/status/{u_status}" if (u_handle and u_status) else u_c
+    cand_item["url"] = f"{canonical_x_url}#plat=x{kw_track_fragment}"
+    cand_item["platform"] = "إكس"
+    if not cand_item.get("source_name") or cand_item["source_name"] in ("إكس", "الصحف", ""):
+      cand_item["source_name"] = f"إكس • @{u_handle}" if u_handle else "إكس (تويتر)"
+    items.append(cand_item)
+
+  # الطبقة 1: فحص التغريدات المباشرة لحسابات المؤسسات القضائية المغربية ووسائل الإعلام الوطنية
+  if progress_cb:
+    progress_cb(0.15, "فحص منشورات الحسابات القضائية المغربية على إكس (تويتر)...")
+
+  accounts_to_check = MOROCCAN_JUDICIAL_AND_PRESS_X_ACCOUNTS[:5] if has_custom_kw else MOROCCAN_JUDICIAL_AND_PRESS_X_ACCOUNTS[:8]
+  for h_handle, h_badge in accounts_to_check:
+    if is_stop_requested():
+      break
+    synd_url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{urllib.parse.quote(h_handle)}"
+    try:
+      rs = requests.get(synd_url, headers=DEFAULT_HEADERS, timeout=4.0)
+      if rs.status_code == 200 and rs.text:
+        m_next = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', rs.text, re.DOTALL)
+        if m_next:
+          next_data = json.loads(m_next.group(1))
+          entries = next_data.get("props", {}).get("pageProps", {}).get("timeline", {}).get("entries", [])
+          for ent in entries[:12]:
+            tweet = ent.get("content", {}).get("tweet", {})
+            if not tweet:
+              continue
+            t_id = str(tweet.get("id_str") or "").strip()
+            full_txt = clean_display_text(tweet.get("full_text") or tweet.get("text") or "")
+            created_raw = tweet.get("created_at") or ""
+            if not t_id or not full_txt:
+              continue
+            t_link = f"https://x.com/{h_handle}/status/{t_id}"
+            pub_str, pub_ts = extract_date_from_url_or_text(t_link, full_txt, created_raw, fallback_offset_sec=3600)
+            if not has_custom_kw and max_age > 0 and (now_ts - pub_ts) > max(max_age, 14 * 86400):
+              continue
+            _add_x_item_safely({
+                "title": full_txt[:115] + ("..." if len(full_txt) > 115 else ""),
+                "url": t_link,
+                "raw_snippet": full_txt[:2500],
+                "source_name": h_badge,
+                "platform": "إكس",
+                "pub_date": pub_str,
+                "pub_timestamp": pub_ts,
+                "image_url": "",
+            })
+    except Exception:
+      pass
+
+  # الطبقة 2: استخراج روابط تغريدات إكس القضائية المضمنة في التغطيات الصحفية
+  if not is_stop_requested():
+    if progress_cb:
+      progress_cb(0.40, "جلب التغريدات القضائية المضمنة في التغطيات الإعلامية المغربية...")
+    x_mirror_tasks = [(m_cfg, keywords_input, max_age) for m_cfg in MOROCCAN_X_SYNDICATION_MIRRORS[:6]]
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        for x_posts in pool.map(_harvest_single_moroccan_x_mirror, x_mirror_tasks):
+          for xp in x_posts:
+            _add_x_item_safely(xp)
+    except Exception:
+      pass
+
+  # الطبقة 3: استعلامات موجهة بدقة إلى روابط التغريدات /status/ عبر محركات البحث المتعددة
+  if not is_stop_requested():
+    if progress_cb:
+      progress_cb(0.65, "البحث الموسع عن منشورات إكس المغربية المباشرة عبر محركات البحث...")
+
+    targeted_x_queries = []
+    if has_custom_kw:
+      clean_kw_tokens = [k.strip() for k in re.split(r"[,،]+", kw_clean_str) if k.strip()]
+      for kw_tok in clean_kw_tokens[:2]:
+        targeted_x_queries.append(f'site:x.com/*/status/ "{kw_tok}" المغرب')
+        targeted_x_queries.append(f'site:twitter.com/*/status/ "{kw_tok}" المغرب')
+        targeted_x_queries.append(f'site:x.com "{kw_tok}" المغرب قضاء')
+    else:
+      targeted_x_queries = [
+          'site:x.com/*/status/ "المجلس الأعلى للسلطة القضائية" المغرب',
+          'site:x.com/*/status/ "رئاسة النيابة العامة" المغرب',
+          'site:x.com/*/status/ "وزارة العدل" المغرب قضاء',
+          'site:twitter.com/*/status/ "محكمة النقض" المغرب',
+          'site:x.com/*/status/ "نادي قضاة المغرب"',
+          'site:twitter.com/*/status/ ("الوكيل العام للملك" OR "وكيل الملك") المغرب',
+          'site:x.com/*/status/ "القضاء المغربي"',
+          'site:x.com/*/status/ ("المحكمة الابتدائية" OR "محكمة الاستئناف") المغرب',
+      ]
+
+    for xq in targeted_x_queries[:8]:
+      if is_stop_requested():
+        break
+      for entry in _multi_engine_web_search(xq, platform="إكس", default_source="إكس (تويتر)", max_results=14):
+        u_cand = clean_social_post_url(entry.get("url", ""))
+        if not u_cand or not any(dom in u_cand.lower() for dom in ("x.com", "twitter.com")):
+          continue
+        u_h, u_sid = _extract_x_handle_and_status(u_cand)
+        if not u_sid:
+          continue
+        raw_t = clean_display_text(entry.get("title", ""))
+        raw_s = clean_full_article_text(entry.get("raw_snippet", ""))
+        comb_txt = f"{raw_t} — {raw_s}" if (raw_t and raw_s and raw_t not in raw_s) else (raw_s or raw_t)
+        if len(comb_txt) < 18:
+          continue
+        if not is_strictly_judicial_and_clean(raw_t, comb_txt, u_cand, kw_clean_str, is_target=False):
+          continue
+        pub_str, pub_ts = extract_date_from_url_or_text(u_cand, comb_txt, entry.get("pub_date", ""), fallback_offset_sec=3600)
+        if not has_custom_kw and max_age > 0 and (now_ts - pub_ts) > max(max_age, 14 * 86400):
+          continue
+        _add_x_item_safely({
+            "title": raw_t or comb_txt[:110],
+            "url": u_cand,
+            "raw_snippet": comb_txt[:2500],
+            "source_name": f"إكس • @{u_h}" if u_h else "إكس (تويتر)",
+            "platform": "إكس",
+            "pub_date": pub_str,
+            "pub_timestamp": pub_ts,
+            "image_url": entry.get("image_url", ""),
+        })
+
+  items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
+  gc.collect()
+  if has_custom_kw and max_age > 0:
+    in_period = [it for it in items if (now_ts - float(it.get("pub_timestamp", 0))) <= max_age]
+    if in_period:
+      return in_period
+  return items
 
 
 def scrape_other_platforms(
@@ -9970,6 +10297,15 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
       f"🏷️ *التصنيف:* {item.get('category', '')}\n"
       f"🔗 [فتح المصدر الأصلي]({clean_u})"
   ).replace("المرصد الوطني للعدالة والقضاء", "المرصد القضائي").replace("المرصد الوطني", "المرصد القضائي")
+  article_reply_markup = {
+      "inline_keyboard": [
+          [
+              {"text": "🔗 فتح المنشور الأصلي", "url": clean_u},
+              {"text": f"{icon} {plat_tg}", "callback_data": f"cat_{plat_tg}"}
+          ]
+      ]
+  }
+
   try:
     resp = requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
@@ -9978,23 +10314,11 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
             "text": msg,
             "parse_mode": "Markdown",
             "disable_web_page_preview": False,
+            "reply_markup": article_reply_markup,
         },
         timeout=8,
     )
-    if resp.status_code == 200:
-      sent_msg_id = 0
-      try:
-        sent_msg_id = int(resp.json().get("result", {}).get("message_id") or 0)
-      except Exception:
-        sent_msg_id = 0
-      # إرسال "الاستماع الصوتي" للأخبار النصية (غير فيديوهات يوتيوب) إلى بوت تلغرام كخيار إضافي إلى جانب قراءة الخبر
-      if plat_tg != "يوتيوب" and "youtube.com" not in clean_u.lower() and "youtu.be" not in clean_u.lower():
-        try:
-          send_telegram_audio_for_item(item, cfg, reply_to_message_id=sent_msg_id)
-        except Exception:
-          pass
-      return True
-    return False
+    return resp.status_code == 200
   except Exception:
     return False
 
@@ -10067,6 +10391,229 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
       except Exception:
         pass
     sync_db_to_json()
+
+
+def _send_telegram_batch_digest_bulletin(newly_added: list, cfg: dict):
+  """إرسال بطاقة ملخص مجمعة وتفاعلية بأزرار مصنفة لأي دفعة جديدة من الأخبار لمنع التشتت وتسهيل التصفح."""
+  if not newly_added:
+    return
+  token = (cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN).strip()
+  chat_id = (cfg.get("telegram_chat_id") or DEFAULT_TG_CHAT_ID).strip()
+  if not token or not chat_id:
+    return
+
+  by_plat = {"الصحف": [], "فيسبوك": [], "يوتيوب": [], "إكس": []}
+  custom_count = 0
+  for item in newly_added:
+    plat = item.get("platform") or "الصحف"
+    if plat not in by_plat:
+      by_plat[plat] = []
+    by_plat[plat].append(item)
+    if item.get("is_custom_target"):
+      custom_count += 1
+
+  total_new = len(newly_added)
+  bulletin_lines = [
+      "⚖️ *المرصد القضائي — موجز الرصد الجديد*",
+      f"📡 تم رصد وتوثيق *{total_new}* مستجد قضائي جديد وموثق:",
+  ]
+  if by_plat.get("الصحف"):
+    bulletin_lines.append(f"• 📰 *الصحف والمواقع المغربية:* {len(by_plat['الصحف'])} خبر")
+  if by_plat.get("فيسبوك"):
+    bulletin_lines.append(f"• 🟦 *منشورات فيسبوك المباشرة:* {len(by_plat['فيسبوك'])} منشور")
+  if by_plat.get("يوتيوب"):
+    bulletin_lines.append(f"• 🟥 *فيديوهات وتغطيات يوتيوب:* {len(by_plat['يوتيوب'])} فيديو")
+  if by_plat.get("إكس"):
+    bulletin_lines.append(f"• ⬛ *منشورات وتغريدات إكس:* {len(by_plat['إكس'])} تغريدة")
+  if custom_count > 0:
+    bulletin_lines.append(f"• 🎯 *رصد الصفحات المخصصة:* {custom_count} منشور")
+
+  bulletin_lines.append("\n👇 *انقر على الزر المخصص لكل وسيلة لتصفح منشوراتها مرتبة:*")
+  bulletin_text = "\n".join(bulletin_lines)
+
+  inline_kb = [
+      [
+          {"text": f"📰 الصحف ({len(by_plat.get('الصحف', []))})", "callback_data": "cat_الصحف"},
+          {"text": f"🟦 فيسبوك ({len(by_plat.get('فيسبوك', []))})", "callback_data": "cat_فيسبوك"}
+      ],
+      [
+          {"text": f"🟥 يوتيوب ({len(by_plat.get('يوتيوب', []))})", "callback_data": "cat_يوتيوب"},
+          {"text": f"⬛ إكس ({len(by_plat.get('إكس', []))})", "callback_data": "cat_إكس"}
+      ]
+  ]
+  if custom_count > 0:
+    inline_kb.append([{"text": f"🎯 الرصد المخصص ({custom_count})", "callback_data": "cat_custom"}])
+
+  try:
+    requests.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={
+            "chat_id": chat_id,
+            "text": bulletin_text,
+            "parse_mode": "Markdown",
+            "reply_markup": {"inline_keyboard": inline_kb},
+        },
+        timeout=8,
+    )
+  except Exception:
+    pass
+
+
+def _telegram_bot_send_category_response(cat_key: str, chat_id: str, token: str):
+  """الرد الفوري على المستخدم في تلغرام بأحدث المنشورات المرتبة والمصنفة للوسيلة المختارة."""
+  if not token or not chat_id:
+    return
+  plat_names = {
+      "الصحف": ("الصحف والمواقع المغربية", "📰"),
+      "فيسبوك": ("منشورات فيسبوك المباشرة", "🟦"),
+      "يوتيوب": ("تغطيات وفيديوهات يوتيوب", "🟥"),
+      "إكس": ("منشورات منصة إكس (تويتر)", "⬛"),
+      "custom": ("منشورات الرصد المخصص", "🎯"),
+      "all": ("جميع المستجدات القضائية", "🌐"),
+  }
+  label, icon = plat_names.get(cat_key, ("المستجدات القضائية", "⚖️"))
+
+  rows = []
+  try:
+    conn = _open_sqlite_conn()
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    if cat_key == "custom":
+      c.execute("SELECT * FROM articles WHERE is_custom_target = 1 ORDER BY pub_timestamp DESC, id DESC LIMIT 5")
+    elif cat_key in ("الصحف", "فيسبوك", "يوتيوب", "إكس"):
+      c.execute("SELECT * FROM articles WHERE platform = ? ORDER BY pub_timestamp DESC, id DESC LIMIT 5", (cat_key,))
+    else:
+      c.execute("SELECT * FROM articles ORDER BY pub_timestamp DESC, id DESC LIMIT 5")
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+  except Exception:
+    pass
+
+  if not rows:
+    msg = f"⚖️ *المرصد القضائي*\n\n{icon} لا توجد منشورات مسجلة حالياً في قسم *{label}*."
+    try:
+      requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=6)
+    except Exception:
+      pass
+    return
+
+  resp_text = f"⚖️ *المرصد القضائي — أحدث منشورات {icon} {label}:*\n"
+  for idx, r in enumerate(rows, 1):
+    t_clean = clean_display_text(r.get("title") or "")
+    u_clean = clean_social_post_url(r.get("url") or "")
+    src_clean = clean_display_text(r.get("source_name") or r.get("platform") or "")
+    resp_text += f"\n*{idx}.* [{t_clean}]({u_clean})\n    🏷️ المصدر: {src_clean}\n"
+
+  inline_menu = [
+      [
+          {"text": "📰 الصحف", "callback_data": "cat_الصحف"},
+          {"text": "🟦 فيسبوك", "callback_data": "cat_فيسبوك"}
+      ],
+      [
+          {"text": "🟥 يوتيوب", "callback_data": "cat_يوتيوب"},
+          {"text": "⬛ إكس", "callback_data": "cat_إكس"}
+      ],
+      [
+          {"text": "🎯 الرصد المخصص", "callback_data": "cat_custom"},
+          {"text": "🌐 الكل", "callback_data": "cat_all"}
+      ]
+  ]
+
+  try:
+    requests.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={
+            "chat_id": chat_id,
+            "text": resp_text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+            "reply_markup": {"inline_keyboard": inline_menu},
+        },
+        timeout=8,
+    )
+  except Exception:
+    pass
+
+
+def _telegram_bot_updates_listener():
+  """خادم خفيف غير مانع (Background Polling) للاستماع لأوامر المستخدم ونقرات الأزرار في تلغرام والرد فوراً حسب الوسيلة المطلوبة."""
+  token, default_chat_id = _get_tg_credentials_fast()
+  if not token:
+    return
+  offset = 0
+  time.sleep(15.0)
+  while True:
+    try:
+      token_curr, c_curr = _get_tg_credentials_fast()
+      if not token_curr:
+        time.sleep(30)
+        continue
+      url_upd = f"https://api.telegram.org/bot{token_curr}/getUpdates?offset={offset}&timeout=20"
+      resp = requests.get(url_upd, timeout=25)
+      if resp.status_code == 200:
+        data = resp.json()
+        updates = data.get("result", [])
+        for upd in updates:
+          offset = max(offset, int(upd.get("update_id", 0)) + 1)
+          cb = upd.get("callback_query")
+          if cb:
+            cb_id = cb.get("id")
+            cb_data = cb.get("data", "")
+            cb_chat_id = str(cb.get("message", {}).get("chat", {}).get("id") or default_chat_id)
+            try:
+              requests.post(f"https://api.telegram.org/bot{token_curr}/answerCallbackQuery", json={"callback_query_id": cb_id}, timeout=4)
+            except Exception:
+              pass
+            if cb_data.startswith("cat_"):
+              target_cat = cb_data.replace("cat_", "")
+              _telegram_bot_send_category_response(target_cat, cb_chat_id, token_curr)
+            continue
+
+          msg = upd.get("message")
+          if msg:
+            text_in = str(msg.get("text") or "").strip().lower()
+            m_chat_id = str(msg.get("chat", {}).get("id") or default_chat_id)
+            if text_in in ("/press", "صحف", "الصحف", "📰 الصحف"):
+              _telegram_bot_send_category_response("الصحف", m_chat_id, token_curr)
+            elif text_in in ("/facebook", "/fb", "فيسبوك", "فايسبوك", "🟦 فيسبوك"):
+              _telegram_bot_send_category_response("فيسبوك", m_chat_id, token_curr)
+            elif text_in in ("/youtube", "/yt", "يوتيوب", "🟥 يوتيوب"):
+              _telegram_bot_send_category_response("يوتيوب", m_chat_id, token_curr)
+            elif text_in in ("/x", "/twitter", "تويتر", "إكس", "⬛ إكس"):
+              _telegram_bot_send_category_response("إكس", m_chat_id, token_curr)
+            elif text_in in ("/custom", "مخصص", "رصد مخصص", "🎯 رصد مخصص"):
+              _telegram_bot_send_category_response("custom", m_chat_id, token_curr)
+            elif text_in in ("/all", "الكل", "جميع", "🌐 الكل"):
+              _telegram_bot_send_category_response("all", m_chat_id, token_curr)
+            elif text_in in ("/start", "/help", "مساعدة"):
+              welcome_msg = (
+                  "⚖️ *مرحباً بك في بوت المرصد القضائي*\n\n"
+                  "منظومة الرصد الإعلامي الذكي للشؤون القضائية والعدلية بالمغرب.\n\n"
+                  "👇 *تصفح المنشورات مصنفة حسب الوسيلة عبر الأزرار أدناه:*\n"
+                  "• 📰 الصحف والمواقع المغربية (/press)\n"
+                  "• 🟦 منشورات فيسبوك المباشرة (/facebook)\n"
+                  "• 🟥 تغطيات يوتيوب القضائية (/youtube)\n"
+                  "• ⬛ منشورات منصة إكس (تويتر) (/x)\n"
+                  "• 🎯 رصد الصفحات المخصصة (/custom)\n"
+                  "• 🌐 جميع المنشورات (/all)"
+              )
+              main_menu = {
+                  "keyboard": [
+                      [{"text": "📰 الصحف"}, {"text": "🟦 فيسبوك"}],
+                      [{"text": "🟥 يوتيوب"}, {"text": "⬛ إكس"}],
+                      [{"text": "🎯 رصد مخصص"}, {"text": "🌐 الكل"}]
+                  ],
+                  "resize_keyboard": True,
+                  "persistent": True
+              }
+              requests.post(
+                  f"https://api.telegram.org/bot{token_curr}/sendMessage",
+                  json={"chat_id": m_chat_id, "text": welcome_msg, "parse_mode": "Markdown", "reply_markup": main_menu},
+                  timeout=6,
+              )
+    except Exception:
+      time.sleep(5)
+    time.sleep(1)
 
 
 def quick_process_and_save(
@@ -10365,10 +10912,22 @@ def quick_process_and_save(
   def _async_post_save_pipeline(newly_added: list, cfg_snap: dict):
     try:
       if newly_added:
-        fresh_for_tg = [r for r in newly_added if int(r.get("telegram_sent", 0)) == 0]
-        for rec in fresh_for_tg[:8]:
-          send_telegram_alert(rec, cfg_snap)
-          rec["telegram_sent"] = 1
+        ledger_check = load_telegram_sent_ledger()
+        truly_fresh = []
+        for r in newly_added:
+          if int(r.get("telegram_sent", 0)) == 1:
+            continue
+          r_keys = compute_article_dedup_keys(r.get("title", ""), r.get("url", ""))
+          if not (r_keys & ledger_check):
+            truly_fresh.append(r)
+
+        if truly_fresh:
+          if len(truly_fresh) >= 2:
+            _send_telegram_batch_digest_bulletin(truly_fresh, cfg_snap)
+          for rec in truly_fresh[:6]:
+            send_telegram_alert(rec, cfg_snap)
+            rec["telegram_sent"] = 1
+
         with lock:
           ledger_now = load_telegram_sent_ledger()
           for rec in newly_added:
@@ -10607,6 +11166,14 @@ def ensure_background_daemon():
       target=_daemon_loop, daemon=True, name=f"JusticeAutoMonitor_{DAEMON_CODE_VERSION}"
   )
   t.start()
+  try:
+    threading.Thread(
+        target=_telegram_bot_updates_listener,
+        daemon=True,
+        name=f"TelegramBotListener_{DAEMON_CODE_VERSION}",
+    ).start()
+  except Exception:
+    pass
 
 
 # دعم التشغيل السحابي المستقل عبر GitHub Actions (CRON_MODE=1) مع إيقاظ الموقع تلقائياً من وضع السبات
