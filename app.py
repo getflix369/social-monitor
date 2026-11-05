@@ -6261,6 +6261,8 @@ MOROCCAN_JUDICIAL_AND_PRESS_X_ACCOUNTS = [
     ("CSPJ_Maroc", "إكس • المجلس الأعلى للسلطة القضائية"),
     ("PMPMaroc", "إكس • رئاسة النيابة العامة"),
     ("DGSN_MAROC", "إكس • المديرية العامة للأمن الوطني"),
+    ("CourCassationMA", "إكس • محكمة النقض المغربية"),
+    ("ClubMagistrats", "إكس • نادي قضاة المغرب"),
     ("al3omk", "إكس • العمق المغربي"),
     ("alyaoum24", "إكس • اليوم 24"),
     ("madar21com", "إكس • مدار 21"),
@@ -6268,6 +6270,12 @@ MOROCCAN_JUDICIAL_AND_PRESS_X_ACCOUNTS = [
     ("2MInteractive", "إكس • القناة الثانية 2M"),
     ("SNRTnews", "إكس • SNRTnews"),
     ("Medi1TV", "إكس • مدي 1 تيفي"),
+    ("goudmag", "إكس • كود"),
+    ("akhbarona", "إكس • أخبارنا"),
+    ("rue20com", "إكس • زنقة 20"),
+    ("barlamane", "إكس • برلمان.كوم"),
+    ("TelQuelMaroc", "إكس • تيلكيل عربي"),
+    ("Le360ar", "إكس • Le360"),
 ]
 
 MOROCCAN_X_SYNDICATION_MIRRORS = [
@@ -6279,6 +6287,10 @@ MOROCCAN_X_SYNDICATION_MIRRORS = [
     {"x_handle": "akhbarona", "badge": "إكس • أخبارنا", "domain": "akhbarona.com", "rss": "https://www.akhbarona.com/feed"},
     {"x_handle": "rue20", "badge": "إكس • زنقة 20", "domain": "rue20.com", "rss": "https://rue20.com/feed"},
     {"x_handle": "barlamane", "badge": "إكس • برلمان.كوم", "domain": "barlamane.com", "rss": "https://www.barlamane.com/feed"},
+    {"x_handle": "kech24", "badge": "إكس • كش 24", "domain": "kech24.com", "rss": "https://www.kech24.com/feed"},
+    {"x_handle": "tanja24", "badge": "إكس • طنجة 24", "domain": "tanja24.com", "rss": "https://tanja24.com/feed"},
+    {"x_handle": "agadir24", "badge": "إكس • أكادير 24", "domain": "agadir24.info", "rss": "https://agadir24.info/feed"},
+    {"x_handle": "hespress", "badge": "إكس • هسبريس", "domain": "hespress.com", "rss": "https://www.hespress.com/feed"},
 ]
 
 
@@ -6344,7 +6356,7 @@ def _build_synthesized_fb_post_url(raw_u: str, post_text: str, fb_handle: str = 
 
 
 def _harvest_single_moroccan_x_mirror(args_tuple: tuple) -> list:
-  """استخراج روابط تغريدات ومنشورات إكس/تويتر الحقيقية المضمنة فعلياً داخل المقالات القضائية المغربية حصراً."""
+  """استخراج روابط تغريدات ومنشورات إكس/تويتر الحقيقية المضمنة فعلياً داخل المقالات القضائية المغربية حصراً (عبر WP-JSON و RSS feed)."""
   mirror_cfg, kw_input, max_age_sec = args_tuple
   if is_stop_requested():
     return []
@@ -6356,60 +6368,66 @@ def _harvest_single_moroccan_x_mirror(args_tuple: tuple) -> list:
   has_custom_kw = bool(kw_input and str(kw_input).strip())
 
   search_terms = (
-      [k.strip().strip('"\x27«» ') for k in re.split(r"[,،\n]+", str(kw_input)) if k.strip().strip('"\x27«» ')][:2]
+      [k.strip().strip('"\x27«» ') for k in re.split(r"[,،\n]+", str(kw_input)) if k.strip().strip('"\x27«» ')][:3]
       if has_custom_kw
-      else ["القضاء", "النيابة العامة"]
+      else ["القضاء", "محكمة", "النيابة العامة", "وكيل الملك"]
   )
-  base_host = f"www.{dom}" if dom in ("alayam24.com", "goud.ma", "akhbarona.com", "kech24.com", "barlamane.com") else dom
+  base_host = f"www.{dom}" if dom in ("alayam24.com", "goud.ma", "akhbarona.com", "kech24.com", "barlamane.com", "hespress.com") else dom
 
-  for sterm in search_terms[:1]:
+  found_raw_items = []
+  for sterm in search_terms[:2]:
     if is_stop_requested():
       break
-    wp_api = f"https://{base_host}/wp-json/wp/v2/posts?search={urllib.parse.quote(sterm)}&per_page=6&_embed=1"
+    wp_api = f"https://{base_host}/wp-json/wp/v2/posts?search={urllib.parse.quote(sterm)}&per_page=8&_embed=1"
     try:
-      r_wp = requests.get(wp_api, headers=DEFAULT_HEADERS, timeout=4.0)
+      r_wp = requests.get(wp_api, headers=DEFAULT_HEADERS, timeout=4.5)
       if r_wp.status_code == 200:
         posts_json = r_wp.json()
         if isinstance(posts_json, list):
-          for p_obj in posts_json:
-            if not isinstance(p_obj, dict):
-              continue
-            raw_t = clean_display_text(p_obj.get("title", {}).get("rendered", ""))
-            raw_html_c = p_obj.get("content", {}).get("rendered", "") or ""
-            if "twitter.com" not in raw_html_c.lower() and "x.com" not in raw_html_c.lower():
-              continue
-            m_emb_x = re.search(
-                r'https?://(?:www\.|mobile\.)?(?:twitter\.com|x\.com)/([A-Za-z0-9_]{1,30})/(?:status|statuses)/(\d{8,})',
-                raw_html_c,
-                re.IGNORECASE,
-            )
-            if not m_emb_x:
-              continue
-            tw_user = m_emb_x.group(1).strip()
-            tw_id = m_emb_x.group(2).strip()
-            x_post_u = f"https://x.com/{tw_user}/status/{tw_id}"
-            full_txt = clean_full_article_text(raw_html_c)
-            if not raw_t or len(full_txt) < 30:
-              continue
-            if not is_strictly_judicial_and_clean(raw_t, full_txt, x_post_u, kw_input, is_target=False):
-              continue
-            pub_iso = str(p_obj.get("date_gmt") or p_obj.get("date") or "").strip()
-            pub_str, pub_ts = extract_date_from_url_or_text(x_post_u, full_txt, pub_iso, fallback_offset_sec=1800)
-            if not has_custom_kw and max_age_sec > 0 and (now_ts - pub_ts) > max(max_age_sec, 14 * 86400):
-              continue
-            img_u = _extract_wp_media_from_post_json(p_obj, x_post_u)
-            out_posts.append({
-                "title": raw_t,
-                "url": f"{x_post_u}#plat=x",
-                "raw_snippet": full_txt[:15000],
-                "source_name": f"إكس • @{tw_user}",
-                "platform": "إكس",
-                "pub_date": pub_str,
-                "pub_timestamp": pub_ts,
-                "image_url": img_u,
-            })
+          found_raw_items.extend(posts_json)
     except Exception:
       pass
+
+  # فحص التغريدات المضمنة داخل كل مقال
+  seen_t_links = set()
+  for p_obj in found_raw_items:
+    if not isinstance(p_obj, dict):
+      continue
+    raw_t = clean_display_text(p_obj.get("title", {}).get("rendered", ""))
+    raw_html_c = p_obj.get("content", {}).get("rendered", "") or ""
+    if "twitter.com" not in raw_html_c.lower() and "x.com" not in raw_html_c.lower():
+      continue
+    # استخراج كافة روابط التغريدات المضمنة في المقال
+    m_all_x = re.findall(
+        r'https?://(?:www\.|mobile\.)?(?:twitter\.com|x\.com)/([A-Za-z0-9_]{1,30})/(?:status|statuses)/(\d{8,})',
+        raw_html_c,
+        re.IGNORECASE,
+    )
+    for tw_user, tw_id in m_all_x:
+      x_post_u = f"https://x.com/{tw_user}/status/{tw_id}"
+      if x_post_u in seen_t_links:
+        continue
+      seen_t_links.add(x_post_u)
+      full_txt = clean_full_article_text(raw_html_c)
+      if not raw_t or len(full_txt) < 25:
+        continue
+      if not is_strictly_judicial_and_clean(raw_t, full_txt, x_post_u, kw_input, is_target=False):
+        continue
+      pub_iso = str(p_obj.get("date_gmt") or p_obj.get("date") or "").strip()
+      pub_str, pub_ts = extract_date_from_url_or_text(x_post_u, full_txt, pub_iso, fallback_offset_sec=1800)
+      if not has_custom_kw and max_age_sec > 0 and (now_ts - pub_ts) > max(max_age_sec, 14 * 86400):
+        continue
+      img_u = _extract_wp_media_from_post_json(p_obj, x_post_u)
+      out_posts.append({
+          "title": raw_t,
+          "url": f"{x_post_u}#plat=x",
+          "raw_snippet": full_txt[:15000],
+          "source_name": f"إكس • @{tw_user}",
+          "platform": "إكس",
+          "pub_date": pub_str,
+          "pub_timestamp": pub_ts,
+          "image_url": img_u,
+      })
 
   return out_posts
 
@@ -6713,14 +6731,35 @@ def _extract_x_handle_and_status(url: str) -> tuple:
   return "", ""
 
 
+def _extract_x_tweet_from_html_markup(raw_html: str, default_handle: str = "", default_badge: str = "") -> list:
+  """استخراج التغريدات الحية من بنية HTML الخاصة بـ Twitter/X widgets و timeline embed."""
+  extracted = []
+  if not raw_html:
+    return extracted
+  # البحث عن أنماط التغريدات في HTML
+  tweet_blocks = re.findall(
+      r'data-tweet-id=["\x27](\d{8,})["\x27]|href=["\x27]https?://(?:twitter|x)\.com/([A-Za-z0-9_]+)/(?:status|statuses)/(\d{8,})["\x27]',
+      raw_html,
+      re.IGNORECASE,
+  )
+  for tb in tweet_blocks:
+    tw_id = tb[0] or tb[2]
+    tw_user = tb[1] or default_handle
+    if tw_id:
+      t_link = f"https://x.com/{tw_user or 'i'}/status/{tw_id}"
+      extracted.append((t_link, tw_user, tw_id))
+  return extracted
+
+
 def scrape_x_platform(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ):
-  """محرك رصد منصة إكس (Twitter سابقاً) فائق الكفاءة:
+  """محرك رصد منصة إكس (Twitter سابقاً) فائق الكفاءة والمتعدد المستويات:
   - يستهدف روابط التغريدات المباشرة الحقيقية (status/statuses) حصراً
-  - يفحص حسابات المؤسسات القضائية المغربية ووسائل الإعلام الوطنية
-  - يستخرج التغريدات القضائية المغربية المضمنة في التغطيات الإعلامية
-  - ينفذ استعلامات بحث محددة بدقة عبر محركات البحث المتعددة مع التطهير القضائي الصارم."""
+  - يدعم الحسابات الرسمية للمؤسسات القضائية المغربية ووسائل الإعلام الوطنية
+  - يستخرج التغريدات القضائية المغربية المضمنة في التغطيات الصحفية الوطنية
+  - ينفذ استعلامات بحث متقدمة وموسعة عبر 5 محركات بحث متوازية
+  - يفك شفرات روابط تويتر وإكس ويزيل وسوم التتبع."""
   items = []
   seen_urls = set()
   seen_norm_titles = set()
@@ -6769,17 +6808,17 @@ def scrape_x_platform(
       cand_item["source_name"] = f"إكس • @{u_handle}" if u_handle else "إكس (تويتر)"
     items.append(cand_item)
 
-  # الطبقة 1: فحص التغريدات المباشرة لحسابات المؤسسات القضائية المغربية ووسائل الإعلام الوطنية
+  # الطبقة 1: فحص التغريدات المباشرة لحسابات المؤسسات القضائية المغربية
   if progress_cb:
-    progress_cb(0.15, "فحص منشورات الحسابات القضائية المغربية على إكس (تويتر)...")
+    progress_cb(0.12, "فحص منشورات الحسابات القضائية المغربية على إكس (تويتر)...")
 
-  accounts_to_check = MOROCCAN_JUDICIAL_AND_PRESS_X_ACCOUNTS[:5] if has_custom_kw else MOROCCAN_JUDICIAL_AND_PRESS_X_ACCOUNTS[:8]
+  accounts_to_check = MOROCCAN_JUDICIAL_AND_PRESS_X_ACCOUNTS[:6] if has_custom_kw else MOROCCAN_JUDICIAL_AND_PRESS_X_ACCOUNTS[:12]
   for h_handle, h_badge in accounts_to_check:
     if is_stop_requested():
       break
     synd_url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{urllib.parse.quote(h_handle)}"
     try:
-      rs = requests.get(synd_url, headers=DEFAULT_HEADERS, timeout=4.0)
+      rs = requests.get(synd_url, headers=DEFAULT_HEADERS, timeout=3.5)
       if rs.status_code == 200 and rs.text:
         m_next = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', rs.text, re.DOTALL)
         if m_next:
@@ -6811,13 +6850,13 @@ def scrape_x_platform(
     except Exception:
       pass
 
-  # الطبقة 2: استخراج روابط تغريدات إكس القضائية المضمنة في التغطيات الصحفية
+  # الطبقة 2: استخراج روابط تغريدات إكس القضائية المضمنة في التغطيات الصحفية الوطنية
   if not is_stop_requested():
     if progress_cb:
-      progress_cb(0.40, "جلب التغريدات القضائية المضمنة في التغطيات الإعلامية المغربية...")
-    x_mirror_tasks = [(m_cfg, keywords_input, max_age) for m_cfg in MOROCCAN_X_SYNDICATION_MIRRORS[:6]]
+      progress_cb(0.35, "جلب التغريدات القضائية المضمنة في التغطيات الإعلامية المغربية...")
+    x_mirror_tasks = [(m_cfg, keywords_input, max_age) for m_cfg in MOROCCAN_X_SYNDICATION_MIRRORS[:10]]
     try:
-      with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
         for x_posts in pool.map(_harvest_single_moroccan_x_mirror, x_mirror_tasks):
           for xp in x_posts:
             _add_x_item_safely(xp)
@@ -6827,7 +6866,7 @@ def scrape_x_platform(
   # الطبقة 3: استعلامات موجهة بدقة إلى روابط التغريدات /status/ عبر محركات البحث المتعددة
   if not is_stop_requested():
     if progress_cb:
-      progress_cb(0.65, "البحث الموسع عن منشورات إكس المغربية المباشرة عبر محركات البحث...")
+      progress_cb(0.60, "البحث الموسع عن منشورات إكس المغربية المباشرة عبر محركات البحث...")
 
     targeted_x_queries = []
     if has_custom_kw:
@@ -6836,6 +6875,8 @@ def scrape_x_platform(
         targeted_x_queries.append(f'site:x.com/*/status/ "{kw_tok}" المغرب')
         targeted_x_queries.append(f'site:twitter.com/*/status/ "{kw_tok}" المغرب')
         targeted_x_queries.append(f'site:x.com "{kw_tok}" المغرب قضاء')
+        targeted_x_queries.append(f'site:x.com/*/status/ "{kw_tok}"')
+        targeted_x_queries.append(f'site:twitter.com/*/status/ "{kw_tok}"')
     else:
       targeted_x_queries = [
           'site:x.com/*/status/ "المجلس الأعلى للسلطة القضائية" المغرب',
@@ -6846,38 +6887,61 @@ def scrape_x_platform(
           'site:twitter.com/*/status/ ("الوكيل العام للملك" OR "وكيل الملك") المغرب',
           'site:x.com/*/status/ "القضاء المغربي"',
           'site:x.com/*/status/ ("المحكمة الابتدائية" OR "محكمة الاستئناف") المغرب',
+          'site:x.com/*/status/ "قضاة المغرب"',
+          'site:twitter.com/*/status/ "الشرطة القضائية" المغرب',
+          'site:x.com "المجلس الأعلى للسلطة القضائية"',
+          'site:x.com "رئاسة النيابة العامة" المغرب',
+          'site:twitter.com/Justice_gov_ma/status/',
+          'site:twitter.com/CSPJ_Maroc/status/',
+          'site:twitter.com/PMPMaroc/status/',
+          'site:x.com/Justice_gov_ma/status/',
+          'site:x.com/CSPJ_Maroc/status/',
+          'site:x.com/PMPMaroc/status/',
       ]
 
-    for xq in targeted_x_queries[:8]:
+    def _run_one_x_query(xq_str: str) -> list:
+      if is_stop_requested():
+        return []
+      return _multi_engine_web_search(xq_str, platform="إكس", default_source="إكس (تويتر)", max_results=16)
+
+    search_batches = []
+    try:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+        for b_res in pool.map(_run_one_x_query, targeted_x_queries[:16]):
+          if b_res:
+            search_batches.extend(b_res)
+    except Exception:
+      pass
+
+    for entry in search_batches:
       if is_stop_requested():
         break
-      for entry in _multi_engine_web_search(xq, platform="إكس", default_source="إكس (تويتر)", max_results=14):
-        u_cand = clean_social_post_url(entry.get("url", ""))
-        if not u_cand or not any(dom in u_cand.lower() for dom in ("x.com", "twitter.com")):
-          continue
-        u_h, u_sid = _extract_x_handle_and_status(u_cand)
-        if not u_sid:
-          continue
-        raw_t = clean_display_text(entry.get("title", ""))
-        raw_s = clean_full_article_text(entry.get("raw_snippet", ""))
-        comb_txt = f"{raw_t} — {raw_s}" if (raw_t and raw_s and raw_t not in raw_s) else (raw_s or raw_t)
-        if len(comb_txt) < 18:
-          continue
-        if not is_strictly_judicial_and_clean(raw_t, comb_txt, u_cand, kw_clean_str, is_target=False):
-          continue
-        pub_str, pub_ts = extract_date_from_url_or_text(u_cand, comb_txt, entry.get("pub_date", ""), fallback_offset_sec=3600)
-        if not has_custom_kw and max_age > 0 and (now_ts - pub_ts) > max(max_age, 14 * 86400):
-          continue
-        _add_x_item_safely({
-            "title": raw_t or comb_txt[:110],
-            "url": u_cand,
-            "raw_snippet": comb_txt[:2500],
-            "source_name": f"إكس • @{u_h}" if u_h else "إكس (تويتر)",
-            "platform": "إكس",
-            "pub_date": pub_str,
-            "pub_timestamp": pub_ts,
-            "image_url": entry.get("image_url", ""),
-        })
+      u_cand = clean_social_post_url(entry.get("url", ""))
+      if not u_cand or not any(dom in u_cand.lower() for dom in ("x.com", "twitter.com")):
+        continue
+      u_h, u_sid = _extract_x_handle_and_status(u_cand)
+      if not u_sid:
+        continue
+      raw_t = clean_display_text(entry.get("title", ""))
+      raw_s = clean_full_article_text(entry.get("raw_snippet", ""))
+      comb_txt = f"{raw_t} — {raw_s}" if (raw_t and raw_s and raw_t not in raw_s) else (raw_s or raw_t)
+      if len(comb_txt) < 18:
+        continue
+      if not is_strictly_judicial_and_clean(raw_t, comb_txt, u_cand, kw_clean_str, is_target=False):
+        continue
+      pub_str, pub_ts = extract_date_from_url_or_text(u_cand, comb_txt, entry.get("pub_date", ""), fallback_offset_sec=3600)
+      if not has_custom_kw and max_age > 0 and (now_ts - pub_ts) > max(max_age, 14 * 86400):
+        continue
+      _add_x_item_safely({
+          "title": raw_t or comb_txt[:110],
+          "url": u_cand,
+          "raw_snippet": comb_txt[:2500],
+          "source_name": f"إكس • @{u_h}" if u_h else "إكس (تويتر)",
+          "platform": "إكس",
+          "pub_date": pub_str,
+          "pub_timestamp": pub_ts,
+          "image_url": entry.get("image_url", ""),
+      })
 
   items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
   gc.collect()
@@ -11085,23 +11149,40 @@ def _detect_public_app_url() -> str:
 
 
 def _ping_keep_alive_endpoints():
-  """إرسال نبضات HTTP خفيفة (Self-Ping) للخادم المحلي والرابط العام للمنصة لمنع دخول السيرفر في وضع السبات (Sleep Mode)."""
+  """إرسال نبضات HTTP خفيفة وذكية (Active Keep-Alive Self-Ping) لمنع منصة Streamlit من إدخال الموقع في وضع السبات (Sleep Mode)."""
   rt = get_shared_runtime()
   port = os.environ.get("PORT") or os.environ.get("STREAMLIT_SERVER_PORT") or "8501"
   targets_to_ping = [
       f"http://127.0.0.1:{port}/_stcore/health",
+      f"http://127.0.0.1:{port}/_stcore/stream",
       f"http://127.0.0.1:{port}/",
   ]
   pub_u = _detect_public_app_url()
   if pub_u and pub_u.startswith("http"):
     targets_to_ping.insert(0, f"{pub_u}/_stcore/health")
-    targets_to_ping.insert(1, pub_u)
+    targets_to_ping.insert(1, f"{pub_u}/")
+
+  ping_headers = dict(DEFAULT_HEADERS)
+  ping_headers.update({
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 AlMarsadKeepAlive/2.0",
+      "Cache-Control": "no-cache",
+      "Pragma": "no-cache",
+  })
 
   for ping_u in targets_to_ping:
     try:
-      requests.get(ping_u, headers=DEFAULT_HEADERS, timeout=4)
+      requests.get(ping_u, headers=ping_headers, timeout=4.0)
     except Exception:
       pass
+
+  # الاستفادة من خدمة Cron-Job / Webhook العامة إن تم تزويدها في متغيرات البيئة
+  webhook_pinger = os.environ.get("KEEP_ALIVE_WEBHOOK_URL", "").strip()
+  if webhook_pinger and webhook_pinger.startswith("http"):
+    try:
+      requests.get(webhook_pinger, headers=ping_headers, timeout=4.0)
+    except Exception:
+      pass
+
   rt["last_keepalive_ping_ts"] = time.time()
 
 
@@ -11142,7 +11223,8 @@ def ensure_background_daemon():
       if rt.get("daemon_version") != my_version:
         break
       now_t = time.time()
-      if now_t - last_keepalive >= 180:
+      # إرسال نبضة إيقاظ كل 90 ثانية لضمان عدم وصول السيرفر إلى حد السبات الخامل (Idle Timeout)
+      if now_t - last_keepalive >= 90:
         last_keepalive = now_t
         try:
           _ping_keep_alive_endpoints()
@@ -12204,6 +12286,23 @@ input {
 }
 </style>
 """)
+render_html("""
+<script>
+// نبضات متزامنة في المتصفح لمنع قطع جلسة Streamlit وتجاوز خمول الصفحة
+(function() {
+    if (window._marsad_keep_alive_active) return;
+    window._marsad_keep_alive_active = true;
+    console.log("⚡ [المرصد القضائي] تم تفعيل نظام منع السبات التلقائي في المتصفح");
+
+    setInterval(function() {
+        try {
+            fetch(window.location.href, { method: "HEAD", cache: "no-store" }).catch(function(){});
+        } catch(e) {}
+    }, 120000); // إرسال نبضة كل دقيقتين لمنع إغلاق WebSocket
+})();
+</script>
+""")
+
 
 # =====================================================================
 # 13. تحميل الإعدادات والبيانات
@@ -12262,11 +12361,19 @@ with st.sidebar:
     _ping_keep_alive_endpoints()
     st.success("تم حفظ الإعدادات وتحديث اسم البوت إلى (المرصد القضائي) بنجاح")
 
-  st.markdown("### ⚡ استمرارية الرصد 24/7 ومنع السبات")
+  st.markdown("### ⚡ استمرارية الرصد 24/7 وتجاوز قيود السبات (Sleep Mode)")
+  st.info(
+      "💡 **كيفية تجاوز وضع السبات (Sleep Mode) نهائياً على المنصة المجانية:**\n"
+      "1. **برمجياً داخل السيرفر والمتصفح**: تم دمج نظام نبضات ذاتية دورية (Self-Ping كل 90 ثانية) ونبضات في المتصفح لمنع خمول التطبيق.\n"
+      "2. **رصد خارجي مستقل 24/7 مجاناً عبر GitHub Actions**: يقوم خادم GitHub بتشغيل الرصد وإرسال الأخبار إلى بوت تلغرام في موعدها حتى لو كان الموقع مغلقاً أو نائماً، كما يوقظ موقعك تلقائياً.\n"
+      "3. **استخدام خدمات الاستدعاء الخارجي (UptimeRobot / Cron-Job.org)**: يمكنك إضافة رابط موقعك في خدمة UptimeRobot المجانية لفحصه كل 5 دقائق ليبقى مستيقظاً على مدار الساعة."
+  )
+
   gh_workflow_yaml = """name: Al-Marsad Al-Qadai 24/7 Auto Monitor & Keep-Alive
 
 on:
   schedule:
+    # يعمل تلقائياً كل ساعة على مدار الساعة لإيقاظ الموقع وتنفيذ الرصد
     - cron: '0 * * * *'
   workflow_dispatch:
 
@@ -12286,7 +12393,7 @@ jobs:
         run: |
           pip install requests beautifulsoup4 duckduckgo-search python-docx pillow
 
-      - name: Run Headless Judicial Monitor & Wake Up App
+      - name: Wake Up Streamlit App & Run Judicial Monitor
         env:
           CRON_MODE: "1"
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -12294,15 +12401,29 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           STREAMLIT_APP_URL: ${{ secrets.STREAMLIT_APP_URL }}
         run: |
+          # 1. إيقاظ المنصة فوراً عبر طلب HTTP
+          if [ -n "$STREAMLIT_APP_URL" ]; then
+            echo "Pinging Streamlit App to wake up from sleep: $STREAMLIT_APP_URL"
+            curl -s -L "$STREAMLIT_APP_URL" > /dev/null || true
+            curl -s -L "$STREAMLIT_APP_URL/_stcore/health" > /dev/null || true
+          fi
+          # 2. تشغيل الرصد الشامل وإرسال الأخبار لتلغرام ومزامنة السحابة
           python app.py
 """
-  st.download_button(
-      "⚡ تحميل ملف GitHub Actions للرصد 24/7 بدون توقف",
-      data=gh_workflow_yaml.encode("utf-8"),
-      file_name="marsad_qadai_cron.yml",
-      mime="text/yaml",
-      help="ضعه في مسار .github/workflows/marsad_qadai_cron.yml في مستودع GitHub ليعمل الرصد التلقائي وإرسال الأخبار لتلغرام كل ساعة حتى لو دخل الموقع في وضع السبات.",
-  )
+  col_dl1, col_dl2 = st.columns(2)
+  with col_dl1:
+    st.download_button(
+        "⚡ تحميل ملف GitHub Actions (marsad_cron.yml)",
+        data=gh_workflow_yaml.encode("utf-8"),
+        file_name="marsad_cron.yml",
+        mime="text/yaml",
+        use_container_width=True,
+        help="ضعه داخل مستودع GitHub في المسار: .github/workflows/marsad_cron.yml ليقوم بالرصد كل ساعة وإيقاظ موقعك تلقائياً.",
+    )
+  with col_dl2:
+    if st.button("🔔 إرسال نبضة إيقاظ فحص فوري (Ping Now)", use_container_width=True):
+      _ping_keep_alive_endpoints()
+      st.success("✅ تم إرسال نبضات التحقق والإيقاظ للسيرفر المحلي والرابط العام بنجاح.")
 
   st.markdown("### 🗄️ النسخ الاحتياطي")
   if os.path.exists(ARCHIVE_JSON_FILE) and os.path.getsize(ARCHIVE_JSON_FILE) > 2:
