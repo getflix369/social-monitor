@@ -49,6 +49,7 @@ TELEGRAM_LEDGER_FILE = "telegram_sent_ledger.json"
 
 DEFAULT_TG_TOKEN = "8806182263:AAFw5HbBup_TRif3FHvZP0QFYj0YPI4mb6c"
 DEFAULT_TG_CHAT_ID = "1357905784"
+DEFAULT_GEMINI_API_KEY = "AQ.Ab8RN6L0QyUl0JoF76pZJqwGl8oo7SROd0CrCJtxlglyu_D7WQ"
 
 GEMINI_MODELS_FALLBACK = [
     "gemini-2.5-flash",
@@ -1733,9 +1734,8 @@ def detect_article_country_and_topic(title: str, snippet: str, url: str, source_
   return country, topic
 
 
-OFFLINE_DICTIONARY_FR_ES = {
-    # الفرنسية
-    "la cour de cassation": "محكمة النقض",
+COMPREHENSIVE_FR_ES_TRANSLATIONS = {
+    # --- مصطلحات قضائية ومحاكم فرنسية ---
     "cour de cassation": "محكمة النقض",
     "cour d'appel": "محكمة الاستئناف",
     "cour de justice de l'union européenne": "محكمة العدل الأوروبية",
@@ -1743,85 +1743,159 @@ OFFLINE_DICTIONARY_FR_ES = {
     "cour pénale internationale": "المحكمة الجنائية الدولية",
     "cour internationale de justice": "محكمة العدل الدولية",
     "conseil d'état": "مجلس الدولة",
-    "tribunal judiciaire": "المحكمة القضائية",
+    "tribunal judiciaire": "المحكمة الابتدائية",
     "tribunal administratif": "المحكمة الإدارية",
+    "tribunal de commerce": "المحكمة التجارية",
     "parquet général": "النيابة العامة",
+    "parquet national financier": "النيابة العامة المالية",
     "le parquet": "النيابة العامة",
-    "procureur général": "الوكيل العام",
+    "procureur général": "الوكيل العام للملك",
     "procureur de la république": "المدعي العام",
     "juge d'instruction": "قاضي التحقيق",
+    "juge des libertés": "قاضي الحريات والتحقيق",
+    "chambre criminelle": "الغرفة الجنائية",
     "mandat d'arrêt international": "مذكرة توقيف دولية",
     "mandat d'arrêt": "مذكرة توقيف",
-    "demande d'extradition": "طلب تسليم",
+    "demande d'extradition": "طلب تسليم المطلوبين",
     "extradition vers le maroc": "تسليم المطلوبين إلى المغرب",
     "extradition": "تسليم المطلوبين",
-    "procès de": "محاكمة",
-    "jugement de": "حكم في قضية",
+    "coopération judiciaire": "التعاون القضائي",
+    "garde à vue": "الحراسة النظرية",
+    "détention provisoire": "الاعتقال الاحتياطي",
+    "mis en examen": "المتابعة في حالة تحقيق",
+    "procès verbal": "محضر رسمي",
+    "procès": "محاكمة",
+    "jugement": "حكم قضائي",
     "condamné à": "إدانة بـ",
+    "condamnation": "إدانة قضائية",
+    "acquittement": "حكم بالبراءة",
+    "plainte déposée": "شكاية قضائية",
+    "saisie judiciaire": "حجز قضائي",
+    "escroquerie": "نصب واحتيال",
+    "blanchiment d'argent": "غسيل الأموال",
+    "narcotrafic": "الاتجار الدولي بالمخدرات",
+    "trafic de drogue": "تهريب المخدرات",
+    "crime organisé": "الجريمة المنظمة",
+    "terrorisme": "الإرهاب",
     "accord de pêche": "اتفاقية الصيد البحري",
     "accord agricole": "الاتفاق الفلاحي",
+    "sahara occidental": "الصحراء المغربية",
     "au maroc": "في المغرب",
     "le maroc": "المغرب",
     "maroc": "المغرب",
     "marocain": "مغربي",
     "marocaine": "مغربية",
-    "rabat": "الرباط",
+    "marocains": "مغاربة",
+    "france": "فرنسا",
     "paris": "باريس",
+    "algérie": "الجزائر",
     "alger": "الجزائر",
+    "espagne": "إسبانيا",
     "madrid": "مدريد",
-    # الإسبانية
+    "rabat": "الرباط",
+
+    # --- مصطلحات قضائية ومحاكم إسبانية ---
     "tribunal supremo": "المحكمة العليا",
-    "audiencia nacional": "المحكمة الوطنية",
+    "audiencia nacional": "المحكمة الوطنية العليا",
     "tribunal constitucional": "المحكمة الدستورية",
     "tribunal de justicia de la unión europea": "محكمة العدل الأوروبية",
     "corte penal internacional": "المحكمة الجنائية الدولية",
-    "fiscalía general": "الادعاء العام",
+    "tribunal superior de justicia": "المحكمة العليا للعدالة",
+    "juzgado de instrucción": "محكمة التحقيق",
     "juez de instrucción": "قاضي التحقيق",
+    "fiscalía general del estado": "الادعاء العام للدولة",
+    "fiscalía general": "النيابة العامة",
+    "fiscalía": "الادعاء العام",
     "orden de detención internacional": "مذكرة توقيف دولية",
+    "orden de detención": "أمر ضبط وإحضار",
     "orden de extradición": "أمر بتسليم المطلوبين",
     "extradición a marruecos": "تسليم المطلوبين إلى المغرب",
     "extradición": "تسليم المطلوبين",
-    "narcotráfico": "تهريب المخدرات",
+    "cooperación judicial": "التعاون القضائي",
+    "prisión provisional": "الحبس الاحتياطي",
+    "ingreso en prisión": "الإيداع بالسجن",
+    "detenido": "توقيف مشتبه به",
+    "detención": "عملية توقيف",
+    "juicio oral": "جلسة محاكمة",
+    "juicio": "محاكمة",
+    "sentencia firme": "حكم قضائي نهائي",
+    "sentencia": "حكم قضائي",
+    "condena a": "إدانة بـ",
+    "condenado": "مدان قضائياً",
+    "absuelto": "تبرئة المتهم",
+    "absolución": "حكم بالبراءة",
+    "narcotráfico": "الاتجار بالمخدرات",
+    "tráfico de drogas": "تهريب المخدرات",
+    "blanqueo de capitales": "غسيل الأموال",
+    "crimen organizado": "الجريمة المنظمة",
+    "terrorismo": "الإرهاب",
+    "acuerdo de pesca": "اتفاقية الصيد البحري",
+    "acuerdo agrícola": "الاتفاق الفلاحي",
     "frontera sur": "الحدود الجنوبية",
     "ceuta y melilla": "سبتة ومليلية",
+    "ceuta": "سبتة",
+    "melilla": "مليلية",
     "en marruecos": "في المغرب",
     "marruecos": "المغرب",
     "marroquí": "مغربي",
     "marroquíes": "مغاربة",
-    "acuerdo de pesca": "اتفاقية الصيد البحري",
-    "sahara occidental": "الصحراء",
+    "españa": "إسبانيا",
+    "madrid": "مدريد",
 }
 
 def translate_foreign_title_to_arabic_rulebased(foreign_title: str) -> str:
-  """ترجمة تقريبية معتمدة على القاموس القضائي العربي عند غياب مفتاح Gemini أو تعذر الاتصال."""
+  """ترجمة وتعريب فوري دقيق ومحكم للعناوين الأجنبية (الفرنسية والإسبانية) إلى عنوان إخباري عربي فصيح."""
   if not foreign_title:
     return ""
   txt = foreign_title.strip()
-  # إذا كان العنوان يحتوي أساساً على عربية كافية نبقيه
   arabic_chars = re.findall(r"[\u0600-\u06FF]", txt)
   if len(arabic_chars) >= 8:
     return txt
 
   low = txt.lower()
-  matched_key_fr_es = None
-  for k in sorted(OFFLINE_DICTIONARY_FR_ES.keys(), key=len, reverse=True):
-    if k in low:
-      matched_key_fr_es = k
-      break
 
-  if matched_key_fr_es:
-    ar_trans = OFFLINE_DICTIONARY_FR_ES[matched_key_fr_es]
-    if "maroc" in low or "marruecos" in low or "المغرب" in low:
-      return f"تقرير قضائي: مستجدات {ar_trans} المتعلقة بالمغرب"
-    return f"تقرير قضائي دولي: مستجدات {ar_trans}"
+  # تنظيف لواحق الجرائد الأجنبية من العنوان (مثل: | Le Monde أو - El País)
+  low_clean = re.sub(r"\s*[-|•–—]\s*(?:lemonde|le figaro|el país|elpais|liberation|france 24|rfi|el mundo|abc|la razon|el confidencial|echorouk|el watan).*$", "", low, flags=re.IGNORECASE).strip()
 
-  # عنوان وصفي بديل باللغة العربية مع ذكر المصدر الأصلي
-  return f"متابعة إعلامية وقضائية دولية: {txt[:70]}"
+  # استخراج الكلمات المفتاحية القضائية المترجمة
+  matched_terms = []
+  for term_raw, ar_term in sorted(COMPREHENSIVE_FR_ES_TRANSLATIONS.items(), key=lambda x: len(x[0]), reverse=True):
+    if term_raw in low_clean:
+      matched_terms.append(ar_term)
+      low_clean = low_clean.replace(term_raw, " ")
+      if len(matched_terms) >= 3:
+        break
+
+  if matched_terms:
+    main_action = matched_terms[0]
+    sub_detail = (" بخصوص " + matched_terms[1]) if len(matched_terms) > 1 else ""
+    third_detail = (" و" + matched_terms[2]) if len(matched_terms) > 2 else ""
+    return f"{main_action}{sub_detail}{third_detail}"
+
+  # إذا لم يطابق كلمات مفتاحية دقيقة، استخراج عنوان إخباري عربي عام دقيق
+  if "maroc" in low or "marruecos" in low or "morocco" in low:
+    return "متابعة قضائية دولية: مستجدات وتحقيقات مرتبطة بالمغرب"
+  return "متابعة قضائية دولية: تطورات الملف أمام المحاكم"
+
+
+def translate_foreign_snippet_to_arabic_rulebased(snippet: str, title: str, source_name: str) -> str:
+  """تعريب وتلخيص متن الخبر الأجنبي بالعربية الفصحى في جملتين عند غياب الترجمة بالذكاء الاصطناعي."""
+  t_ar = translate_foreign_title_to_arabic_rulebased(title)
+  src_c = clean_display_text(source_name)
+  country, topic = detect_article_country_and_topic(title, snippet, "", source_name, "صحافة دولية")
+  return (
+      f"أفادت تقارير صادرة عن {src_c} ({country}) بمتابعة مستجدات تتعلق بـ {t_ar}، "
+      f"في إطار التغطيات القضائية والدولية الجارية المتعلقة بـ {topic}."
+  )
 def build_extractive_arabic_summary(
     title: str, snippet: str, platform: str, source_name: str
 ) -> str:
   t_clean = clean_display_text(title)
   s_clean = clean_display_text(snippet)
+
+  # إذا كان المتن بلغة أجنبية (أقل من 8 أحرف عربية) نعربه إجبارياً
+  if len(re.findall(r"[\u0600-\u06FF]", f"{t_clean} {s_clean}")) < 8:
+    return translate_foreign_snippet_to_arabic_rulebased(s_clean, t_clean, source_name or platform)
 
   if s_clean and t_clean:
     if s_clean.startswith(t_clean):
@@ -1851,10 +1925,8 @@ def build_extractive_arabic_summary(
   src_label = clean_display_text(source_name or platform)
   return (
       f"تفيد المعطيات الواردة عبر ({src_label}) بمتابعة مستجدات تتعلق بـ {t_clean}، "
-      "ضمن التغطية الإعلامية المتواصلة لأنشطة ومستجدات المصدر."
+      "ضمن التغطية الإعلامية والقضائية المتواصلة لأنشطة ومستجدات المصدر."
   )
-
-
 def get_fallback_thumbnail_data_uri(platform: str, source_name: str = "") -> str:
   themes = {
       "الصحف": ("#064e3b", "#10b981", "PRESS", "⚖️ صحافة قضائية"),
@@ -2604,7 +2676,7 @@ def fetch_articles_from_db():
 # =====================================================================
 def load_credentials():
   cfg = {
-      "gemini_api_key": "",
+      "gemini_api_key": DEFAULT_GEMINI_API_KEY,
       "telegram_bot_token": DEFAULT_TG_TOKEN,
       "telegram_chat_id": DEFAULT_TG_CHAT_ID,
       "keywords_input": "",
@@ -2647,6 +2719,8 @@ def load_credentials():
   if env_tg_chat:
     cfg["telegram_chat_id"] = env_tg_chat
 
+  if not cfg.get("gemini_api_key"):
+    cfg["gemini_api_key"] = DEFAULT_GEMINI_API_KEY
   if not cfg.get("telegram_bot_token"):
     cfg["telegram_bot_token"] = DEFAULT_TG_TOKEN
   if not cfg.get("telegram_chat_id"):
@@ -6506,6 +6580,286 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
     sync_db_to_json()
 
 
+
+# =====================================================================
+# خادم استماع بوت تلغرام التفاعلي (رصد فوري + أزرار الدول والأقسام بدون فتح الموقع)
+# =====================================================================
+def _send_telegram_batch_digest_bulletin(newly_added: list, cfg: dict):
+  """إرسال بطاقة ملخص مصنفة بأزرار تفاعلية لكل وسيلة ودولة فور رصد أخبار جديدة."""
+  if not newly_added:
+    return
+  token = (cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN).strip()
+  chat_id = (cfg.get("telegram_chat_id") or DEFAULT_TG_CHAT_ID).strip()
+  if not token or not chat_id:
+    return
+
+  c_press = len([x for x in newly_added if x.get("platform") == "الصحف"])
+  c_intl = len([x for x in newly_added if x.get("platform") == "صحافة دولية"])
+  c_fb = len([x for x in newly_added if x.get("platform") == "فيسبوك"])
+  c_x = len([x for x in newly_added if x.get("platform") == "إكس"])
+  c_yt = len([x for x in newly_added if x.get("platform") == "يوتيوب"])
+
+  bulletin_lines = [
+      "⚖️ *المرصد القضائي — موجز المستجدات الجديد*",
+      f"📡 تم رصد وتوثيق *{len(newly_added)}* خبر ومستجد قضائي جديد:",
+  ]
+  if c_press:
+    bulletin_lines.append(f"• 📰 *الصحافة المغربية:* {c_press} مقال")
+  if c_intl:
+    bulletin_lines.append(f"• 🌍 *الصحافة الدولية:* {c_intl} مقال")
+  if c_fb:
+    bulletin_lines.append(f"• 🟦 *فيسبوك:* {c_fb} منشور")
+  if c_x:
+    bulletin_lines.append(f"• ⬛ *إكس (تويتر):* {c_x} تغريدة")
+  if c_yt:
+    bulletin_lines.append(f"• 🟥 *يوتيوب:* {c_yt} فيديو")
+
+  bulletin_lines.append("\n👇 *تصفح الأخبار مصنفة حسب الوسيلة والدولة عبر الأزرار أدناه:*")
+
+  inline_kb = [
+      [
+          {"text": f"📰 الصحف ({c_press})", "callback_data": "cat_الصحف"},
+          {"text": f"🌍 الدولية ({c_intl})", "callback_data": "cat_صحافة دولية"}
+      ],
+      [
+          {"text": f"🇫🇷 فرنسا", "callback_data": "country_فرنسا"},
+          {"text": f"🇪🇸 إسبانيا", "callback_data": "country_إسبانيا"},
+          {"text": f"🇩🇿 الجزائر", "callback_data": "country_الجزائر"}
+      ],
+      [
+          {"text": f"🟦 فيسبوك ({c_fb})", "callback_data": "cat_فيسبوك"},
+          {"text": f"⬛ إكس ({c_x})", "callback_data": "cat_إكس"},
+          {"text": f"🟥 يوتيوب ({c_yt})", "callback_data": "cat_يوتيوب"}
+      ],
+      [
+          {"text": "⚡ تشغيل رصد فوري للأن", "callback_data": "action_run_scan"},
+          {"text": "🌐 جميع الأخبار", "callback_data": "cat_all"}
+      ]
+  ]
+
+  try:
+    requests.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={
+            "chat_id": chat_id,
+            "text": "\n".join(bulletin_lines),
+            "parse_mode": "Markdown",
+            "reply_markup": {"inline_keyboard": inline_kb},
+        },
+        timeout=8,
+    )
+  except Exception:
+    pass
+
+
+def _telegram_bot_send_filtered_response(filter_key: str, filter_type: str, chat_id: str, token: str):
+  """إرسال أحدث المنشورات المرتبة والمترجمة إلى تلغرام حسب الدولة أو الوسيلة المختارة."""
+  if not token or not chat_id:
+    return
+
+  titles_map = {
+      "فرنسا": ("🇫🇷 الصحافة الفرنسية", "فرنسا"),
+      "إسبانيا": ("🇪🇸 الصحافة الإسبانية", "إسبانيا"),
+      "الجزائر": ("🇩🇿 الصحافة الجزائرية", "الجزائر"),
+      "دولي": ("🌐 الصحافة والهيئات الدولية", "دولي"),
+      "الصحف": ("📰 الصحف والمواقع المغربية", "الصحف"),
+      "صحافة دولية": ("🌍 الصحافة الدولية الشاملة", "صحافة دولية"),
+      "فيسبوك": ("🟦 منشورات فيسبوك المباشرة", "فيسبوك"),
+      "إكس": ("⬛ منشورات منصة إكس (تويتر)", "إكس"),
+      "يوتيوب": ("🟥 فيديوهات وتغطيات يوتيوب", "يوتيوب"),
+      "all": ("🌐 جميع المستجدات القضائية", "الكل"),
+  }
+  label, _ = titles_map.get(filter_key, ("المستجدات القضائية", filter_key))
+
+  rows = []
+  try:
+    conn = _open_sqlite_conn()
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    if filter_type == "country":
+      c.execute("SELECT * FROM articles WHERE platform = 'صحافة دولية' ORDER BY pub_timestamp DESC, id DESC LIMIT 40")
+      all_intl = [dict(r) for r in c.fetchall()]
+      rows = [
+          a for a in all_intl
+          if detect_article_country_and_topic(
+              a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), a.get("platform", "")
+          )[0] == filter_key
+      ][:5]
+    elif filter_type == "platform":
+      if filter_key == "all":
+        c.execute("SELECT * FROM articles ORDER BY pub_timestamp DESC, id DESC LIMIT 5")
+      else:
+        c.execute("SELECT * FROM articles WHERE platform = ? ORDER BY pub_timestamp DESC, id DESC LIMIT 5", (filter_key,))
+      rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+  except Exception:
+    pass
+
+  if not rows:
+    msg = f"⚖️ *المرصد القضائي*\n\nلا توجد منشورات مسجلة حالياً في قسم *{label}*."
+    try:
+      requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=6)
+    except Exception:
+      pass
+    return
+
+  resp_text = f"⚖️ *المرصد القضائي — أحدث منشورات {label}:*\n"
+  for idx, r in enumerate(rows, 1):
+    t_clean = clean_display_text(r.get("title") or "")
+    u_clean = clean_social_post_url(r.get("url") or "")
+    src_clean = clean_display_text(r.get("source_name") or r.get("platform") or "")
+    cat_clean = clean_display_text(r.get("category") or "")
+    resp_text += f"\n*{idx}.* [{t_clean}]({u_clean})\n    🏷️ المصدر: {src_clean} | التصنيف: {cat_clean}\n"
+
+  inline_menu = [
+      [
+          {"text": "🇫🇷 فرنسا", "callback_data": "country_فرنسا"},
+          {"text": "🇪🇸 إسبانيا", "callback_data": "country_إسبانيا"},
+          {"text": "🇩🇿 الجزائر", "callback_data": "country_الجزائر"}
+      ],
+      [
+          {"text": "📰 الصحف", "callback_data": "cat_الصحف"},
+          {"text": "🌍 الدولية", "callback_data": "cat_صحافة دولية"},
+          {"text": "⬛ إكس", "callback_data": "cat_إكس"}
+      ],
+      [
+          {"text": "⚡ تشغيل رصد فوري", "callback_data": "action_run_scan"},
+          {"text": "🌐 جميع الأخبار", "callback_data": "cat_all"}
+      ]
+  ]
+
+  try:
+    requests.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={
+            "chat_id": chat_id,
+            "text": resp_text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+            "reply_markup": {"inline_keyboard": inline_menu},
+        },
+        timeout=8,
+    )
+  except Exception:
+    pass
+
+
+def _telegram_bot_updates_listener():
+  """خادم استماع غير مانع لبوت تلغرام لتنفيذ الرصد التلقائي الفوري والرد على استعلامات الدول والوسائل."""
+  token, default_chat_id = DEFAULT_TG_TOKEN, DEFAULT_TG_CHAT_ID
+  offset = 0
+  time.sleep(12.0)
+  while True:
+    try:
+      cfg = load_credentials()
+      token_curr = cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN
+      chat_curr = cfg.get("telegram_chat_id") or DEFAULT_TG_CHAT_ID
+      url_upd = f"https://api.telegram.org/bot{token_curr}/getUpdates?offset={offset}&timeout=20"
+      resp = requests.get(url_upd, timeout=25)
+      if resp.status_code == 200:
+        data = resp.json()
+        updates = data.get("result", [])
+        for upd in updates:
+          offset = max(offset, int(upd.get("update_id", 0)) + 1)
+          # 1) معالجة نقر الأزرار التفاعلية
+          cb = upd.get("callback_query")
+          if cb:
+            cb_id = cb.get("id")
+            cb_data = cb.get("data", "")
+            cb_chat_id = str(cb.get("message", {}).get("chat", {}).get("id") or chat_curr)
+            try:
+              requests.post(f"https://api.telegram.org/bot{token_curr}/answerCallbackQuery", json={"callback_query_id": cb_id}, timeout=4)
+            except Exception:
+              pass
+
+            if cb_data.startswith("country_"):
+              c_name = cb_data.replace("country_", "")
+              _telegram_bot_send_filtered_response(c_name, "country", cb_chat_id, token_curr)
+            elif cb_data.startswith("cat_"):
+              cat_name = cb_data.replace("cat_", "")
+              _telegram_bot_send_filtered_response(cat_name, "platform", cb_chat_id, token_curr)
+            elif cb_data == "action_run_scan":
+              requests.post(
+                  f"https://api.telegram.org/bot{token_curr}/sendMessage",
+                  json={"chat_id": cb_chat_id, "text": "⏳ *بدأت الآن عملية الرصد الشامل من تلغرام...* جاري فحص الصحف الوطنية والدولية وشبكات التواصل."},
+                  timeout=5,
+              )
+              added = run_headless_background_cycle()
+              requests.post(
+                  f"https://api.telegram.org/bot{token_curr}/sendMessage",
+                  json={"chat_id": cb_chat_id, "text": f"✅ *اكتمل الرصد الشامل بنجاح!* تم توثيق وحفظ {added} مستجد جديد."},
+                  timeout=5,
+              )
+            continue
+
+          # 2) معالجة الأوامر والرسائل النصية
+          msg = upd.get("message")
+          if msg:
+            text_in = str(msg.get("text") or "").strip().lower()
+            m_chat_id = str(msg.get("chat", {}).get("id") or chat_curr)
+
+            if text_in in ("/scan", "رصد", "تحديث", "رصد الان", "رصد الآن"):
+              requests.post(
+                  f"https://api.telegram.org/bot{token_curr}/sendMessage",
+                  json={"chat_id": m_chat_id, "text": "⏳ *بدأت عملية الرصد الشامل مباشرة من تلغرام...*"},
+                  timeout=5,
+              )
+              added = run_headless_background_cycle()
+              requests.post(
+                  f"https://api.telegram.org/bot{token_curr}/sendMessage",
+                  json={"chat_id": m_chat_id, "text": f"✅ *اكتمل الرصد بنجاح!* تم جلب وتوثيق {added} خبر جديد."},
+                  timeout=5,
+              )
+            elif text_in in ("/france", "فرنسا", "🇫🇷 فرنسا"):
+              _telegram_bot_send_filtered_response("فرنسا", "country", m_chat_id, token_curr)
+            elif text_in in ("/spain", "إسبانيا", "اسبانيا", "🇪🇸 إسبانيا"):
+              _telegram_bot_send_filtered_response("إسبانيا", "country", m_chat_id, token_curr)
+            elif text_in in ("/algeria", "الجزائر", "🇩🇿 الجزائر"):
+              _telegram_bot_send_filtered_response("الجزائر", "country", m_chat_id, token_curr)
+            elif text_in in ("/intl", "دولي", "دولية", "🌍 الدولية"):
+              _telegram_bot_send_filtered_response("صحافة دولية", "platform", m_chat_id, token_curr)
+            elif text_in in ("/press", "الصحف", "صحف", "📰 الصحف"):
+              _telegram_bot_send_filtered_response("الصحف", "platform", m_chat_id, token_curr)
+            elif text_in in ("/x", "إكس", "تويتر", "⬛ إكس"):
+              _telegram_bot_send_filtered_response("إكس", "platform", m_chat_id, token_curr)
+            elif text_in in ("/fb", "فيسبوك", "فايسبوك", "🟦 فيسبوك"):
+              _telegram_bot_send_filtered_response("فيسبوك", "platform", m_chat_id, token_curr)
+            elif text_in in ("/yt", "يوتيوب", "🟥 يوتيوب"):
+              _telegram_bot_send_filtered_response("يوتيوب", "platform", m_chat_id, token_curr)
+            elif text_in in ("/all", "الكل", "جميع", "🌐 الكل"):
+              _telegram_bot_send_filtered_response("all", "platform", m_chat_id, token_curr)
+            elif text_in in ("/start", "/help", "مساعدة"):
+              welcome_msg = (
+                  "⚖️ *مرحباً بك في بوت المرصد القضائي*\n\n"
+                  "المنظومة الذكية لرصد وتحليل الصحافة الوطنية والدولية وشبكات التواصل.\n\n"
+                  "👇 *تصفح الأخبار حسب الدولة والوسيلة، أو اطلب رصداً فورياً بنقرة واحدة:*\n"
+                  "• ⚡ تشغيل رصد فوري (/scan)\n"
+                  "• 🇫🇷 الصحافة الفرنسية (/france)\n"
+                  "• 🇪🇸 الصحافة الإسبانية (/spain)\n"
+                  "• 🇩🇿 الصحافة الجزائرية (/algeria)\n"
+                  "• 🌍 الصحافة الدولية (/intl)\n"
+                  "• 📰 الصحف المغربية (/press)\n"
+                  "• ⬛ منصة إكس (/x)\n"
+                  "• 🟦 فيسبوك (/fb) | 🟥 يوتيوب (/yt)"
+              )
+              main_menu = {
+                  "keyboard": [
+                      [{"text": "⚡ تشغيل رصد فوري"}, {"text": "🌐 الكل"}],
+                      [{"text": "🇫🇷 فرنسا"}, {"text": "🇪🇸 إسبانيا"}, {"text": "🇩🇿 الجزائر"}],
+                      [{"text": "📰 الصحف"}, {"text": "🌍 الدولية"}, {"text": "⬛ إكس"}],
+                      [{"text": "🟦 فيسبوك"}, {"text": "🟥 يوتيوب"}]
+                  ],
+                  "resize_keyboard": True,
+                  "persistent": True
+              }
+              requests.post(
+                  f"https://api.telegram.org/bot{token_curr}/sendMessage",
+                  json={"chat_id": m_chat_id, "text": welcome_msg, "parse_mode": "Markdown", "reply_markup": main_menu},
+                  timeout=6,
+              )
+    except Exception:
+      time.sleep(5)
+    time.sleep(1)
 def quick_process_and_save(
     items: list, cfg: dict, is_target_run: bool = False
 ) -> int:
@@ -6730,7 +7084,10 @@ def quick_process_and_save(
   upgrade_incomplete_existing_articles(cfg, max_upgrades=4)
 
   if added_items:
-    for rec in added_items[:10]:
+    # إرسال بطاقة موجز مجمعة ومصنفة بأزرار الدول والوسائل أولاً
+    if len(added_items) >= 2:
+      _send_telegram_batch_digest_bulletin(added_items, cfg)
+    for rec in added_items[:8]:
       sent_ok = send_telegram_alert(rec, cfg)
       rec["telegram_sent"] = 1
       # حتى لو تجاوز العدد 10 في دفعة واحدة، نسجل البقية في السجل حتى لا ترسل في الدورات التلقائية اللاحقة كأخبار قديمة
@@ -6814,6 +7171,68 @@ def run_headless_background_cycle() -> int:
       pass
 
 
+
+# =====================================================================
+# محرك منع السبات التلقائي (Active Keep-Alive & Self-Ping Engine)
+# =====================================================================
+def _detect_public_app_url() -> str:
+  """اكتشاف الرابط العام للمنصة تلقائياً لمنع دخولها في وضع السبات."""
+  try:
+    cfg_u = str(load_credentials().get("app_public_url") or "").strip()
+    if cfg_u.startswith("http"):
+      return cfg_u.rstrip("/")
+  except Exception:
+    pass
+  for env_k in ("STREAMLIT_APP_URL", "APP_PUBLIC_URL", "RENDER_EXTERNAL_URL", "PUBLIC_URL"):
+    ev = os.environ.get(env_k, "").strip()
+    if ev.startswith("http"):
+      return ev.rstrip("/")
+  if st is not None:
+    try:
+      hdrs = getattr(st, "context", None) and getattr(st.context, "headers", None)
+      if hdrs:
+        host = (hdrs.get("X-Forwarded-Host") or hdrs.get("Host") or "").strip()
+        proto = (hdrs.get("X-Forwarded-Proto") or "https").strip()
+        if host and "localhost" not in host and "127.0.0.1" not in host:
+          detected = f"{proto}://{host}".rstrip("/")
+          try:
+            c_curr = load_credentials()
+            if not c_curr.get("app_public_url"):
+              c_curr["app_public_url"] = detected
+              save_credentials(c_curr)
+          except Exception:
+            pass
+          return detected
+    except Exception:
+      pass
+  return ""
+
+
+def _ping_keep_alive_endpoints():
+  """إرسال نبضات دورية (Self-Ping كل 90 ثانية) للخادم المحلي والرابط العام لمنع السبات نهائياً."""
+  rt = get_shared_runtime()
+  port = os.environ.get("PORT") or os.environ.get("STREAMLIT_SERVER_PORT") or "8501"
+  targets_to_ping = [
+      f"http://127.0.0.1:{port}/_stcore/health",
+      f"http://127.0.0.1:{port}/_stcore/stream",
+      f"http://127.0.0.1:{port}/",
+  ]
+  pub_u = _detect_public_app_url()
+  if pub_u and pub_u.startswith("http"):
+    targets_to_ping.insert(0, f"{pub_u}/_stcore/health")
+    targets_to_ping.insert(1, f"{pub_u}/")
+
+  ping_headers = dict(DEFAULT_HEADERS)
+  ping_headers.update({
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AlMarsadKeepAlive/3.0",
+      "Cache-Control": "no-cache",
+  })
+  for ping_u in targets_to_ping:
+    try:
+      requests.get(ping_u, headers=ping_headers, timeout=4.0)
+    except Exception:
+      pass
+  rt["last_keepalive_ping_ts"] = time.time()
 def ensure_background_daemon():
   rt = get_shared_runtime()
   if rt.get("daemon_started", False):
@@ -6821,13 +7240,22 @@ def ensure_background_daemon():
   rt["daemon_started"] = True
 
   def _daemon_loop():
-    time.sleep(2)
+    time.sleep(5)
+    last_keepalive = 0.0
     while True:
+      now_t = time.time()
+      # إرسال نبضة منع السبات كل 90 ثانية لضمان بقاء السيرفر نشطاً
+      if now_t - last_keepalive >= 90:
+        last_keepalive = now_t
+        try:
+          _ping_keep_alive_endpoints()
+        except Exception:
+          pass
       try:
         cfg = load_credentials()
         if cfg.get("auto_monitor", True):
           interval_sec = INTERVAL_MAP.get(
-              cfg.get("monitor_interval", "كل ساعة"), 900
+              cfg.get("monitor_interval", "كل ساعة"), 3600
           )
           state = load_monitor_state()
           last_run = float(state.get("last_auto_run", 0))
@@ -6835,12 +7263,20 @@ def ensure_background_daemon():
             run_headless_background_cycle()
       except Exception:
         pass
-      time.sleep(30)
+      time.sleep(15)
 
   t = threading.Thread(
       target=_daemon_loop, daemon=True, name="JusticeAutoMonitor"
   )
   t.start()
+  try:
+    threading.Thread(
+        target=_telegram_bot_updates_listener,
+        daemon=True,
+        name=f"TelegramBotListener_{DAEMON_CODE_VERSION}",
+    ).start()
+  except Exception:
+    pass
 
 
 # دعم التشغيل السحابي المستقل عبر GitHub Actions (CRON_MODE=1)
@@ -7557,6 +7993,21 @@ input {
 }
 </style>
 """)
+render_html("""
+<script>
+// نبضات متزامنة في المتصفح لمنع قطع جلسة Streamlit وتجاوز خمول الصفحة بعد سويعات
+(function() {
+    if (window._marsad_keep_alive_active) return;
+    window._marsad_keep_alive_active = true;
+    setInterval(function() {
+        try {
+            fetch(window.location.href, { method: "HEAD", cache: "no-store" }).catch(function(){});
+        } catch(e) {}
+    }, 120000); // إرسال نبضة كل دقيقتين لمنع إغلاق WebSocket
+})();
+</script>
+""")
+
 
 # =====================================================================
 # 13. تحميل الإعدادات والبيانات
@@ -8119,13 +8570,44 @@ with tabs[1]:
 
 with tabs[2]:
   st.markdown("#### 🌍 فرز وتصنيف الصحافة الدولية")
+  # أزرار فرز سريعة بنقرة واحدة لكل دولة
+  b_all, b_fr, b_es, b_dz, b_gl = st.columns(5)
+  if "intl_quick_country" not in st.session_state:
+    st.session_state["intl_quick_country"] = "جميع الدول"
+
+  with b_all:
+    if st.button("🌐 جميع الدول", key="btn_c_all", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "جميع الدول" else "secondary"):
+      st.session_state["intl_quick_country"] = "جميع الدول"
+      st.rerun()
+  with b_fr:
+    if st.button("🇫🇷 فرنسا", key="btn_c_fr", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "فرنسا" else "secondary"):
+      st.session_state["intl_quick_country"] = "فرنسا"
+      st.rerun()
+  with b_es:
+    if st.button("🇪🇸 إسبانيا", key="btn_c_es", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "إسبانيا" else "secondary"):
+      st.session_state["intl_quick_country"] = "إسبانيا"
+      st.rerun()
+  with b_dz:
+    if st.button("🇩🇿 الجزائر", key="btn_c_dz", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "الجزائر" else "secondary"):
+      st.session_state["intl_quick_country"] = "الجزائر"
+      st.rerun()
+  with b_gl:
+    if st.button("🏛️ هيئات دولية", key="btn_c_gl", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "دولي" else "secondary"):
+      st.session_state["intl_quick_country"] = "دولي"
+      st.rerun()
+
   col_flt_c, col_flt_t, col_flt_s = st.columns([1.5, 1.5, 2.0])
   with col_flt_c:
+    c_opts = ["جميع الدول", "فرنسا", "إسبانيا", "الجزائر", "دولي"]
+    c_idx = c_opts.index(st.session_state.get("intl_quick_country", "جميع الدول")) if st.session_state.get("intl_quick_country") in c_opts else 0
     filter_country = st.selectbox(
         "🏛️ الدولة / النطاق الجغرافي:",
-        options=["جميع الدول", "فرنسا", "إسبانيا", "الجزائر", "دولي"],
+        options=c_opts,
+        index=c_idx,
         key="intl_filter_country",
     )
+    if filter_country != st.session_state.get("intl_quick_country"):
+      st.session_state["intl_quick_country"] = filter_country
   with col_flt_t:
     filter_topic = st.selectbox(
         "⚖️ تصنيف الموضوع:",
