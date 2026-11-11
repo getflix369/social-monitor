@@ -306,27 +306,40 @@ MOROCCAN_PRESS_SITES = [
 # قوائم ومصادر الصحافة الدولية والقضاء المقارن (فرنسا، إسبانيا، الجزائر، ودولية)
 # =====================================================================
 INTERNATIONAL_PRESS_SITES = [
-    # الصحافة الفرنسية
+    # --- فرنسا (France) ---
     {"domain": "lemonde.fr", "name": "Le Monde (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.lemonde.fr/rss/une.xml"},
     {"domain": "lefigaro.fr", "name": "Le Figaro (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.lefigaro.fr/rss/figaro_actualites.xml"},
+    {"domain": "liberation.fr", "name": "Libération (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.liberation.fr/arc/outboundfeeds/rss-all/collection/accueil-une/"},
     {"domain": "france24.com", "name": "France 24 (فرنسا)", "country": "فرنسا", "lang": "ar", "rss": "https://www.france24.com/ar/rss"},
     {"domain": "rfi.fr", "name": "RFI (فرنسا)", "country": "فرنسا", "lang": "ar", "rss": "https://www.rfi.fr/ar/rss"},
     {"domain": "afp.com", "name": "وكالة الصحافة الفرنسية AFP", "country": "فرنسا", "lang": "ar", "rss": ""},
     {"domain": "mediapart.fr", "name": "Mediapart (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": ""},
-    {"domain": "liberation.fr", "name": "Libération (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.liberation.fr/arc/outboundfeeds/rss-all/collection/accueil-une/"},
     {"domain": "jeuneafrique.com", "name": "Jeune Afrique (باريس)", "country": "فرنسا", "lang": "fr", "rss": "https://www.jeuneafrique.com/feed/"},
+    {"domain": "lexpress.fr", "name": "L'Express (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.lexpress.fr/rss/alaune.xml"},
+    {"domain": "lepoint.fr", "name": "Le Point (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.lepoint.fr/rss.xml"},
+    {"domain": "nouvelobs.com", "name": "L'Obs (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.nouvelobs.com/rss.xml"},
+    {"domain": "la-croix.com", "name": "La Croix (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.la-croix.com/rss"},
+    {"domain": "courrierinternational.com", "name": "Courrier International (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.courrierinternational.com/feed/all/rss.xml"},
+    {"domain": "20minutes.fr", "name": "20 Minutes (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.20minutes.fr/feeds/rss-une.xml"},
+    {"domain": "leparisien.fr", "name": "Le Parisien (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://feeds.leparisien.fr/leparisien/rss/actu"},
 
-    # الصحافة الإسبانية
+    # --- إسبانيا (Spain) ---
     {"domain": "elpais.com", "name": "El País (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada"},
     {"domain": "elmundo.es", "name": "El Mundo (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml"},
     {"domain": "abc.es", "name": "ABC (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://www.abc.es/rss/2.0/portada/"},
     {"domain": "larazon.es", "name": "La Razón (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://www.larazon.es/rss/espana.xml"},
     {"domain": "lavanguardia.com", "name": "La Vanguardia (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://www.lavanguardia.com/rss/home.xml"},
+    {"domain": "elconfidencial.com", "name": "El Confidencial (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://rss.elconfidencial.com/espana/"},
+    {"domain": "eldiario.es", "name": "elDiario.es (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://www.eldiario.es/rss/"},
     {"domain": "efe.com", "name": "وكالة الأنباء الإسبانية EFE", "country": "إسبانيا", "lang": "es", "rss": "https://efe.com/feed/"},
     {"domain": "europapress.es", "name": "Europa Press (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://www.europapress.es/rss/rss.aspx"},
-    {"domain": "elconfidencial.com", "name": "El Confidencial (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://rss.elconfidencial.com/espana/"},
+    {"domain": "elespanol.com", "name": "El Español (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://www.elespanol.com/rss/"},
+    {"domain": "periodistadigital.com", "name": "Periodista Digital (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://www.periodistadigital.com/feed/"},
+    {"domain": "theobjective.com", "name": "The Objective (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://theobjective.com/feed/"},
+    {"domain": "vozpopuli.com", "name": "Vozpópuli (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://www.vozpopuli.com/rss/"},
+    {"domain": "elindependiente.com", "name": "El Independiente (إسبانيا)", "country": "إسبانيا", "lang": "es", "rss": "https://www.elindependiente.com/feed/"},
 
-    # الصحافة الجزائرية
+    # --- الجزائر (Algeria) ---
     {"domain": "elwatan-dz.com", "name": "El Watan (الجزائر)", "country": "الجزائر", "lang": "fr", "rss": "https://elwatan-dz.com/feed"},
     {"domain": "tsa-algerie.com", "name": "TSA Tout sur l'Algérie", "country": "الجزائر", "lang": "fr", "rss": "https://www.tsa-algerie.com/feed/"},
     {"domain": "echoroukonline.com", "name": "الشروق الجزائرية", "country": "الجزائر", "lang": "ar", "rss": "https://www.echoroukonline.com/feed"},
@@ -334,17 +347,22 @@ INTERNATIONAL_PRESS_SITES = [
     {"domain": "ennaharonline.com", "name": "النهار الجزائرية", "country": "الجزائر", "lang": "ar", "rss": "https://www.ennaharonline.com/feed/"},
     {"domain": "aps.dz", "name": "وكالة الأنباء الجزائرية APS", "country": "الجزائر", "lang": "ar", "rss": "https://www.aps.dz/algerie/feed"},
     {"domain": "algerie-eco.com", "name": "Algérie Eco", "country": "الجزائر", "lang": "fr", "rss": "https://www.algerie-eco.com/feed/"},
+    {"domain": "lexpressiondz.com", "name": "L'Expression (الجزائر)", "country": "الجزائر", "lang": "fr", "rss": "https://www.lexpressiondz.com/feed"},
+    {"domain": "algerie360.com", "name": "Algérie 360", "country": "الجزائر", "lang": "fr", "rss": "https://www.algerie360.com/feed/"},
+    {"domain": "radioalgerie.dz", "name": "الإذاعة الجزائرية", "country": "الجزائر", "lang": "ar", "rss": "https://news.radioalgerie.dz/ar/rss.xml"},
 
-    # صحافة ووكالات دولية كبرى
+    # --- صحافة ووكالات وهيئات دولية كبرى ---
     {"domain": "aljazeera.net", "name": "الجزيرة نت (دولي)", "country": "دولي", "lang": "ar", "rss": "https://www.aljazeera.net/aljazeerarss/a7c186be-1baa-4bd4-9d80-a84db769f779/73d0e1b4-532f-45ef-b135-bfdff8b8cab9"},
     {"domain": "bbc.com", "name": "BBC عربي (دولي)", "country": "دولي", "lang": "ar", "rss": "https://feeds.bbci.co.uk/arabic/rss.xml"},
     {"domain": "reuters.com", "name": "رويترز Reuters (دولي)", "country": "دولي", "lang": "ar", "rss": ""},
     {"domain": "dw.com", "name": "دويتشه فيله DW (ألمانيا)", "country": "دولي", "lang": "ar", "rss": "https://rss.dw.com/rdf/rss-ar-all"},
     {"domain": "independentarabia.com", "name": "إندبندنت عربية", "country": "دولي", "lang": "ar", "rss": "https://www.independentarabia.com/rss.xml"},
     {"domain": "aawsat.com", "name": "الشرق الأوسط (دولي)", "country": "دولي", "lang": "ar", "rss": "https://aawsat.com/feed"},
+    {"domain": "curia.europa.eu", "name": "محكمة العدل الأوروبية CJUE", "country": "دولي", "lang": "fr", "rss": ""},
+    {"domain": "icj-cij.org", "name": "محكمة العدل الدولية CIJ", "country": "دولي", "lang": "fr", "rss": ""},
+    {"domain": "icc-cpi.int", "name": "المحكمة الجنائية الدولية CPI", "country": "دولي", "lang": "fr", "rss": ""},
 ]
 
-# مصطلحات رصد المغرب الصريحة والضمنية باللغات العربية والفرنسية والإسبانية
 MOROCCO_EXPLICIT_AND_IMPLICIT_TERMS = [
     # العربية: صريح
     "المغرب", "مغربي", "مغربية", "مغاربة", "المغاربة", "بالمغرب", "المملكة المغربية", "الرباط",
@@ -1644,6 +1662,161 @@ def enrich_item_content_and_image(item: dict) -> dict:
   return item
 
 
+
+# =====================================================================
+# تصنيف الدولة والموضوع والترجمة الفورية لعناوين وملخصات الصحف الأجنبية
+# =====================================================================
+def detect_article_country_and_topic(title: str, snippet: str, url: str, source_name: str, platform: str) -> tuple:
+  """استنتاج دقيق لبلد المصدر (المغرب، فرنسا، إسبانيا، الجزائر، دولي)
+  وموضوع الخبر (يتطرق للمغرب، شؤون قضائية، قضاء دولي، اتفاقيات وحدود، رأي ومتابعات)."""
+  t_c = clean_display_text(title).lower()
+  s_c = clean_display_text(snippet).lower()
+  u_c = str(url or "").lower()
+  src_c = clean_display_text(source_name).lower()
+  combined = f"{t_c} {s_c} {u_c} {src_c}"
+
+  # 1) استنتاج الدولة
+  country = "المغرب"
+  if platform == "صحافة دولية" or any(dom in u_c for dom in [
+      "lemonde.fr", "lefigaro.fr", "liberation.fr", "france24.com", "rfi.fr", "afp.com", "mediapart.fr", "jeuneafrique.com", "lexpress.fr", "lepoint.fr", "nouvelobs.com", "la-croix.com", "courrierinternational.com", "20minutes.fr", "leparisien.fr"
+  ]):
+    country = "فرنسا"
+  if any(dom in u_c for dom in [
+      "elpais.com", "elmundo.es", "abc.es", "larazon.es", "lavanguardia.com", "elconfidencial.com", "eldiario.es", "efe.com", "europapress.es", "elespanol.com", "periodistadigital.com", "theobjective.com", "vozpopuli.com", "elindependiente.com"
+  ]):
+    country = "إسبانيا"
+  elif any(dom in u_c for dom in [
+      "elwatan-dz.com", "tsa-algerie.com", "echoroukonline.com", "elkhabar.com", "ennaharonline.com", "aps.dz", "algerie-eco.com", "lexpressiondz.com", "algerie360.com", "radioalgerie.dz", ".dz"
+  ]):
+    country = "الجزائر"
+  elif any(dom in u_c for dom in [
+      "aljazeera.net", "bbc.com", "reuters.com", "dw.com", "independentarabia.com", "aawsat.com", "curia.europa.eu", "icj-cij.org", "icc-cpi.int"
+  ]):
+    country = "دولي"
+
+  # التحقق من اسم المصدر إذا حدد الدولة
+  for s_info in INTERNATIONAL_PRESS_SITES:
+    if s_info["domain"] in u_c or s_info["name"].lower() in src_c:
+      country = s_info.get("country", country)
+      break
+
+  # 2) استنتاج الموضوع
+  topic = "شؤون قضائية"
+
+  # فحص القضاء الدولي والهيئات الدولية أولاً
+  has_major_intl_court = any(term.lower() in combined for term in [
+      "محكمة العدل الدولية", "المحكمة الجنائية الدولية", "محكمة العدل الأوروبية", "cjue", "cpi", "cij",
+      "cour internationale", "cour pénale", "tribunal internacional", "corte penal", "tjue"
+  ])
+
+  # فحص ما إذا كان الخبر يتطرق للمغرب تحديداً (صريحاً أو في قضايا الحدود/التسليم/الصحراء)
+  morocco_direct_keywords = [
+      "المغرب", "مغربي", "مغربية", "مغاربة", "المملكة المغربية", "الرباط", "الدار البيضاء",
+      "maroc", "marocain", "marocaine", "marocains", "marruecos", "marroquí", "morocco",
+      "الصحراء المغربية", "نزاع الصحراء", "sahara occidental", "سبتة", "مليلية", "ceuta", "melilla",
+      "كركرات", "guerguerat", "تسليم المطلوبين إلى المغرب", "extradition vers le maroc"
+  ]
+  has_morocco_direct = any(m.lower() in combined for m in morocco_direct_keywords)
+
+  if has_morocco_direct and (country != "المغرب"):
+    topic = "يتطرق للمغرب"
+  elif has_major_intl_court:
+    topic = "قضاء دولي"
+  elif any(term.lower() in combined for term in [
+      "تسليم", "extradition", "extradición", "mandat d'arrêt", "orden de detención", "مذكرة توقيف",
+      "صيد", "pêche", "pesca", "حدود", "frontière", "frontera", "سبتة", "مليلية", "ceuta", "melilla", "narcotráfico", "drogue"
+  ]):
+    topic = "قضايا وتسليم واتفاقيات"
+  elif any(term.lower() in combined for term in ["محكمة", "قضاء", "قاضي", "tribunal", "cour", "justicia", "justice", "sentencia", "jugement", "procès"]):
+    topic = "شؤون قضائية ومحاكم"
+
+  return country, topic
+
+
+OFFLINE_DICTIONARY_FR_ES = {
+    # الفرنسية
+    "la cour de cassation": "محكمة النقض",
+    "cour de cassation": "محكمة النقض",
+    "cour d'appel": "محكمة الاستئناف",
+    "cour de justice de l'union européenne": "محكمة العدل الأوروبية",
+    "cour de justice": "محكمة العدل",
+    "cour pénale internationale": "المحكمة الجنائية الدولية",
+    "cour internationale de justice": "محكمة العدل الدولية",
+    "conseil d'état": "مجلس الدولة",
+    "tribunal judiciaire": "المحكمة القضائية",
+    "tribunal administratif": "المحكمة الإدارية",
+    "parquet général": "النيابة العامة",
+    "le parquet": "النيابة العامة",
+    "procureur général": "الوكيل العام",
+    "procureur de la république": "المدعي العام",
+    "juge d'instruction": "قاضي التحقيق",
+    "mandat d'arrêt international": "مذكرة توقيف دولية",
+    "mandat d'arrêt": "مذكرة توقيف",
+    "demande d'extradition": "طلب تسليم",
+    "extradition vers le maroc": "تسليم المطلوبين إلى المغرب",
+    "extradition": "تسليم المطلوبين",
+    "procès de": "محاكمة",
+    "jugement de": "حكم في قضية",
+    "condamné à": "إدانة بـ",
+    "accord de pêche": "اتفاقية الصيد البحري",
+    "accord agricole": "الاتفاق الفلاحي",
+    "au maroc": "في المغرب",
+    "le maroc": "المغرب",
+    "maroc": "المغرب",
+    "marocain": "مغربي",
+    "marocaine": "مغربية",
+    "rabat": "الرباط",
+    "paris": "باريس",
+    "alger": "الجزائر",
+    "madrid": "مدريد",
+    # الإسبانية
+    "tribunal supremo": "المحكمة العليا",
+    "audiencia nacional": "المحكمة الوطنية",
+    "tribunal constitucional": "المحكمة الدستورية",
+    "tribunal de justicia de la unión europea": "محكمة العدل الأوروبية",
+    "corte penal internacional": "المحكمة الجنائية الدولية",
+    "fiscalía general": "الادعاء العام",
+    "juez de instrucción": "قاضي التحقيق",
+    "orden de detención internacional": "مذكرة توقيف دولية",
+    "orden de extradición": "أمر بتسليم المطلوبين",
+    "extradición a marruecos": "تسليم المطلوبين إلى المغرب",
+    "extradición": "تسليم المطلوبين",
+    "narcotráfico": "تهريب المخدرات",
+    "frontera sur": "الحدود الجنوبية",
+    "ceuta y melilla": "سبتة ومليلية",
+    "en marruecos": "في المغرب",
+    "marruecos": "المغرب",
+    "marroquí": "مغربي",
+    "marroquíes": "مغاربة",
+    "acuerdo de pesca": "اتفاقية الصيد البحري",
+    "sahara occidental": "الصحراء",
+}
+
+def translate_foreign_title_to_arabic_rulebased(foreign_title: str) -> str:
+  """ترجمة تقريبية معتمدة على القاموس القضائي العربي عند غياب مفتاح Gemini أو تعذر الاتصال."""
+  if not foreign_title:
+    return ""
+  txt = foreign_title.strip()
+  # إذا كان العنوان يحتوي أساساً على عربية كافية نبقيه
+  arabic_chars = re.findall(r"[\u0600-\u06FF]", txt)
+  if len(arabic_chars) >= 8:
+    return txt
+
+  low = txt.lower()
+  matched_key_fr_es = None
+  for k in sorted(OFFLINE_DICTIONARY_FR_ES.keys(), key=len, reverse=True):
+    if k in low:
+      matched_key_fr_es = k
+      break
+
+  if matched_key_fr_es:
+    ar_trans = OFFLINE_DICTIONARY_FR_ES[matched_key_fr_es]
+    if "maroc" in low or "marruecos" in low or "المغرب" in low:
+      return f"تقرير قضائي: مستجدات {ar_trans} المتعلقة بالمغرب"
+    return f"تقرير قضائي دولي: مستجدات {ar_trans}"
+
+  # عنوان وصفي بديل باللغة العربية مع ذكر المصدر الأصلي
+  return f"متابعة إعلامية وقضائية دولية: {txt[:70]}"
 def build_extractive_arabic_summary(
     title: str, snippet: str, platform: str, source_name: str
 ) -> str:
@@ -6137,18 +6310,33 @@ def _call_gemini_rest_or_sdk(prompt: str, api_key: str) -> str:
 
 
 def analyze_with_gemini(item: dict, api_key: str):
+  """تحليل ذكي فائق الدقة عبر Gemini AI:
+  1. صياغة ملخص إخباري قضائي تحليلي بالعربية الفصحى في 2-3 جمل.
+  2. تعريب وترجمة العنوان إجبارياً إلى اللغة العربية الفصحى إذا كان المصدر بلغة أجنبية (فرنسية/إسبانية/إنجليزية).
+  3. استنتاج بلد المصدر وموضوع الخبر وتصنيفه الدقيق."""
   title = clean_display_text(item.get("title", ""))
   snippet = clean_display_text(item.get("raw_snippet", "")) or title
   platform = item.get("platform", "الصحف")
   source_name = item.get("source_name", platform)
+  url = item.get("url", "")
+
+  detected_country, detected_topic = detect_article_country_and_topic(
+      title, snippet, url, source_name, platform
+  )
 
   fallback_summary = build_extractive_arabic_summary(
       title, snippet, platform, source_name
   )
+
+  # فحص ما إذا كان العنوان أجنبياً (أقل من 6 أحرف عربية)
+  is_foreign_title = len(re.findall(r"[\u0600-\u06FF]", title)) < 6
+  arabic_title_fallback = translate_foreign_title_to_arabic_rulebased(title) if is_foreign_title else title
+
   default_result = {
+      "translated_title": arabic_title_fallback,
       "summary": fallback_summary,
       "sentiment": "محايد",
-      "category": "شؤون قضائية",
+      "category": detected_topic,
       "relevance_score": 88,
   }
 
@@ -6156,17 +6344,19 @@ def analyze_with_gemini(item: dict, api_key: str):
     return default_result
 
   prompt = (
-      "أنت محلل إعلامي قضائي خبير بالمجلس الأعلى للسلطة القضائية بالمغرب.\n"
-      "قم بقراءة عنوان وتفاصيل الخبر أو المنشور التالي، واكتب ملخصاً إخبارياً دقيقاً ومفصلاً "
-      "في جملتين إلى ثلاث جمل بالعربية الفصحى يشرح الوقائع والتفاصيل والقرارات القضائية أو القانونية الواردة فيه.\n"
-      "تحذير صارم: يُمنع منعاً باتاً إعادة كتابة العنوان نفسه كملخص أو الاكتفاء بعبارة يتناول موضوع كذا، بل لخّص المضمون والوقائع مباشرة.\n"
+      "أنت محلل إعلامي وقضائي خبير بمرصد القضاء والعدالة الدولي والمغربي.\n"
+      "قم بتحليل عنوان وتفاصيل الخبر أو المقال التالي الصادر عن الصحافة (سواء باللغة العربية، الفرنسية، أو الإسبانية)، ونفذ الآتي:\n"
+      "1) إذا كان عنوان الخبر باللغة الفرنسية أو الإسبانية أو غير العربية، تُرجمه وصُغه إجبارياً إلى عنوان صحفي جذاب ومحكم باللغة العربية الفصحى.\n"
+      "2) اكتب ملخصاً إخبارياً دقيقاً ومفصلاً في جملتين إلى ثلاث جمل بالعربية الفصحى يوضح الوقائع والتفاصيل والقرارات والصلة القضائية أو الصلة بالمغرب.\n"
+      "تحذير صارم: يُمنع منعاً باتاً ترك العنوان بلغة غير العربية، ويُمنع إعادة كتابة العنوان كملخص.\n"
       "أرجع النتيجة بصيغة JSON فقط بالمفاتيح التالية:\n"
-      '{"summary": "الملخص التفصيلي للوقائع هنا...", '
+      '{"translated_title": "العنوان باللغة العربية الفصحى حصراً...", '
+      '"summary": "الملخص الإخباري التحليلي باللغة العربية الفصحى هنا...", '
       '"sentiment": "إيجابي أو محايد أو سلبي", '
-      '"category": "بلاغ رسمي أو محاكم وقضايا أو شؤون قضائية أو رأي ومتابعات", '
+      '"category": "يتطرق للمغرب أو شؤون قضائية أو قضاء دولي أو قضايا وتسليم واتفاقيات أو بلاغ رسمي", '
       '"relevance_score": 92}\n\n'
       f"المنصة والمصدر: {platform} - {source_name}\n"
-      f"عنوان الخبر: {title}\n"
+      f"عنوان الخبر الأصلي: {title}\n"
       f"متن وتفاصيل الخبر: {snippet[:1800]}"
   )
 
@@ -6176,18 +6366,17 @@ def analyze_with_gemini(item: dict, api_key: str):
       m = re.search(r"\{.*\}", txt, re.DOTALL)
       if m:
         parsed = json.loads(m.group(0))
+        ai_title = clean_display_text(parsed.get("translated_title"))
         ai_sum = clean_display_text(parsed.get("summary"))
-        if ai_sum and not is_summary_just_title(title, ai_sum):
-          return {
-              "summary": ai_sum,
-              "sentiment": (
-                  clean_display_text(parsed.get("sentiment")) or "محايد"
-              ),
-              "category": (
-                  clean_display_text(parsed.get("category")) or "شؤون قضائية"
-              ),
-              "relevance_score": int(parsed.get("relevance_score", 90)),
-          }
+        final_t = ai_title if (ai_title and len(ai_title) >= 10) else arabic_title_fallback
+        final_s = ai_sum if (ai_sum and not is_summary_just_title(title, ai_sum)) else fallback_summary
+        return {
+            "translated_title": final_t,
+            "summary": final_s,
+            "sentiment": clean_display_text(parsed.get("sentiment")) or "محايد",
+            "category": clean_display_text(parsed.get("category")) or detected_topic,
+            "relevance_score": int(parsed.get("relevance_score", 90)),
+        }
       else:
         plain_ai = clean_display_text(txt)
         if len(plain_ai) > 40 and not is_summary_just_title(title, plain_ai):
@@ -6196,8 +6385,6 @@ def analyze_with_gemini(item: dict, api_key: str):
       pass
 
   return default_result
-
-
 def send_telegram_alert(item: dict, cfg: dict) -> bool:
   """إرسال إشعار تلغرام مرة واحدة فقط لكل خبر جديد بعد التحقق الصارم من سجل الإرسال الدائم."""
   token = (cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN).strip()
@@ -6431,16 +6618,22 @@ def quick_process_and_save(
     raw_snip = clean_display_text(it.get("raw_snippet") or "")
     img_url = (it.get("image_url") or "").strip()
 
-    if ai_calls < 12 and api_key:
+    if ai_calls < 15 and api_key:
       ai_res = analyze_with_gemini(it, api_key)
       ai_calls += 1
     else:
+      det_country, det_topic = detect_article_country_and_topic(
+          it.get("title", ""), raw_snip, it.get("url", ""), src, plat
+      )
+      is_for_t = len(re.findall(r"[\u0600-\u06FF]", it.get("title", ""))) < 6
+      ar_t_fall = translate_foreign_title_to_arabic_rulebased(it.get("title", "")) if is_for_t else it["title"]
       ai_res = {
+          "translated_title": ar_t_fall,
           "summary": build_extractive_arabic_summary(
-              it["title"], raw_snip, plat, src
+              ar_t_fall, raw_snip, plat, src
           ),
           "sentiment": "محايد",
-          "category": "شؤون قضائية",
+          "category": det_topic,
           "relevance_score": 86,
       }
 
@@ -6451,8 +6644,10 @@ def quick_process_and_save(
           it.get("url", ""), raw_snip, pub_str, fallback_offset_sec=3600
       )
 
+    final_display_title = clean_display_text(ai_res.get("translated_title") or it["title"])
+
     record = {
-        "title": it["title"],
+        "title": final_display_title,
         "summary": clean_display_text(ai_res["summary"]),
         "source_name": src,
         "platform": plat,
@@ -7923,7 +8118,78 @@ with tabs[1]:
   render_article_cards(press_live)
 
 with tabs[2]:
-  render_article_cards(intl_live, empty_msg="لا توجد مقالات دولية مرصودة حالياً. انقر على تشغيل 'الصحافة الدولية' أو 'الرصد الشامل'.")
+  st.markdown("#### 🌍 فرز وتصنيف الصحافة الدولية")
+  col_flt_c, col_flt_t, col_flt_s = st.columns([1.5, 1.5, 2.0])
+  with col_flt_c:
+    filter_country = st.selectbox(
+        "🏛️ الدولة / النطاق الجغرافي:",
+        options=["جميع الدول", "فرنسا", "إسبانيا", "الجزائر", "دولي"],
+        key="intl_filter_country",
+    )
+  with col_flt_t:
+    filter_topic = st.selectbox(
+        "⚖️ تصنيف الموضوع:",
+        options=["جميع المواضيع", "يتطرق للمغرب", "شؤون قضائية ومحاكم", "قضاء دولي", "قضايا وتسليم واتفاقيات"],
+        key="intl_filter_topic",
+    )
+  with col_flt_s:
+    filter_search = st.text_input(
+        "🔎 تصفية نصية بالكلمة أو المصدر:",
+        placeholder="ابحث بالعنوان أو اسم الجريدة...",
+        key="intl_filter_search",
+    )
+
+  filtered_intl = list(intl_live)
+
+  # تطبيق فلتر الدولة
+  if filter_country != "جميع الدول":
+    filtered_intl = [
+        a for a in filtered_intl
+        if detect_article_country_and_topic(
+            a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), a.get("platform", "")
+        )[0] == filter_country
+    ]
+
+  # تطبيق فلتر الموضوع
+  if filter_topic != "جميع المواضيع":
+    filtered_intl = [
+        a for a in filtered_intl
+        if filter_topic in a.get("category", "")
+        or detect_article_country_and_topic(
+            a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), a.get("platform", "")
+        )[1] == filter_topic
+    ]
+
+  # تطبيق البحث النصي
+  if filter_search.strip():
+    q_txt = filter_search.strip().lower()
+    filtered_intl = [
+        a for a in filtered_intl
+        if q_txt in (a.get("title", "") + " " + a.get("summary", "") + " " + a.get("source_name", "")).lower()
+    ]
+
+  # بطاقات المؤشرات الإحصائية السريعة للقسم الدولي
+  c_fr = len([a for a in intl_live if "فرنسا" in a.get("source_name", "") or "lemonde" in a.get("url", "") or "figaro" in a.get("url", "") or "france24" in a.get("url", "") or "mediapart" in a.get("url", "")])
+  c_es = len([a for a in intl_live if "إسبانيا" in a.get("source_name", "") or "elpais" in a.get("url", "") or "elmundo" in a.get("url", "") or "efe" in a.get("url", "")])
+  c_dz = len([a for a in intl_live if "الجزائر" in a.get("source_name", "") or "elwatan" in a.get("url", "") or "echorouk" in a.get("url", "") or "elkhabar" in a.get("url", "") or "tsa" in a.get("url", "")])
+  c_ma_rel = len([a for a in intl_live if "مغرب" in (a.get("title", "") + a.get("summary", "")).lower() or a.get("category") == "يتطرق للمغرب"])
+
+  render_html(
+      f"""
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;direction:rtl;">
+          <span style="background:rgba(56,189,248,0.15);color:#38bdf8;padding:4px 10px;border-radius:8px;font-size:0.82rem;font-weight:700;">🇲🇦 يتطرق للمغرب: {c_ma_rel}</span>
+          <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇫🇷 فرنسا: {c_fr}</span>
+          <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇪🇸 إسبانيا: {c_es}</span>
+          <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇩🇿 الجزائر: {c_dz}</span>
+          <span style="background:rgba(52,211,153,0.15);color:#34d399;padding:4px 10px;border-radius:8px;font-size:0.82rem;">📊 المعروض حالياً: {len(filtered_intl)}</span>
+      </div>
+      """
+  )
+
+  render_article_cards(
+      filtered_intl,
+      empty_msg="لا توجد مقالات دولية تطابق الفلتر المحدد حالياً. جرّب تغيير معايير التصفية أو تشغيل الرصد الشامل.",
+  )
 
 with tabs[3]:
   render_article_cards(fb_live)
