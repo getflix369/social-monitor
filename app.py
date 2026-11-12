@@ -1932,26 +1932,95 @@ COMPREHENSIVE_FR_ES_TRANSLATIONS = {
     "madrid": "مدريد",
 }
 
-def translate_foreign_title_to_arabic_rulebased(foreign_title: str) -> str:
-  """ترجمة وتعريب فوري دقيق ومحكم للعناوين الأجنبية (الفرنسية والإسبانية) إلى عنوان إخباري عربي فصيح."""
-  if not foreign_title:
-    return ""
-  txt = foreign_title.strip()
-  arabic_chars = re.findall(r"[\u0600-\u06FF]", txt)
-  if len(arabic_chars) >= 8:
+_TRANSLATION_CACHE = {}
+
+def _is_predominantly_arabic(text: str) -> bool:
+  if not text:
+    return False
+  ar_count = len(re.findall(r"[\u0600-\u06FF]", text))
+  lat_count = len(re.findall(r"[A-Za-zÀ-ÿ]", text))
+  if ar_count >= 12 and ar_count >= lat_count * 0.5:
+    return True
+  if ar_count >= 6 and lat_count < 6:
+    return True
+  return False
+
+
+def translate_text_to_arabic_live(text: str, source_lang: str = "auto") -> str:
+  """ترجمة فورية ودقيقة للنصوص والعناوين الأجنبية (الفرنسية، الإسبانية، الإنجليزية) إلى العربية الفصحى."""
+  txt = clean_display_text(text or "")
+  if not txt or len(txt) < 3:
+    return txt
+  if _is_predominantly_arabic(txt):
     return txt
 
-  low = txt.lower()
+  cache_k = f"{source_lang}::{txt[:300]}"
+  if cache_k in _TRANSLATION_CACHE:
+    return _TRANSLATION_CACHE[cache_k]
 
-  # تنظيف لواحق الجرائد الأجنبية من العنوان (مثل: | Le Monde أو - El País)
-  low_clean = re.sub(r"\s*[-|•–—]\s*(?:lemonde|le figaro|el país|elpais|liberation|france 24|rfi|el mundo|abc|la razon|el confidencial|echorouk|el watan).*$", "", low, flags=re.IGNORECASE).strip()
+  # 1) محاولة الترجمة المباشرة عبر واجهة Google Translate
+  try:
+    gt_url = (
+        "https://translate.googleapis.com/translate_a/single"
+        f"?client=gtx&sl={urllib.parse.quote(source_lang)}&tl=ar&dt=t&q={urllib.parse.quote(txt[:1600])}"
+    )
+    r_gt = requests.get(gt_url, headers=DEFAULT_HEADERS, timeout=4.5)
+    if r_gt.status_code == 200:
+      data_gt = r_gt.json()
+      if isinstance(data_gt, list) and data_gt and isinstance(data_gt[0], list):
+        translated_parts = [str(seg[0]) for seg in data_gt[0] if isinstance(seg, list) and seg and seg[0]]
+        joined_ar = clean_display_text("".join(translated_parts))
+        if joined_ar and len(re.findall(r"[\u0600-\u06FF]", joined_ar)) >= 4:
+          _TRANSLATION_CACHE[cache_k] = joined_ar
+          return joined_ar
+  except Exception:
+    pass
 
-  # استخراج الكلمات المفتاحية القضائية المترجمة
+  # 2) محاولة احتياطية عبر MyMemory Translation API
+  try:
+    sl_mm = source_lang if source_lang in ("fr", "es", "en") else "fr"
+    # كشف بسيط للإسبانية مقابل الفرنسية
+    if source_lang == "auto":
+      low_t = txt.lower()
+      if any(w in low_t for w in ("tribunal supremo", "audiencia nacional", "marruecos", "españa", "fiscalía", "sentencia", "detención", " del ", " los ", " las ")):
+        sl_mm = "es"
+      elif any(w in low_t for w in ("the ", "and ", "court ", "morocco", "with ", "from ")):
+        sl_mm = "en"
+    mm_url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(txt[:480])}&langpair={sl_mm}|ar"
+    r_mm = requests.get(mm_url, headers=DEFAULT_HEADERS, timeout=4.5)
+    if r_mm.status_code == 200:
+      mm_data = r_mm.json()
+      mm_txt = clean_display_text((mm_data.get("responseData") or {}).get("translatedText") or "")
+      if mm_txt and "MYMEMORY WARNING" not in mm_txt.upper() and len(re.findall(r"[\u0600-\u06FF]", mm_txt)) >= 4:
+        _TRANSLATION_CACHE[cache_k] = mm_txt
+        return mm_txt
+  except Exception:
+    pass
+
+  return ""
+
+
+def translate_foreign_title_to_arabic_rulebased(foreign_title: str) -> str:
+  """ترجمة العنوان الأجنبي إلى العربية عبر محرك الترجمة الحي أولاً، ثم القاموس القضائي عند تعذر الاتصال."""
+  if not foreign_title:
+    return ""
+  txt = clean_display_text(foreign_title)
+  if _is_predominantly_arabic(txt):
+    return txt
+
+  # تنظيف اسم الجريدة الملحق بالعنوان قبل الترجمة
+  txt_clean = re.sub(r"\s*[-|•–—]\s*(?:Le Monde|Le Figaro|El País|El Mundo|Libération|France 24|RFI|ABC|La Razón|El Confidencial|Echorouk|El Watan|Mediapart|Jeune Afrique|EFE|Europa Press).*$", "", txt, flags=re.IGNORECASE).strip()
+
+  live_ar = translate_text_to_arabic_live(txt_clean or txt)
+  if live_ar:
+    return live_ar
+
+  low = txt_clean.lower()
   matched_terms = []
   for term_raw, ar_term in sorted(COMPREHENSIVE_FR_ES_TRANSLATIONS.items(), key=lambda x: len(x[0]), reverse=True):
-    if term_raw in low_clean:
+    if term_raw in low:
       matched_terms.append(ar_term)
-      low_clean = low_clean.replace(term_raw, " ")
+      low = low.replace(term_raw, " ")
       if len(matched_terms) >= 3:
         break
 
@@ -1961,29 +2030,46 @@ def translate_foreign_title_to_arabic_rulebased(foreign_title: str) -> str:
     third_detail = (" و" + matched_terms[2]) if len(matched_terms) > 2 else ""
     return f"{main_action}{sub_detail}{third_detail}"
 
-  # إذا لم يطابق كلمات مفتاحية دقيقة، استخراج عنوان إخباري عربي عام دقيق
-  if "maroc" in low or "marruecos" in low or "morocco" in low:
-    return "متابعة قضائية دولية: مستجدات وتحقيقات مرتبطة بالمغرب"
-  return "متابعة قضائية دولية: تطورات الملف أمام المحاكم"
+  return txt
 
 
 def translate_foreign_snippet_to_arabic_rulebased(snippet: str, title: str, source_name: str) -> str:
-  """تعريب وتلخيص متن الخبر الأجنبي بالعربية الفصحى في جملتين عند غياب الترجمة بالذكاء الاصطناعي."""
-  t_ar = translate_foreign_title_to_arabic_rulebased(title)
-  src_c = clean_display_text(source_name)
-  country, topic = detect_article_country_and_topic(title, snippet, "", source_name, "صحافة دولية")
-  return (
-      f"أفادت تقارير صادرة عن {src_c} ({country}) بمتابعة مستجدات تتعلق بـ {t_ar}، "
-      f"في إطار التغطيات القضائية والدولية الجارية المتعلقة بـ {topic}."
-  )
+  """ترجمة متن الخبر الأجنبي نفسه إلى العربية الفصحى لاستخلاص ملخص دقيق ومباشر للوقائع."""
+  s_clean = clean_display_text(snippet or "")
+  t_clean = clean_display_text(title or "")
+  target_text = s_clean if len(s_clean) > len(t_clean) + 10 else f"{t_clean}. {s_clean}".strip(". ")
+
+  live_body_ar = translate_text_to_arabic_live(target_text[:1200])
+  if live_body_ar and len(live_body_ar) >= 25:
+    sentences = [
+        seg.strip()
+        for seg in re.split(r"(?<=[.!؟\n])\s+", live_body_ar)
+        if len(seg.strip()) > 18
+    ]
+    if sentences:
+      joined = " ".join(sentences[:3])
+      return joined[:450] + ("..." if len(joined) > 450 else "")
+    return live_body_ar[:450] + ("..." if len(live_body_ar) > 450 else "")
+
+  t_ar = translate_foreign_title_to_arabic_rulebased(t_clean)
+  if t_ar and t_ar != t_clean:
+    return f"{t_ar}."
+  return s_clean[:420] or t_clean
+
+
 def build_extractive_arabic_summary(
     title: str, snippet: str, platform: str, source_name: str
 ) -> str:
   t_clean = clean_display_text(title)
   s_clean = clean_display_text(snippet)
 
-  # إذا كان المتن بلغة أجنبية (أقل من 8 أحرف عربية) نعربه إجبارياً
-  if len(re.findall(r"[\u0600-\u06FF]", f"{t_clean} {s_clean}")) < 8:
+  # إذا كان المتن بلغة أجنبية، نترجم المتن الفعلي للخبر نفسه بدلاً من كتابة عبارة عامة
+  if s_clean and not _is_predominantly_arabic(s_clean):
+    translated_body = translate_foreign_snippet_to_arabic_rulebased(s_clean, t_clean, source_name or platform)
+    if translated_body and _is_predominantly_arabic(translated_body):
+      return translated_body
+
+  if not _is_predominantly_arabic(f"{t_clean} {s_clean}"):
     return translate_foreign_snippet_to_arabic_rulebased(s_clean, t_clean, source_name or platform)
 
   if s_clean and t_clean:
@@ -2000,22 +2086,20 @@ def build_extractive_arabic_summary(
       flags=re.IGNORECASE,
   ).strip()
 
-  if s_clean and len(s_clean) >= 45 and s_clean.lower() != t_clean.lower():
+  if s_clean and len(s_clean) >= 35 and s_clean.lower() != t_clean.lower():
     sentences = [
         seg.strip()
         for seg in re.split(r"(?<=[.!؟\n])\s+", s_clean)
-        if len(seg.strip()) > 25 and seg.strip() != t_clean
+        if len(seg.strip()) > 20 and seg.strip() != t_clean
     ]
     if sentences:
       summary_txt = " ".join(sentences[:3])
-      return summary_txt[:420] + ("..." if len(summary_txt) > 420 else "")
-    return s_clean[:420] + ("..." if len(s_clean) > 420 else "")
+      return summary_txt[:450] + ("..." if len(summary_txt) > 450 else "")
+    return s_clean[:450] + ("..." if len(s_clean) > 450 else "")
 
-  src_label = clean_display_text(source_name or platform)
-  return (
-      f"تفيد المعطيات الواردة عبر ({src_label}) بمتابعة مستجدات تتعلق بـ {t_clean}، "
-      "ضمن التغطية الإعلامية والقضائية المتواصلة لأنشطة ومستجدات المصدر."
-  )
+  return s_clean or t_clean
+
+
 def get_fallback_thumbnail_data_uri(platform: str, source_name: str = "") -> str:
   themes = {
       "الصحف": ("#064e3b", "#10b981", "PRESS", "⚖️ صحافة قضائية"),
@@ -6484,10 +6568,9 @@ def _call_gemini_rest_or_sdk(prompt: str, api_key: str) -> str:
 
 
 def analyze_with_gemini(item: dict, api_key: str):
-  """تحليل ذكي فائق الدقة عبر Gemini AI:
-  1. صياغة ملخص إخباري قضائي تحليلي بالعربية الفصحى في 2-3 جمل.
-  2. تعريب وترجمة العنوان إجبارياً إلى اللغة العربية الفصحى إذا كان المصدر بلغة أجنبية (فرنسية/إسبانية/إنجليزية).
-  3. استنتاج بلد المصدر وموضوع الخبر وتصنيفه الدقيق."""
+  """تحليل ذكي فائق الدقة عبر Gemini AI مع ترجمة فورية دقيقة كخط أساس:
+  1. ترجمة العنوان الأجنبي ترجمة صحفية دقيقة إلى العربية الفصحى.
+  2. تلخيص الوقائع المحددة للخبر نفسه (الأسماء، المحاكم، القرارات) باللغة العربية الفصحى دون تعميم."""
   title = clean_display_text(item.get("title", ""))
   snippet = clean_display_text(item.get("raw_snippet", "")) or title
   platform = item.get("platform", "الصحف")
@@ -6498,13 +6581,13 @@ def analyze_with_gemini(item: dict, api_key: str):
       title, snippet, url, source_name, platform
   )
 
-  fallback_summary = build_extractive_arabic_summary(
-      title, snippet, platform, source_name
-  )
-
-  # فحص ما إذا كان العنوان أجنبياً (أقل من 6 أحرف عربية)
-  is_foreign_title = len(re.findall(r"[\u0600-\u06FF]", title)) < 6
+  # الترجمة الآلية الدقيقة للعنوان والمتن كخط أساس مضمون
+  is_foreign_title = not _is_predominantly_arabic(title)
   arabic_title_fallback = translate_foreign_title_to_arabic_rulebased(title) if is_foreign_title else title
+
+  fallback_summary = build_extractive_arabic_summary(
+      arabic_title_fallback, snippet, platform, source_name
+  )
 
   default_result = {
       "translated_title": arabic_title_fallback,
@@ -6518,20 +6601,19 @@ def analyze_with_gemini(item: dict, api_key: str):
     return default_result
 
   prompt = (
-      "أنت محلل إعلامي وقضائي خبير بمرصد القضاء والعدالة الدولي والمغربي.\n"
-      "قم بتحليل عنوان وتفاصيل الخبر أو المقال التالي الصادر عن الصحافة (سواء باللغة العربية، الفرنسية، أو الإسبانية)، ونفذ الآتي:\n"
-      "1) إذا كان عنوان الخبر باللغة الفرنسية أو الإسبانية أو غير العربية، تُرجمه وصُغه إجبارياً إلى عنوان صحفي جذاب ومحكم باللغة العربية الفصحى.\n"
-      "2) اكتب ملخصاً إخبارياً دقيقاً ومفصلاً في جملتين إلى ثلاث جمل بالعربية الفصحى يوضح الوقائع والتفاصيل والقرارات والصلة القضائية أو الصلة بالمغرب.\n"
-      "تحذير صارم: يُمنع منعاً باتاً ترك العنوان بلغة غير العربية، ويُمنع إعادة كتابة العنوان كملخص.\n"
+      "أنت مترجم ومحلل إعلامي وقضائي محترف في مرصد القضاء والعدالة.\n"
+      "قم بقراءة الخبر التالي الصادر عن الصحافة (عربي أو فرنسي أو إسباني أو إنجليزي) ونفذ بدقة تامة:\n"
+      "1) translated_title: ترجم العنوان الأصلي ترجمة حرفية وصحفية دقيقة إلى اللغة العربية الفصحى (إذا كان بلغة أجنبية، اذكر الوقائع والأطراف بدقة دون اختصار مخل أو عبارات عامة).\n"
+      "2) summary: لخص مضمون الخبر نفسه في جملتين إلى ثلاث جمل بالعربية الفصحى تشرح الوقائع المحددة والأطراف والمحكمة والقرار الوارد في النص مباشرة. يُمنع منعاً باتاً كتابة جمل إنشائية عامة مثل 'أفادت تقارير بمتابعة مستجدات'.\n"
       "أرجع النتيجة بصيغة JSON فقط بالمفاتيح التالية:\n"
-      '{"translated_title": "العنوان باللغة العربية الفصحى حصراً...", '
-      '"summary": "الملخص الإخباري التحليلي باللغة العربية الفصحى هنا...", '
+      '{"translated_title": "الترجمة العربية الدقيقة للعنوان...", '
+      '"summary": "ملخص الوقائع المباشرة للخبر باللغة العربية...", '
       '"sentiment": "إيجابي أو محايد أو سلبي", '
-      '"category": "يتطرق للمغرب أو شؤون قضائية أو قضاء دولي أو قضايا وتسليم واتفاقيات أو بلاغ رسمي", '
+      '"category": "يتطرق للمغرب أو شؤون قضائية ومحاكم أو قضاء دولي أو قضايا وتسليم واتفاقيات", '
       '"relevance_score": 92}\n\n'
-      f"المنصة والمصدر: {platform} - {source_name}\n"
-      f"عنوان الخبر الأصلي: {title}\n"
-      f"متن وتفاصيل الخبر: {snippet[:1800]}"
+      f"المصدر: {source_name}\n"
+      f"العنوان الأصلي: {title}\n"
+      f"متن الخبر: {snippet[:2000]}"
   )
 
   txt = _call_gemini_rest_or_sdk(prompt, str(api_key).strip())
@@ -6542,8 +6624,8 @@ def analyze_with_gemini(item: dict, api_key: str):
         parsed = json.loads(m.group(0))
         ai_title = clean_display_text(parsed.get("translated_title"))
         ai_sum = clean_display_text(parsed.get("summary"))
-        final_t = ai_title if (ai_title and len(ai_title) >= 10) else arabic_title_fallback
-        final_s = ai_sum if (ai_sum and not is_summary_just_title(title, ai_sum)) else fallback_summary
+        final_t = ai_title if (ai_title and _is_predominantly_arabic(ai_title) and len(ai_title) >= 8) else arabic_title_fallback
+        final_s = ai_sum if (ai_sum and _is_predominantly_arabic(ai_sum) and not is_summary_just_title(title, ai_sum)) else fallback_summary
         return {
             "translated_title": final_t,
             "summary": final_s,
@@ -6553,12 +6635,14 @@ def analyze_with_gemini(item: dict, api_key: str):
         }
       else:
         plain_ai = clean_display_text(txt)
-        if len(plain_ai) > 40 and not is_summary_just_title(title, plain_ai):
+        if len(plain_ai) > 40 and _is_predominantly_arabic(plain_ai) and not is_summary_just_title(title, plain_ai):
           default_result["summary"] = plain_ai
     except Exception:
       pass
 
   return default_result
+
+
 def send_telegram_alert(item: dict, cfg: dict) -> bool:
   """إرسال إشعار تلغرام مرة واحدة فقط لكل خبر جديد بتنسيق HTML آمن وأزرار تصنيف تفاعلية."""
   token = (cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN).strip()
@@ -6632,9 +6716,17 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
     return False
 
 
-def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
+def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 12):
   lock = get_db_lock()
   to_upgrade = []
+  generic_markers = (
+      "أفادت تقارير صادرة عن",
+      "تفيد المعطيات الواردة عبر",
+      "متابعة إعلامية وقضائية دولية",
+      "متابعة قضائية دولية: مستجدات",
+      "تقرير قضائي دولي:",
+      "تقرير قضائي:",
+  )
   with lock:
     try:
       conn = _open_sqlite_conn()
@@ -6642,16 +6734,17 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
       conn.row_factory = sqlite3.Row
       c = conn.cursor()
       c.execute(
-          "SELECT id, title, summary, source_name, platform, url, raw_snippet, image_url "
-          "FROM articles ORDER BY pub_timestamp DESC LIMIT 40"
+          "SELECT id, title, summary, source_name, platform, url, raw_snippet, image_url, category "
+          "FROM articles ORDER BY pub_timestamp DESC LIMIT 60"
       )
       for r in c.fetchall():
         d = dict(r)
+        t_cur = d.get("title", "")
+        s_cur = d.get("summary", "")
         missing_img = not (d.get("image_url") or "").strip()
-        bad_sum = is_summary_just_title(
-            d.get("title", ""), d.get("summary", "")
-        )
-        if missing_img or bad_sum:
+        bad_sum = is_summary_just_title(t_cur, s_cur) or any(gm in s_cur for gm in generic_markers) or (not _is_predominantly_arabic(s_cur))
+        foreign_title = not _is_predominantly_arabic(t_cur)
+        if missing_img or bad_sum or foreign_title:
           to_upgrade.append(d)
           if len(to_upgrade) >= max_upgrades:
             break
@@ -6669,7 +6762,14 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
       break
     enrich_item_content_and_image(item)
     ai_res = analyze_with_gemini(item, api_key)
-    item["summary"] = clean_display_text(ai_res["summary"])
+    new_t = clean_display_text(ai_res.get("translated_title") or item.get("title", ""))
+    new_s = clean_display_text(ai_res.get("summary") or item.get("summary", ""))
+    if new_t:
+      item["title"] = new_t
+    if new_s:
+      item["summary"] = new_s
+    if ai_res.get("category"):
+      item["category"] = ai_res["category"]
     upgraded_records.append(item)
 
   if upgraded_records:
@@ -6679,9 +6779,11 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
         c = conn.cursor()
         for rec in upgraded_records:
           c.execute(
-              "UPDATE articles SET summary = ?, image_url = ?, raw_snippet = ?, url = ? WHERE id = ?",
+              "UPDATE articles SET title = ?, summary = ?, category = ?, image_url = ?, raw_snippet = ?, url = ? WHERE id = ?",
               (
+                  rec["title"],
                   rec["summary"],
+                  rec.get("category", "شؤون قضائية"),
                   rec.get("image_url", ""),
                   rec.get("raw_snippet", ""),
                   rec.get("url", ""),
@@ -6695,10 +6797,6 @@ def upgrade_incomplete_existing_articles(cfg: dict, max_upgrades: int = 8):
     sync_db_to_json()
 
 
-
-# =====================================================================
-# خادم استماع بوت تلغرام التفاعلي (رصد فوري + أزرار الدول والأقسام بدون فتح الموقع)
-# =====================================================================
 def _send_telegram_batch_digest_bulletin(newly_added: list, cfg: dict):
   """إرسال بطاقة ملخص مصنفة بأزرار تفاعلية لكل وسيلة ودولة فور رصد أخبار جديدة."""
   if not newly_added:
@@ -7094,7 +7192,8 @@ def quick_process_and_save(
     plat = it.get("platform", "الصحف")
     src = clean_display_text(it.get("source_name") or plat)
 
-    if enrichment_calls < 14:
+    is_foreign_it = not _is_predominantly_arabic(it.get("title", "")) or (plat == "صحافة دولية")
+    if enrichment_calls < 18 or (is_foreign_it and len(clean_display_text(it.get("raw_snippet") or "")) < 140 and enrichment_calls < 35):
       enrichment_calls += 1
       enrich_item_content_and_image(it)
 
@@ -7111,14 +7210,14 @@ def quick_process_and_save(
     raw_snip = clean_display_text(it.get("raw_snippet") or "")
     img_url = (it.get("image_url") or "").strip()
 
-    if ai_calls < 15 and api_key:
+    if ai_calls < 20 and api_key:
       ai_res = analyze_with_gemini(it, api_key)
       ai_calls += 1
     else:
       det_country, det_topic = detect_article_country_and_topic(
           it.get("title", ""), raw_snip, it.get("url", ""), src, plat
       )
-      is_for_t = len(re.findall(r"[\u0600-\u06FF]", it.get("title", ""))) < 6
+      is_for_t = not _is_predominantly_arabic(it.get("title", ""))
       ar_t_fall = translate_foreign_title_to_arabic_rulebased(it.get("title", "")) if is_for_t else it["title"]
       ai_res = {
           "translated_title": ar_t_fall,
@@ -8617,7 +8716,23 @@ def render_article_cards(
     raw_snip = clean_display_text(item.get("raw_snippet") or "")
     raw_src = clean_display_text(item.get("source_name") or plat)
 
-    if is_summary_just_title(raw_title, raw_summary):
+    if raw_title and not _is_predominantly_arabic(raw_title):
+      tr_t = translate_foreign_title_to_arabic_rulebased(raw_title)
+      if tr_t and _is_predominantly_arabic(tr_t):
+        raw_title = tr_t
+
+    generic_markers_ui = (
+        "أفادت تقارير صادرة عن",
+        "تفيد المعطيات الواردة عبر",
+        "متابعة إعلامية وقضائية دولية",
+        "متابعة قضائية دولية: مستجدات",
+        "تقرير قضائي دولي:",
+    )
+    if (
+        is_summary_just_title(raw_title, raw_summary)
+        or not _is_predominantly_arabic(raw_summary)
+        or any(gm in raw_summary for gm in generic_markers_ui)
+    ):
       raw_summary = build_extractive_arabic_summary(
           raw_title, raw_snip, plat, raw_src
       )
