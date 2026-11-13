@@ -1,3 +1,4 @@
+import difflib
 import base64
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -557,6 +558,120 @@ def normalize_arabic_for_dedup(text: str) -> str:
   t = re.sub(r"[^\u0600-\u06FFa-z0-9\s]", " ", t)
   t = re.sub(r"\s+", " ", t).strip()
   return t
+
+
+
+def _arabic_light_stem(word: str) -> str:
+  """تجريد خفيف للكلمات العربية (حذف السوابق واللواحق الشائعة) لإيجاد النتائج المشابهة صرفياً."""
+  w = word.strip()
+  if len(w) <= 3:
+    return w
+  for pref in ("وال", "بال", "كال", "فال", "لال", "ال"):
+    if w.startswith(pref) and len(w) - len(pref) >= 3:
+      w = w[len(pref):]
+      break
+  else:
+    if w[0] in ("و", "ب", "ف", "ك", "ل") and len(w) >= 4:
+      w = w[1:]
+  for suf in ("ات", "ون", "ين", "ية", "ان", "ه", "ها", "هم", "كم"):
+    if w.endswith(suf) and len(w) - len(suf) >= 3:
+      w = w[:-len(suf)]
+      break
+  return w
+
+
+def smart_search_articles(articles_list: list, query_str: str) -> list:
+  """محرك بحث ذكي يدعم كلمة واحدة، كلمتين، ثلاث كلمات، أو جملة كاملة،
+  ويرتب النتائج من المطابقة التامة إلى المطابقة المشابهة (دلالياً وصرفياً)."""
+  q_raw = clean_display_text(query_str or "")
+  if not q_raw or not articles_list:
+    return list(articles_list or [])
+
+  q_norm = normalize_arabic_for_dedup(q_raw)
+  if not q_norm:
+    return list(articles_list)
+
+  stop_words = {"في", "من", "على", "عن", "الى", "إلى", "مع", "ان", "أن", "ما", "هو", "هي", "هذا", "هذه", "تم", "بعد", "قبل", "حول", "بشأن", "بين", "او", "أو", "و", "le", "la", "les", "de", "du", "des", "et", "en", "el", "los", "las", "y", "the", "of", "and", "in", "to"}
+  raw_tokens = [t for t in q_norm.split() if len(t) >= 2 and t not in stop_words]
+  if not raw_tokens:
+    raw_tokens = [t for t in q_norm.split() if t]
+  if not raw_tokens:
+    return list(articles_list)
+
+  q_stems = [_arabic_light_stem(t) for t in raw_tokens]
+  scored_results = []
+
+  for item in articles_list:
+    t_txt = item.get("title", "") or ""
+    s_txt = item.get("summary", "") or ""
+    r_txt = item.get("raw_snippet", "") or ""
+    src_txt = item.get("source_name", "") or ""
+    cat_txt = item.get("category", "") or ""
+    plat_txt = item.get("platform", "") or ""
+
+    t_norm = normalize_arabic_for_dedup(t_txt)
+    s_norm = normalize_arabic_for_dedup(s_txt)
+    r_norm = normalize_arabic_for_dedup(r_txt)
+    meta_norm = normalize_arabic_for_dedup(f"{src_txt} {cat_txt} {plat_txt}")
+    full_norm = f"{t_norm} {s_norm} {r_norm} {meta_norm}"
+
+    score = 0.0
+
+    # 1) تطابق الجملة أو العبارة كاملة (الأعلى دقة)
+    if len(q_norm) >= 3:
+      if q_norm in t_norm:
+        score += 120.0
+      elif q_norm in s_norm:
+        score += 85.0
+      elif q_norm in full_norm:
+        score += 65.0
+
+    # 2) تطابق الكلمات الفردية والجذور المشابهة
+    full_words = full_norm.split()
+    full_stems = {_arabic_light_stem(w) for w in full_words if len(w) >= 2}
+
+    matched_exact = 0
+    matched_stem = 0
+    for tok, st_tok in zip(raw_tokens, q_stems):
+      if tok in t_norm:
+        matched_exact += 1
+        score += 30.0
+      elif tok in s_norm or tok in meta_norm:
+        matched_exact += 1
+        score += 20.0
+      elif tok in r_norm:
+        matched_exact += 1
+        score += 14.0
+      elif st_tok in full_stems or any(st_tok in w for w in full_words if len(w) >= len(st_tok)):
+        matched_stem += 1
+        score += 12.0
+
+    total_hits = matched_exact + matched_stem
+    n_tok = len(raw_tokens)
+
+    # مكافأة استيفاء جميع كلمات البحث (2 أو 3 كلمات أو جملة)
+    if total_hits == n_tok:
+      score += 45.0
+    elif n_tok >= 2 and total_hits >= max(1, (n_tok + 1) // 2):
+      score += 15.0 * (total_hits / n_tok)
+
+    # 3) فحص التشابه التقريبي (Fuzzy Match) إذا لم يتحقق تطابق كافٍ بعد
+    if score == 0.0 and len(q_norm) >= 4:
+      # مطابقة تقريبية مع كلمات العنوان
+      best_sim = 0.0
+      for w in t_norm.split():
+        if len(w) >= 3:
+          sim = difflib.SequenceMatcher(None, q_norm[:30], w).ratio()
+          if sim > best_sim:
+            best_sim = sim
+      if best_sim >= 0.76:
+        score += best_sim * 25.0
+
+    if score > 0.0:
+      scored_results.append((score, float(item.get("pub_timestamp", 0)), item))
+
+  scored_results.sort(key=lambda x: (x[0], x[1]), reverse=True)
+  return [x[2] for x in scored_results]
 
 
 def extract_canonical_post_or_video_id(url: str) -> str:
@@ -6643,6 +6758,41 @@ def analyze_with_gemini(item: dict, api_key: str):
   return default_result
 
 
+def _ensure_arabic_title_and_summary(item: dict) -> tuple:
+  """ضمان تعريب العنوان والملخص إجبارياً إلى العربية قبل العرض في الويب أو الإرسال إلى بوت تلغرام."""
+  raw_title = clean_display_text(item.get("title") or "")
+  raw_summary = clean_display_text(item.get("summary") or "")
+  raw_snip = clean_display_text(item.get("raw_snippet") or "")
+  plat = clean_display_text(item.get("platform") or "الصحف")
+  raw_src = clean_display_text(item.get("source_name") or plat)
+
+  if raw_title and not _is_predominantly_arabic(raw_title):
+    tr_t = translate_foreign_title_to_arabic_rulebased(raw_title)
+    if tr_t and _is_predominantly_arabic(tr_t):
+      raw_title = tr_t
+
+  generic_markers = (
+      "أفادت تقارير صادرة عن",
+      "تفيد المعطيات الواردة عبر",
+      "متابعة إعلامية وقضائية دولية",
+      "متابعة قضائية دولية: مستجدات",
+      "تقرير قضائي دولي:",
+  )
+  if (
+      not raw_summary
+      or is_summary_just_title(raw_title, raw_summary)
+      or not _is_predominantly_arabic(raw_summary)
+      or any(gm in raw_summary for gm in generic_markers)
+  ):
+    raw_summary = build_extractive_arabic_summary(raw_title, raw_snip, plat, raw_src)
+    if raw_summary and not _is_predominantly_arabic(raw_summary):
+      tr_s = translate_text_to_arabic_live(raw_summary)
+      if tr_s and _is_predominantly_arabic(tr_s):
+        raw_summary = tr_s
+
+  return raw_title, raw_summary
+
+
 def send_telegram_alert(item: dict, cfg: dict) -> bool:
   """إرسال إشعار تلغرام مرة واحدة فقط لكل خبر جديد بتنسيق HTML آمن وأزرار تصنيف تفاعلية."""
   token = (cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN).strip()
@@ -6681,14 +6831,15 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
   country_flags = {"المغرب": "🇲🇦", "فرنسا": "🇫🇷", "إسبانيا": "🇪🇸", "الجزائر": "🇩🇿", "دولي": "🌐"}
   c_flag = country_flags.get(country_tag, "🌍")
 
+  ar_title_tg, ar_summary_tg = _ensure_arabic_title_and_summary(item)
   msg_html = (
       f"⚖️ <b>المرصد القضائي</b>\n"
       f"{target_badge}"
       f"{icon} <b>المنصة:</b> {html.escape(plat_tg)} | {c_flag} <b>الدولة:</b> {html.escape(country_tag)}\n"
       f"🗞️ <b>المصدر:</b> {html.escape(str(item.get('source_name', '')))}\n"
       f"📅 <b>تاريخ النشر:</b> {html.escape(str(item.get('pub_date', '')))} | 📡 <b>الرصد:</b> {monitored_dt}\n"
-      f"📌 <b>العنوان:</b> {html.escape(str(item.get('title', '')))}\n\n"
-      f"📝 <b>الملخص:</b> {html.escape(str(item.get('summary', '')))}\n\n"
+      f"📌 <b>العنوان:</b> {html.escape(ar_title_tg)}\n\n"
+      f"📝 <b>الملخص:</b> {html.escape(ar_summary_tg)}\n\n"
       f"🏷️ <b>التصنيف:</b> {html.escape(str(item.get('category', '') or topic_tag))}"
   )
 
@@ -6951,11 +7102,14 @@ def _telegram_bot_send_filtered_response(filter_key: str, filter_type: str, chat
 
   resp_lines = [f"⚖️ <b>المرصد القضائي — أحدث منشورات {html.escape(label)}:</b>"]
   for idx, r in enumerate(rows, 1):
-    t_clean = html.escape(clean_display_text(r.get("title") or ""))
+    ar_t_r, ar_s_r = _ensure_arabic_title_and_summary(r)
+    t_clean = html.escape(ar_t_r)
+    s_short = html.escape(ar_s_r[:160] + ("..." if len(ar_s_r) > 160 else "")) if ar_s_r else ""
     u_clean = html.escape(clean_social_post_url(r.get("url") or ""))
     src_clean = html.escape(clean_display_text(r.get("source_name") or r.get("platform") or ""))
     cat_clean = html.escape(clean_display_text(r.get("category") or ""))
-    resp_lines.append(f"\n<b>{idx}.</b> <a href=\"{u_clean}\">{t_clean}</a>\n    🏷️ {src_clean} | {cat_clean}")
+    sum_line = f"\n    📝 {s_short}" if s_short else ""
+    resp_lines.append(f"\n<b>{idx}.</b> <a href=\"{u_clean}\">{t_clean}</a>{sum_line}\n    🏷️ {src_clean} | {cat_clean}")
 
   try:
     requests.post(
@@ -7061,6 +7215,38 @@ def _telegram_bot_updates_listener():
               _telegram_bot_send_filtered_response("يوتيوب", "platform", m_chat_id, token_curr)
             elif text_in in ("/all", "الكل", "جميع", "🌐 الكل"):
               _telegram_bot_send_filtered_response("all", "platform", m_chat_id, token_curr)
+            elif text_in.startswith("/search ") or text_in.startswith("بحث "):
+              q_tg = text_in.split(" ", 1)[1].strip() if " " in text_in else ""
+              if q_tg:
+                try:
+                  conn_s = _open_sqlite_conn()
+                  conn_s.row_factory = sqlite3.Row
+                  c_s = conn_s.cursor()
+                  c_s.execute("SELECT * FROM articles ORDER BY pub_timestamp DESC LIMIT 300")
+                  all_db_s = [dict(r) for r in c_s.fetchall()]
+                  conn_s.close()
+                  hits_tg = smart_search_articles(all_db_s, q_tg)[:6]
+                except Exception:
+                  hits_tg = []
+                if hits_tg:
+                  lines_s = [f"🔎 <b>نتائج البحث في المرصد عن:</b> {html.escape(q_tg)}"]
+                  for idx_s, r_s in enumerate(hits_tg, 1):
+                    ar_t_s, _ = _ensure_arabic_title_and_summary(r_s)
+                    t_s = html.escape(ar_t_s)
+                    u_s = html.escape(clean_social_post_url(r_s.get("url") or ""))
+                    src_s = html.escape(clean_display_text(r_s.get("source_name") or r_s.get("platform") or ""))
+                    lines_s.append(f"\n<b>{idx_s}.</b> <a href=\"{u_s}\">{t_s}</a>\n    🏷️ {src_s}")
+                  requests.post(
+                      f"https://api.telegram.org/bot{token_curr}/sendMessage",
+                      json={"chat_id": m_chat_id, "text": "\n".join(lines_s), "parse_mode": "HTML", "disable_web_page_preview": True},
+                      timeout=8,
+                  )
+                else:
+                  requests.post(
+                      f"https://api.telegram.org/bot{token_curr}/sendMessage",
+                      json={"chat_id": m_chat_id, "text": f"🔎 لم يتم العثور على أخبار مطابقة لعبارة: <b>{html.escape(q_tg)}</b>", "parse_mode": "HTML"},
+                      timeout=6,
+                  )
             elif text_in in ("/start", "/help", "مساعدة"):
               welcome_msg = (
                   "⚖️ <b>مرحباً بك في بوت المرصد القضائي</b>\n\n"
@@ -8813,6 +8999,72 @@ def render_article_cards(
 # =====================================================================
 # 18. التبويبات الرئيسية (بأسماء مختصرة من كلمة واحدة)
 # =====================================================================
+# =====================================================================
+# شريط البحث الذكي الشامل داخل كافة الأخبار والمقالات المرصودة
+# =====================================================================
+st.markdown("#### 🔎 البحث في الأخبار والمقالات المرصودة")
+col_gs_inp, col_gs_scope, col_gs_clr = st.columns([3.2, 1.3, 0.7])
+if "global_site_search" not in st.session_state:
+  st.session_state["global_site_search"] = ""
+
+with col_gs_inp:
+  global_search_q = st.text_input(
+      "البحث داخل المرصد",
+      key="global_site_search",
+      placeholder="ابحث بكلمة مفتاحية، كلمتين، ثلاث كلمات، أو جملة كاملة (عربي/فرنسي/إسباني)...",
+      label_visibility="collapsed",
+  )
+with col_gs_scope:
+  search_scope = st.selectbox(
+      "نطاق البحث",
+      options=["الأخبار النشطة والأرشيف معاً", "الأخبار النشطة فقط", "الأرشيف فقط"],
+      key="global_search_scope",
+      label_visibility="collapsed",
+  )
+with col_gs_clr:
+  if st.button("✖️ مسح", key="btn_clear_global_search", use_container_width=True):
+    st.session_state["global_site_search"] = ""
+    st.rerun()
+
+if global_search_q.strip():
+  q_gs = global_search_q.strip()
+  if search_scope == "الأخبار النشطة فقط":
+    pool_gs = list(live_articles)
+  elif search_scope == "الأرشيف فقط":
+    pool_gs = list(archive_articles)
+  else:
+    # دمج النشط والأرشيف بدون تكرار
+    seen_gs_u = set()
+    pool_gs = []
+    for _it_g in live_articles + archive_articles:
+      _u_g = _it_g.get("url", "")
+      if _u_g not in seen_gs_u:
+        seen_gs_u.add(_u_g)
+        pool_gs.append(_it_g)
+
+  gs_matches = smart_search_articles(pool_gs, q_gs)
+  render_html(
+      f'<div dir="rtl" style="background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.35);border-radius:12px;padding:10px 14px;margin-bottom:12px;color:#e2e8f0;font-size:0.9rem;">'
+      f'🎯 نتائج البحث عن <strong style="color:#38bdf8;">«{html.escape(q_gs)}»</strong>: تم العثور على <strong style="color:#34d399;">{len(gs_matches)}</strong> نتيجة (مرتبة من التطابق الدقيق إلى المشابه).'
+      f'</div>'
+  )
+  # تصفية جميع التبويبات تلقائياً لعرض نتائج البحث المطابقة لكل منصة
+  live_articles = smart_search_articles(live_articles, q_gs)
+  press_live = smart_search_articles(press_live, q_gs)
+  intl_live = smart_search_articles(intl_live, q_gs)
+  fb_live = smart_search_articles(fb_live, q_gs)
+  x_live = smart_search_articles(x_live, q_gs)
+  yt_live = smart_search_articles(yt_live, q_gs)
+  other_live = smart_search_articles(other_live, q_gs)
+  target_live = smart_search_articles(target_live, q_gs)
+  archive_articles = smart_search_articles(archive_articles, q_gs)
+
+  with st.expander(f"📋 عرض كافة نتائج البحث المباشرة ({len(gs_matches)})", expanded=True):
+    render_article_cards(
+        gs_matches,
+        empty_msg=f"لم يتم العثور على مقالات مطابقة أو مشابهة لعبارة «{q_gs}».",
+    )
+
 tabs = st.tabs([
     f"الكل ({len(live_articles)})",
     f"الصحف ({len(press_live)})",
@@ -8903,11 +9155,7 @@ with tabs[2]:
     ]
 
   if filter_search.strip():
-    q_txt = filter_search.strip().lower()
-    filtered_intl = [
-        a for a in filtered_intl
-        if q_txt in (a.get("title", "") + " " + a.get("summary", "") + " " + a.get("source_name", "")).lower()
-    ]
+    filtered_intl = smart_search_articles(filtered_intl, filter_search.strip())
 
   c_fr = len([a for a in intl_live if (a.get("_intl_country") or detect_article_country_and_topic(a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), "صحافة دولية")[0]) == "فرنسا"])
   c_es = len([a for a in intl_live if (a.get("_intl_country") or detect_article_country_and_topic(a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), "صحافة دولية")[0]) == "إسبانيا"])
@@ -8956,19 +9204,7 @@ with tabs[8]:
   )
   filtered_arch = archive_articles
   if arch_q.strip():
-    q_low = arch_q.strip().lower()
-    filtered_arch = [
-        a
-        for a in archive_articles
-        if q_low
-        in (
-            a.get("title", "")
-            + " "
-            + a.get("summary", "")
-            + " "
-            + a.get("source_name", "")
-        ).lower()
-    ]
+    filtered_arch = smart_search_articles(archive_articles, arch_q.strip())
   render_article_cards(
       filtered_arch,
       empty_msg="لا توجد عناصر في الأرشيف حالياً (تنتقل الأخبار تلقائياً إلى الأرشيف بعد مرور 24 ساعة على رصدها).",
