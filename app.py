@@ -6924,7 +6924,7 @@ def send_telegram_alert(item: dict, cfg: dict) -> bool:
   inline_kb = [
       [
           {"text": "🔗 فتح المصدر الأصلي", "url": clean_u},
-          {"text": f"{c_flag} أخبار {country_tag}", "callback_data": f"country_{country_tag}" if country_tag != "المغرب" else "cat_الصحف"}
+          {"text": f"{c_flag} أخبار {country_tag}", "callback_data": {"الولايات المتحدة": "c_us", "فرنسا": "c_fr", "إسبانيا": "c_es", "الجزائر": "c_dz", "دولي": "c_gl"}.get(country_tag, "p_press")}
       ]
   ]
 
@@ -7060,19 +7060,19 @@ def _send_telegram_batch_digest_bulletin(newly_added: list, cfg: dict):
 
   inline_kb = [
       [
-          {"text": f"📰 الصحف ({c_press})", "callback_data": "cat_الصحف"},
+          {"text": f"📰 الصحف ({c_press})", "callback_data": "p_press"},
           {"text": f"🌍 القائمة الفرعية للدولية ({c_intl})", "callback_data": "menu_intl"}
       ],
       [
-          {"text": "🇺🇸 أمريكا", "callback_data": "country_الولايات المتحدة"},
-          {"text": "🇫🇷 فرنسا", "callback_data": "country_فرنسا"},
-          {"text": "🇪🇸 إسبانيا", "callback_data": "country_إسبانيا"},
-          {"text": "🇩🇿 الجزائر", "callback_data": "country_الجزائر"}
+          {"text": "🇺🇸 أمريكا", "callback_data": "c_us"},
+          {"text": "🇫🇷 فرنسا", "callback_data": "c_fr"},
+          {"text": "🇪🇸 إسبانيا", "callback_data": "c_es"},
+          {"text": "🇩🇿 الجزائر", "callback_data": "c_dz"}
       ],
       [
-          {"text": f"🟦 فيسبوك ({c_fb})", "callback_data": "cat_فيسبوك"},
-          {"text": f"⬛ إكس ({c_x})", "callback_data": "cat_إكس"},
-          {"text": f"🟥 يوتيوب ({c_yt})", "callback_data": "cat_يوتيوب"}
+          {"text": f"🟦 فيسبوك ({c_fb})", "callback_data": "p_fb"},
+          {"text": f"⬛ إكس ({c_x})", "callback_data": "p_x"},
+          {"text": f"🟥 يوتيوب ({c_yt})", "callback_data": "p_yt"}
       ],
       [
           {"text": "⚡ تشغيل رصد فوري الآن", "callback_data": "action_run_scan"},
@@ -7104,12 +7104,12 @@ def _telegram_send_main_menu(chat_id: str, token: str):
       "اختر الوسيلة أو القسم المطلوب من الأزرار أدناه:\n"
       "• ⚡ <b>تشغيل رصد فوري</b>: إطلاق مسح شامل الآن\n"
       "• 📰 <b>الصحف الوطنية</b>: الصحافة القضائية المغربية\n"
-      "• 🌍 <b>الصحافة الدولية (قوائم الدول)</b>: فتح القائمة الفرعية لفرز أمريكا، فرنسا، إسبانيا، الجزائر والهيئات الدولية"
+      "• 🌍 <b>الصحافة الدولية (فرز الدول)</b>: فتح القائمة الفرعية لفرز أمريكا، فرنسا، إسبانيا، الجزائر والهيئات الدولية"
   )
   inline_main = [
-      [{"text": "⚡ تشغيل رصد فوري", "callback_data": "action_run_scan"}, {"text": "🌐 جميع الأخبار", "callback_data": "cat_all"}],
-      [{"text": "📰 الصحف الوطنية", "callback_data": "cat_الصحف"}, {"text": "🌍 الصحافة الدولية (فرز الدول ▾)", "callback_data": "menu_intl"}],
-      [{"text": "🟦 فيسبوك", "callback_data": "cat_فيسبوك"}, {"text": "⬛ إكس", "callback_data": "cat_إكس"}, {"text": "🟥 يوتيوب", "callback_data": "cat_يوتيوب"}],
+      [{"text": "⚡ تشغيل رصد فوري", "callback_data": "action_run_scan"}, {"text": "🌐 جميع الأخبار", "callback_data": "p_all"}],
+      [{"text": "📰 الصحف الوطنية", "callback_data": "p_press"}, {"text": "🌍 الصحافة الدولية (فرز الدول ▾)", "callback_data": "menu_intl"}],
+      [{"text": "🟦 فيسبوك", "callback_data": "p_fb"}, {"text": "⬛ إكس", "callback_data": "p_x"}, {"text": "🟥 يوتيوب", "callback_data": "p_yt"}],
   ]
   reply_kb = {
       "keyboard": [
@@ -7123,7 +7123,7 @@ def _telegram_send_main_menu(chat_id: str, token: str):
   try:
     requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": welcome_msg, "parse_mode": "HTML", "reply_markup": inline_main},
+        json={"chat_id": chat_id, "text": welcome_msg, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": inline_main}},
         timeout=6,
     )
     requests.post(
@@ -7173,19 +7173,19 @@ def _telegram_send_international_submenu(chat_id: str, token: str):
 
   inline_intl = [
       [
-          {"text": f"🇺🇸 أمريكا ({counts['الولايات المتحدة']})", "callback_data": "country_الولايات المتحدة"},
-          {"text": f"🇫🇷 فرنسا ({counts['فرنسا']})", "callback_data": "country_فرنسا"}
+          {"text": f"🇺🇸 أمريكا ({counts['الولايات المتحدة']})", "callback_data": "c_us"},
+          {"text": f"🇫🇷 فرنسا ({counts['فرنسا']})", "callback_data": "c_fr"}
       ],
       [
-          {"text": f"🇪🇸 إسبانيا ({counts['إسبانيا']})", "callback_data": "country_إسبانيا"},
-          {"text": f"🇩🇿 الجزائر ({counts['الجزائر']})", "callback_data": "country_الجزائر"}
+          {"text": f"🇪🇸 إسبانيا ({counts['إسبانيا']})", "callback_data": "c_es"},
+          {"text": f"🇩🇿 الجزائر ({counts['الجزائر']})", "callback_data": "c_dz"}
       ],
       [
-          {"text": f"🏛️ هيئات دولية ({counts['دولي']})", "callback_data": "country_دولي"},
-          {"text": f"🇲🇦 يتطرق للمغرب ({counts['يتطرق للمغرب']})", "callback_data": "topic_يتطرق للمغرب"}
+          {"text": f"🏛️ هيئات دولية ({counts['دولي']})", "callback_data": "c_gl"},
+          {"text": f"🇲🇦 يتطرق للمغرب ({counts['يتطرق للمغرب']})", "callback_data": "t_ma"}
       ],
       [
-          {"text": f"🌍 كل الدولية ({counts['total']})", "callback_data": "cat_صحافة دولية"},
+          {"text": f"🌍 كل الدولية ({counts['total']})", "callback_data": "p_intl"},
           {"text": "🔙 القائمة الرئيسية", "callback_data": "menu_main"}
       ]
   ]
@@ -7269,14 +7269,14 @@ def _telegram_bot_send_filtered_response(filter_key: str, filter_type: str, chat
 
   inline_nav = [
       [
-          {"text": "🇺🇸 أمريكا", "callback_data": "country_الولايات المتحدة"},
-          {"text": "🇫🇷 فرنسا", "callback_data": "country_فرنسا"},
-          {"text": "🇪🇸 إسبانيا", "callback_data": "country_إسبانيا"},
-          {"text": "🇩🇿 الجزائر", "callback_data": "country_الجزائر"}
+          {"text": "🇺🇸 أمريكا", "callback_data": "c_us"},
+          {"text": "🇫🇷 فرنسا", "callback_data": "c_fr"},
+          {"text": "🇪🇸 إسبانيا", "callback_data": "c_es"},
+          {"text": "🇩🇿 الجزائر", "callback_data": "c_dz"}
       ],
       [
-          {"text": "🏛️ هيئات دولية", "callback_data": "country_دولي"},
-          {"text": "🇲🇦 يتطرق للمغرب", "callback_data": "topic_يتطرق للمغرب"}
+          {"text": "🏛️ هيئات دولية", "callback_data": "c_gl"},
+          {"text": "🇲🇦 يتطرق للمغرب", "callback_data": "t_ma"}
       ],
       [
           {"text": "🌍 القائمة الفرعية للدولية", "callback_data": "menu_intl"},
@@ -7323,139 +7323,246 @@ def _telegram_bot_send_filtered_response(filter_key: str, filter_type: str, chat
     pass
 
 
+_TG_CALLBACK_MAP = {
+    "c_us": ("country", "الولايات المتحدة"),
+    "c_fr": ("country", "فرنسا"),
+    "c_es": ("country", "إسبانيا"),
+    "c_dz": ("country", "الجزائر"),
+    "c_gl": ("country", "دولي"),
+    "t_ma": ("topic", "يتطرق للمغرب"),
+    "p_press": ("platform", "الصحف"),
+    "p_intl": ("platform", "صحافة دولية"),
+    "p_fb": ("platform", "فيسبوك"),
+    "p_x": ("platform", "إكس"),
+    "p_yt": ("platform", "يوتيوب"),
+    "p_all": ("platform", "all"),
+}
+
+
+def _handle_single_telegram_update(upd: dict, token_curr: str, chat_curr: str):
+  """معالجة تحديث واحد من تلغرام (ضغط زر inline أو رسالة/أمر نصي)."""
+  cb = upd.get("callback_query")
+  if cb:
+    cb_id = cb.get("id")
+    cb_data = str(cb.get("data") or "").strip()
+    cb_chat_id = str(cb.get("message", {}).get("chat", {}).get("id") or chat_curr)
+    try:
+      requests.post(
+          f"https://api.telegram.org/bot{token_curr}/answerCallbackQuery",
+          json={"callback_query_id": cb_id},
+          timeout=4,
+      )
+    except Exception:
+      pass
+
+    if cb_data == "menu_main":
+      _telegram_send_main_menu(cb_chat_id, token_curr)
+    elif cb_data == "menu_intl":
+      _telegram_send_international_submenu(cb_chat_id, token_curr)
+    elif cb_data in _TG_CALLBACK_MAP:
+      f_type, f_key = _TG_CALLBACK_MAP[cb_data]
+      _telegram_bot_send_filtered_response(f_key, f_type, cb_chat_id, token_curr)
+    elif cb_data.startswith("country_"):
+      _telegram_bot_send_filtered_response(cb_data.replace("country_", ""), "country", cb_chat_id, token_curr)
+    elif cb_data.startswith("topic_"):
+      _telegram_bot_send_filtered_response(cb_data.replace("topic_", ""), "topic", cb_chat_id, token_curr)
+    elif cb_data.startswith("cat_"):
+      _telegram_bot_send_filtered_response(cb_data.replace("cat_", ""), "platform", cb_chat_id, token_curr)
+    elif cb_data == "action_run_scan":
+      try:
+        requests.post(
+            f"https://api.telegram.org/bot{token_curr}/sendMessage",
+            json={"chat_id": cb_chat_id, "text": "⏳ <b>بدأت الآن عملية الرصد الشامل من تلغرام...</b> جاري فحص الصحف الوطنية والدولية وشبكات التواصل.", "parse_mode": "HTML"},
+            timeout=5,
+        )
+      except Exception:
+        pass
+      added = run_headless_background_cycle()
+      try:
+        requests.post(
+            f"https://api.telegram.org/bot{token_curr}/sendMessage",
+            json={"chat_id": cb_chat_id, "text": f"✅ <b>اكتمل الرصد الشامل بنجاح!</b> تم توثيق وحفظ {added} مستجد جديد.", "parse_mode": "HTML"},
+            timeout=5,
+        )
+      except Exception:
+        pass
+    return
+
+  msg = upd.get("message") or upd.get("channel_post")
+  if msg:
+    text_in = str(msg.get("text") or "").strip().lower()
+    m_chat_id = str(msg.get("chat", {}).get("id") or chat_curr)
+    if not text_in:
+      return
+
+    if text_in in ("/scan", "رصد", "تحديث", "رصد الان", "رصد الآن", "⚡ تشغيل رصد فوري", "تشغيل رصد فوري"):
+      try:
+        requests.post(
+            f"https://api.telegram.org/bot{token_curr}/sendMessage",
+            json={"chat_id": m_chat_id, "text": "⏳ <b>بدأت عملية الرصد الشامل مباشرة من تلغرام...</b>", "parse_mode": "HTML"},
+            timeout=5,
+        )
+      except Exception:
+        pass
+      added = run_headless_background_cycle()
+      try:
+        requests.post(
+            f"https://api.telegram.org/bot{token_curr}/sendMessage",
+            json={"chat_id": m_chat_id, "text": f"✅ <b>اكتمل الرصد بنجاح!</b> تم جلب وتوثيق {added} خبر جديد.", "parse_mode": "HTML"},
+            timeout=5,
+        )
+      except Exception:
+        pass
+    elif text_in in ("/intl", "🌍 الصحافة الدولية", "الصحافة الدولية", "الدولية", "دولية"):
+      _telegram_send_international_submenu(m_chat_id, token_curr)
+    elif text_in in ("/usa", "/us", "أمريكا", "امريكا", "الولايات المتحدة", "🇺🇸 الولايات المتحدة"):
+      _telegram_bot_send_filtered_response("الولايات المتحدة", "country", m_chat_id, token_curr)
+    elif text_in in ("/france", "فرنسا", "🇫🇷 فرنسا"):
+      _telegram_bot_send_filtered_response("فرنسا", "country", m_chat_id, token_curr)
+    elif text_in in ("/spain", "إسبانيا", "اسبانيا", "🇪🇸 إسبانيا"):
+      _telegram_bot_send_filtered_response("إسبانيا", "country", m_chat_id, token_curr)
+    elif text_in in ("/algeria", "الجزائر", "🇩🇿 الجزائر"):
+      _telegram_bot_send_filtered_response("الجزائر", "country", m_chat_id, token_curr)
+    elif text_in in ("/global", "هيئات دولية", "🏛️ هيئات دولية"):
+      _telegram_bot_send_filtered_response("دولي", "country", m_chat_id, token_curr)
+    elif text_in in ("/morocco_intl", "يتطرق للمغرب", "🇲🇦 يتطرق للمغرب"):
+      _telegram_bot_send_filtered_response("يتطرق للمغرب", "topic", m_chat_id, token_curr)
+    elif text_in in ("كل الدولية", "🌍 كل الدولية"):
+      _telegram_bot_send_filtered_response("صحافة دولية", "platform", m_chat_id, token_curr)
+    elif text_in in ("/press", "الصحف", "صحف", "📰 الصحف", "📰 الصحف الوطنية", "الصحف الوطنية"):
+      _telegram_bot_send_filtered_response("الصحف", "platform", m_chat_id, token_curr)
+    elif text_in in ("/x", "إكس", "تويتر", "⬛ إكس"):
+      _telegram_bot_send_filtered_response("إكس", "platform", m_chat_id, token_curr)
+    elif text_in in ("/fb", "فيسبوك", "فايسبوك", "🟦 فيسبوك"):
+      _telegram_bot_send_filtered_response("فيسبوك", "platform", m_chat_id, token_curr)
+    elif text_in in ("/yt", "يوتيوب", "🟥 يوتيوب"):
+      _telegram_bot_send_filtered_response("يوتيوب", "platform", m_chat_id, token_curr)
+    elif text_in in ("/all", "الكل", "جميع", "🌐 الكل"):
+      _telegram_bot_send_filtered_response("all", "platform", m_chat_id, token_curr)
+    elif text_in.startswith("/search ") or text_in.startswith("بحث "):
+      q_tg = text_in.split(" ", 1)[1].strip() if " " in text_in else ""
+      if q_tg:
+        try:
+          conn_s = _open_sqlite_conn()
+          conn_s.row_factory = sqlite3.Row
+          c_s = conn_s.cursor()
+          c_s.execute("SELECT * FROM articles ORDER BY pub_timestamp DESC LIMIT 300")
+          all_db_s = [dict(r) for r in c_s.fetchall()]
+          conn_s.close()
+          hits_tg = smart_search_articles(all_db_s, q_tg)[:6]
+        except Exception:
+          hits_tg = []
+        if hits_tg:
+          lines_s = [f"🔎 <b>نتائج البحث في المرصد عن:</b> {html.escape(q_tg)}"]
+          for idx_s, r_s in enumerate(hits_tg, 1):
+            ar_t_s, _ = _ensure_arabic_title_and_summary(r_s)
+            t_s = html.escape(ar_t_s)
+            u_s = html.escape(clean_social_post_url(r_s.get("url") or ""))
+            src_s = html.escape(clean_display_text(r_s.get("source_name") or r_s.get("platform") or ""))
+            lines_s.append(f"\n<b>{idx_s}.</b> <a href=\"{u_s}\">{t_s}</a>\n    🏷️ {src_s}")
+          requests.post(
+              f"https://api.telegram.org/bot{token_curr}/sendMessage",
+              json={"chat_id": m_chat_id, "text": "\n".join(lines_s), "parse_mode": "HTML", "disable_web_page_preview": True},
+              timeout=8,
+          )
+        else:
+          requests.post(
+              f"https://api.telegram.org/bot{token_curr}/sendMessage",
+              json={"chat_id": m_chat_id, "text": f"🔎 لم يتم العثور على أخبار مطابقة لعبارة: <b>{html.escape(q_tg)}</b>", "parse_mode": "HTML"},
+              timeout=6,
+          )
+    elif text_in in ("/start", "/help", "/menu", "مساعدة", "القائمة الرئيسية", "🔙 القائمة الرئيسية"):
+      _telegram_send_main_menu(m_chat_id, token_curr)
+
+
+def _setup_telegram_bot_commands_and_webhook(token: str):
+  """حذف أي Webhook عالق لتفعيل getUpdates وتسجيل قائمة الأوامر الرسمية للبوت."""
+  if not token:
+    return
+  try:
+    requests.post(
+        f"https://api.telegram.org/bot{token}/deleteWebhook",
+        json={"drop_pending_updates": False},
+        timeout=5,
+    )
+  except Exception:
+    pass
+  try:
+    cmds = [
+        {"command": "start", "description": "🏠 القائمة الرئيسية للبوت"},
+        {"command": "intl", "description": "🌍 القائمة الفرعية للدول (أمريكا، فرنسا، إسبانيا، الجزائر)"},
+        {"command": "usa", "description": "🇺🇸 الصحافة الأمريكية"},
+        {"command": "france", "description": "🇫🇷 الصحافة الفرنسية"},
+        {"command": "spain", "description": "🇪🇸 الصحافة الإسبانية"},
+        {"command": "algeria", "description": "🇩🇿 الصحافة الجزائرية"},
+        {"command": "press", "description": "📰 الصحف المغربية الوطنية"},
+        {"command": "scan", "description": "⚡ تشغيل رصد فوري الآن"},
+        {"command": "all", "description": "🌐 جميع المستجدات"},
+    ]
+    requests.post(f"https://api.telegram.org/bot{token}/setMyCommands", json={"commands": cmds}, timeout=5)
+  except Exception:
+    pass
+
+
+def _process_pending_telegram_updates_once():
+  """معالجة أي نقرات أزرار أو أوامر منتظرة في تلغرام مرة واحدة (مفيد أثناء تشغيل CRON_MODE)."""
+  try:
+    cfg = load_credentials()
+    token_curr = cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN
+    chat_curr = cfg.get("telegram_chat_id") or DEFAULT_TG_CHAT_ID
+    _setup_telegram_bot_commands_and_webhook(token_curr)
+    r = requests.post(
+        f"https://api.telegram.org/bot{token_curr}/getUpdates",
+        json={"timeout": 0, "allowed_updates": ["message", "callback_query", "channel_post"]},
+        timeout=8,
+    )
+    if r.status_code == 200:
+      updates = r.json().get("result", [])
+      max_id = 0
+      for upd in updates:
+        max_id = max(max_id, int(upd.get("update_id", 0)))
+        _handle_single_telegram_update(upd, token_curr, chat_curr)
+      if max_id > 0:
+        requests.post(
+            f"https://api.telegram.org/bot{token_curr}/getUpdates",
+            json={"offset": max_id + 1, "timeout": 0},
+            timeout=5,
+        )
+  except Exception:
+    pass
+
+
 def _telegram_bot_updates_listener():
-  """خادم استماع غير مانع لبوت تلغرام مع قائمة رئيسية وقائمة فرعية للدولية ورصد فوري."""
+  """خادم استماع غير مانع لبوت تلغرام يعالج نقرات الأزرار والأوامر فوراً."""
   offset = 0
-  time.sleep(8.0)
+  setup_done_for_token = ""
+  time.sleep(2.0)
   while True:
     try:
       cfg = load_credentials()
       token_curr = cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN
       chat_curr = cfg.get("telegram_chat_id") or DEFAULT_TG_CHAT_ID
-      url_upd = f"https://api.telegram.org/bot{token_curr}/getUpdates?offset={offset}&timeout=20"
-      resp = requests.get(url_upd, timeout=25)
+      if token_curr and token_curr != setup_done_for_token:
+        _setup_telegram_bot_commands_and_webhook(token_curr)
+        setup_done_for_token = token_curr
+      resp = requests.post(
+          f"https://api.telegram.org/bot{token_curr}/getUpdates",
+          json={"offset": offset, "timeout": 20, "allowed_updates": ["message", "callback_query", "channel_post"]},
+          timeout=25,
+      )
       if resp.status_code == 200:
         data = resp.json()
         updates = data.get("result", [])
         for upd in updates:
           offset = max(offset, int(upd.get("update_id", 0)) + 1)
-          cb = upd.get("callback_query")
-          if cb:
-            cb_id = cb.get("id")
-            cb_data = cb.get("data", "")
-            cb_chat_id = str(cb.get("message", {}).get("chat", {}).get("id") or chat_curr)
-            try:
-              requests.post(f"https://api.telegram.org/bot{token_curr}/answerCallbackQuery", json={"callback_query_id": cb_id}, timeout=4)
-            except Exception:
-              pass
-
-            if cb_data == "menu_main":
-              _telegram_send_main_menu(cb_chat_id, token_curr)
-            elif cb_data == "menu_intl":
-              _telegram_send_international_submenu(cb_chat_id, token_curr)
-            elif cb_data.startswith("country_"):
-              c_name = cb_data.replace("country_", "")
-              _telegram_bot_send_filtered_response(c_name, "country", cb_chat_id, token_curr)
-            elif cb_data.startswith("topic_"):
-              t_name = cb_data.replace("topic_", "")
-              _telegram_bot_send_filtered_response(t_name, "topic", cb_chat_id, token_curr)
-            elif cb_data.startswith("cat_"):
-              cat_name = cb_data.replace("cat_", "")
-              _telegram_bot_send_filtered_response(cat_name, "platform", cb_chat_id, token_curr)
-            elif cb_data == "action_run_scan":
-              requests.post(
-                  f"https://api.telegram.org/bot{token_curr}/sendMessage",
-                  json={"chat_id": cb_chat_id, "text": "⏳ <b>بدأت الآن عملية الرصد الشامل من تلغرام...</b> جاري فحص الصحف الوطنية والدولية وشبكات التواصل.", "parse_mode": "HTML"},
-                  timeout=5,
-              )
-              added = run_headless_background_cycle()
-              requests.post(
-                  f"https://api.telegram.org/bot{token_curr}/sendMessage",
-                  json={"chat_id": cb_chat_id, "text": f"✅ <b>اكتمل الرصد الشامل بنجاح!</b> تم توثيق وحفظ {added} مستجد جديد.", "parse_mode": "HTML"},
-                  timeout=5,
-              )
-            continue
-
-          msg = upd.get("message")
-          if msg:
-            text_in = str(msg.get("text") or "").strip().lower()
-            m_chat_id = str(msg.get("chat", {}).get("id") or chat_curr)
-
-            if text_in in ("/scan", "رصد", "تحديث", "رصد الان", "رصد الآن", "⚡ تشغيل رصد فوري", "تشغيل رصد فوري"):
-              requests.post(
-                  f"https://api.telegram.org/bot{token_curr}/sendMessage",
-                  json={"chat_id": m_chat_id, "text": "⏳ <b>بدأت عملية الرصد الشامل مباشرة من تلغرام...</b>", "parse_mode": "HTML"},
-                  timeout=5,
-              )
-              added = run_headless_background_cycle()
-              requests.post(
-                  f"https://api.telegram.org/bot{token_curr}/sendMessage",
-                  json={"chat_id": m_chat_id, "text": f"✅ <b>اكتمل الرصد بنجاح!</b> تم جلب وتوثيق {added} خبر جديد.", "parse_mode": "HTML"},
-                  timeout=5,
-              )
-            elif text_in in ("/intl", "🌍 الصحافة الدولية", "الصحافة الدولية", "الدولية", "دولية"):
-              _telegram_send_international_submenu(m_chat_id, token_curr)
-            elif text_in in ("/usa", "/us", "أمريكا", "امريكا", "الولايات المتحدة", "🇺🇸 الولايات المتحدة"):
-              _telegram_bot_send_filtered_response("الولايات المتحدة", "country", m_chat_id, token_curr)
-            elif text_in in ("/france", "فرنسا", "🇫🇷 فرنسا"):
-              _telegram_bot_send_filtered_response("فرنسا", "country", m_chat_id, token_curr)
-            elif text_in in ("/spain", "إسبانيا", "اسبانيا", "🇪🇸 إسبانيا"):
-              _telegram_bot_send_filtered_response("إسبانيا", "country", m_chat_id, token_curr)
-            elif text_in in ("/algeria", "الجزائر", "🇩🇿 الجزائر"):
-              _telegram_bot_send_filtered_response("الجزائر", "country", m_chat_id, token_curr)
-            elif text_in in ("/global", "هيئات دولية", "🏛️ هيئات دولية"):
-              _telegram_bot_send_filtered_response("دولي", "country", m_chat_id, token_curr)
-            elif text_in in ("/morocco_intl", "يتطرق للمغرب", "🇲🇦 يتطرق للمغرب"):
-              _telegram_bot_send_filtered_response("يتطرق للمغرب", "topic", m_chat_id, token_curr)
-            elif text_in in ("كل الدولية", "🌍 كل الدولية"):
-              _telegram_bot_send_filtered_response("صحافة دولية", "platform", m_chat_id, token_curr)
-            elif text_in in ("/press", "الصحف", "صحف", "📰 الصحف", "📰 الصحف الوطنية", "الصحف الوطنية"):
-              _telegram_bot_send_filtered_response("الصحف", "platform", m_chat_id, token_curr)
-            elif text_in in ("/x", "إكس", "تويتر", "⬛ إكس"):
-              _telegram_bot_send_filtered_response("إكس", "platform", m_chat_id, token_curr)
-            elif text_in in ("/fb", "فيسبوك", "فايسبوك", "🟦 فيسبوك"):
-              _telegram_bot_send_filtered_response("فيسبوك", "platform", m_chat_id, token_curr)
-            elif text_in in ("/yt", "يوتيوب", "🟥 يوتيوب"):
-              _telegram_bot_send_filtered_response("يوتيوب", "platform", m_chat_id, token_curr)
-            elif text_in in ("/all", "الكل", "جميع", "🌐 الكل"):
-              _telegram_bot_send_filtered_response("all", "platform", m_chat_id, token_curr)
-            elif text_in.startswith("/search ") or text_in.startswith("بحث "):
-              q_tg = text_in.split(" ", 1)[1].strip() if " " in text_in else ""
-              if q_tg:
-                try:
-                  conn_s = _open_sqlite_conn()
-                  conn_s.row_factory = sqlite3.Row
-                  c_s = conn_s.cursor()
-                  c_s.execute("SELECT * FROM articles ORDER BY pub_timestamp DESC LIMIT 300")
-                  all_db_s = [dict(r) for r in c_s.fetchall()]
-                  conn_s.close()
-                  hits_tg = smart_search_articles(all_db_s, q_tg)[:6]
-                except Exception:
-                  hits_tg = []
-                if hits_tg:
-                  lines_s = [f"🔎 <b>نتائج البحث في المرصد عن:</b> {html.escape(q_tg)}"]
-                  for idx_s, r_s in enumerate(hits_tg, 1):
-                    ar_t_s, _ = _ensure_arabic_title_and_summary(r_s)
-                    t_s = html.escape(ar_t_s)
-                    u_s = html.escape(clean_social_post_url(r_s.get("url") or ""))
-                    src_s = html.escape(clean_display_text(r_s.get("source_name") or r_s.get("platform") or ""))
-                    lines_s.append(f"\n<b>{idx_s}.</b> <a href=\"{u_s}\">{t_s}</a>\n    🏷️ {src_s}")
-                  requests.post(
-                      f"https://api.telegram.org/bot{token_curr}/sendMessage",
-                      json={"chat_id": m_chat_id, "text": "\n".join(lines_s), "parse_mode": "HTML", "disable_web_page_preview": True},
-                      timeout=8,
-                  )
-                else:
-                  requests.post(
-                      f"https://api.telegram.org/bot{token_curr}/sendMessage",
-                      json={"chat_id": m_chat_id, "text": f"🔎 لم يتم العثور على أخبار مطابقة لعبارة: <b>{html.escape(q_tg)}</b>", "parse_mode": "HTML"},
-                      timeout=6,
-                  )
-            elif text_in in ("/start", "/help", "/menu", "مساعدة", "القائمة الرئيسية", "🔙 القائمة الرئيسية"):
-              _telegram_send_main_menu(m_chat_id, token_curr)
+          _handle_single_telegram_update(upd, token_curr, chat_curr)
+      elif resp.status_code == 409:
+        # إذا كان هناك Webhook عالق نحذفه فوراً
+        _setup_telegram_bot_commands_and_webhook(token_curr)
+        time.sleep(2)
     except Exception:
-      time.sleep(5)
-    time.sleep(1)
+      time.sleep(4)
+    time.sleep(0.5)
 
 
 def quick_process_and_save(
@@ -7840,6 +7947,17 @@ def _ping_keep_alive_endpoints():
   rt["last_keepalive_ping_ts"] = time.time()
 def ensure_background_daemon():
   rt = get_shared_runtime()
+  # التحقق الدائم من أن خادم استماع بوت تلغرام يعمل فعلياً في الخلفية
+  if not any(th.name == "TelegramBotListener_v3" and th.is_alive() for th in threading.enumerate()):
+    try:
+      threading.Thread(
+          target=_telegram_bot_updates_listener,
+          daemon=True,
+          name="TelegramBotListener_v3",
+      ).start()
+    except Exception:
+      pass
+
   if rt.get("daemon_started", False):
     return
   rt["daemon_started"] = True
@@ -7874,19 +7992,13 @@ def ensure_background_daemon():
       target=_daemon_loop, daemon=True, name="JusticeAutoMonitor"
   )
   t.start()
-  try:
-    threading.Thread(
-        target=_telegram_bot_updates_listener,
-        daemon=True,
-        name=f"TelegramBotListener_{DAEMON_CODE_VERSION}",
-    ).start()
-  except Exception:
-    pass
+
 
 
 # دعم التشغيل السحابي المستقل عبر GitHub Actions (CRON_MODE=1)
 if os.environ.get("CRON_MODE") == "1" or st is None:
   init_db()
+  _process_pending_telegram_updates_once()
   count = run_headless_background_cycle()
   print(f"[CRON_MODE] Completed cycle. Added {count} new items.")
   sys.exit(0)
