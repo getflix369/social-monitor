@@ -1928,10 +1928,13 @@ def detect_article_country_and_topic(title: str, snippet: str, url: str, source_
   ])
 
   morocco_direct_keywords = [
-      "المغرب", "مغربي", "مغربية", "مغاربة", "المملكة المغربية", "الرباط", "الدار البيضاء",
-      "maroc", "marocain", "marocaine", "marocains", "marruecos", "marroquí", "morocco",
-      "الصحراء المغربية", "نزاع الصحراء", "sahara occidental", "سبتة", "مليلية", "ceuta", "melilla",
-      "كركرات", "guerguerat", "تسليم المطلوبين إلى المغرب", "extradition vers le maroc"
+      "المغرب", "مغربي", "مغربية", "مغاربة", "المغاربة", "المملكة المغربية", "الرباط", "الدار البيضاء",
+      "مراكش", "طنجة", "فاس", "أكادير", "العيون", "الداخلة", "الناظور", "تطوان", "وجدة",
+      "maroc", "marocain", "marocaine", "marocains", "marruecos", "marroquí", "marroqui", "morocco", "moroccan",
+      "الصحراء المغربية", "نزاع الصحراء", "sahara occidental", "western sahara", "minurso", "المينورسو",
+      "سبتة", "مليلية", "ceuta", "melilla", "كركرات", "guerguerat", "pegasus", "بيغاسوس",
+      "اتفاقية الصيد البحري", "الاتفاق الفلاحي", "accord de pêche", "accord agricole", "acuerdo de pesca",
+      "تسليم المطلوبين إلى المغرب", "extradition vers le maroc", "extradición a marruecos",
   ]
   has_morocco_direct = any(m.lower() in combined for m in morocco_direct_keywords)
 
@@ -2216,23 +2219,57 @@ def translate_foreign_title_to_arabic_rulebased(foreign_title: str) -> str:
   return txt
 
 
+
+def _has_morocco_reference(text: str) -> bool:
+  if not text:
+    return False
+  low = clean_display_text(text).lower()
+  return any(
+      m.lower() in low
+      for m in (
+          "المغرب", "مغربي", "مغربية", "مغاربة", "المغاربة", "المملكة المغربية", "الرباط",
+          "maroc", "marocain", "marocaine", "marruecos", "marroquí", "morocco", "moroccan",
+          "الصحراء", "sahara", "سبتة", "مليلية", "ceuta", "melilla", "كركرات", "guerguerat",
+          "بيغاسوس", "pegasus", "المينورسو", "minurso", "اتفاقية الصيد", "accord de pêche",
+      )
+  )
+
+
+def _extract_morocco_focused_sentences_ar(translated_body: str, orig_text: str) -> str:
+  """استخلاص الجمل التي تركز على صلة الخبر بالمغرب وتقديمها في صدارة الملخص."""
+  if not translated_body:
+    return ""
+  sentences = [
+      seg.strip()
+      for seg in re.split(r"(?<=[.!؟\n])\s+", translated_body)
+      if len(seg.strip()) > 16
+  ]
+  if not sentences:
+    return translated_body[:450]
+
+  ma_sents = [s for s in sentences if any(k in s for k in ("المغرب", "مغربي", "مغربية", "المغاربة", "الرباط", "الدار البيضاء", "الصحراء", "سبتة", "مليلية", "طنجة"))]
+  other_sents = [s for s in sentences if s not in ma_sents]
+
+  if ma_sents:
+    ordered = ma_sents[:2] + other_sents[:1]
+    res = " ".join(ordered)
+  else:
+    res = " ".join(sentences[:3])
+    # إذا كان المقال الأصلي يشير للمغرب ولكن الجمل المستخلصة لم تذكره صراحة، نوضح الصلة بالمغرب في مطلع الملخص
+    if _has_morocco_reference(orig_text) and not any(k in res for k in ("المغرب", "مغربي", "مغربية")):
+      res = f"في سياق يهم المغرب: {res}"
+
+  return res[:450] + ("..." if len(res) > 450 else "")
+
 def translate_foreign_snippet_to_arabic_rulebased(snippet: str, title: str, source_name: str) -> str:
   """ترجمة متن الخبر الأجنبي نفسه إلى العربية الفصحى لاستخلاص ملخص دقيق ومباشر للوقائع."""
   s_clean = clean_display_text(snippet or "")
   t_clean = clean_display_text(title or "")
   target_text = s_clean if len(s_clean) > len(t_clean) + 10 else f"{t_clean}. {s_clean}".strip(". ")
 
-  live_body_ar = translate_text_to_arabic_live(target_text[:1200])
+  live_body_ar = translate_text_to_arabic_live(target_text[:1500])
   if live_body_ar and len(live_body_ar) >= 25:
-    sentences = [
-        seg.strip()
-        for seg in re.split(r"(?<=[.!؟\n])\s+", live_body_ar)
-        if len(seg.strip()) > 18
-    ]
-    if sentences:
-      joined = " ".join(sentences[:3])
-      return joined[:450] + ("..." if len(joined) > 450 else "")
-    return live_body_ar[:450] + ("..." if len(live_body_ar) > 450 else "")
+    return _extract_morocco_focused_sentences_ar(live_body_ar, f"{t_clean} {s_clean}")
 
   t_ar = translate_foreign_title_to_arabic_rulebased(t_clean)
   if t_ar and t_ar != t_clean:
@@ -2977,6 +3014,7 @@ def fetch_articles_from_db():
             d.get("url", ""),
             "",
             is_target=is_tgt,
+            is_international=(d.get("platform") == "صحافة دولية"),
         ):
           continue
         if is_tgt and not belongs_to_any_custom_target(d, current_targets):
@@ -6791,7 +6829,8 @@ def analyze_with_gemini(item: dict, api_key: str):
       "أنت مترجم ومحلل إعلامي وقضائي محترف في مرصد القضاء والعدالة.\n"
       "قم بقراءة الخبر التالي الصادر عن الصحافة (عربي أو فرنسي أو إسباني أو إنجليزي) ونفذ بدقة تامة:\n"
       "1) translated_title: ترجم العنوان الأصلي ترجمة حرفية وصحفية دقيقة إلى اللغة العربية الفصحى (إذا كان بلغة أجنبية، اذكر الوقائع والأطراف بدقة دون اختصار مخل أو عبارات عامة).\n"
-      "2) summary: لخص مضمون الخبر نفسه في جملتين إلى ثلاث جمل بالعربية الفصحى تشرح الوقائع المحددة والأطراف والمحكمة والقرار الوارد في النص مباشرة. يُمنع منعاً باتاً كتابة جمل إنشائية عامة مثل 'أفادت تقارير بمتابعة مستجدات'.\n"
+      "2) summary: لخص مضمون الخبر نفسه في جملتين إلى ثلاث جمل بالعربية الفصحى تشرح الوقائع المحددة والأطراف والمحكمة والقرار الوارد في النص مباشرة.\n"
+      "3) إذا كان المقال يتطرق إلى المغرب (بشكل مباشر أو ضمني مثل الصحراء المغربية، اتفاقيات الصيد أو الفلاحة، سبتة ومليلية، أو تسليم مطلوبين)، فيجب إجبارياً إبراز اسم (المغرب) في العنوان والملخص والتركيز على ما يهم المغرب في هذا الخبر.\n"
       "أرجع النتيجة بصيغة JSON فقط بالمفاتيح التالية:\n"
       '{"translated_title": "الترجمة العربية الدقيقة للعنوان...", '
       '"summary": "ملخص الوقائع المباشرة للخبر باللغة العربية...", '
@@ -6867,6 +6906,13 @@ def _ensure_arabic_title_and_summary(item: dict) -> tuple:
         tr_s = translate_text_to_arabic_live(raw_summary)
         if tr_s and _is_predominantly_arabic(tr_s):
           raw_summary = tr_s
+
+  # إذا كان المقال يشير إلى المغرب (صراحة أو ضمناً) ولم يذكر الملخص كلمة المغرب، نبرز الصلة بالمغرب بوضوح
+  orig_combined = f"{item.get('title', '')} {item.get('raw_snippet', '')} {item.get('summary', '')} {item.get('category', '')}"
+  if _has_morocco_reference(orig_combined) and raw_summary and not any(k in raw_summary for k in ("المغرب", "مغربي", "مغربية", "المغاربة")):
+    raw_summary = f"🇲🇦 (يتعلق بالمغرب): {raw_summary}"
+  if _has_morocco_reference(orig_combined) and raw_title and not any(k in raw_title for k in ("المغرب", "مغربي", "مغربية", "المغاربة")) and item.get("platform") == "صحافة دولية":
+    raw_title = f"{raw_title} (يتطرق للمغرب)"
 
   return raw_title, raw_summary
 
@@ -7095,40 +7141,49 @@ def _send_telegram_batch_digest_bulletin(newly_added: list, cfg: dict):
     pass
 
 
+def _get_all_articles_for_bot() -> list:
+  """جلب كافة المقالات من قاعدة البيانات والأرشيف مع التطبيع لضمان عدم فراغ أي تصنيف في البوت."""
+  try:
+    arts = fetch_articles_from_db()
+    if arts:
+      for a in arts:
+        normalize_press_platform_and_source(a)
+      return arts
+  except Exception:
+    pass
+  # احتياطي مباشر من ملف الأرشيف JSON
+  if os.path.exists(ARCHIVE_JSON_FILE):
+    try:
+      with open(ARCHIVE_JSON_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+      if isinstance(data, list):
+        for a in data:
+          if isinstance(a, dict):
+            normalize_press_platform_and_source(a)
+        return [a for a in data if isinstance(a, dict)]
+    except Exception:
+      pass
+  return []
+
+
 def _telegram_send_main_menu(chat_id: str, token: str):
-  """إرسال القائمة الرئيسية لبوت تلغرام مع فصل الصحافة الوطنية عن القائمة الفرعية للصحافة الدولية."""
+  """إرسال القائمة الرئيسية لبوت تلغرام بشكل سلس وواضح في رسالة واحدة."""
   if not token or not chat_id:
     return
   welcome_msg = (
       "⚖️ <b>المرصد القضائي — القائمة الرئيسية</b>\n\n"
-      "اختر الوسيلة أو القسم المطلوب من الأزرار أدناه:\n"
-      "• ⚡ <b>تشغيل رصد فوري</b>: إطلاق مسح شامل الآن\n"
-      "• 📰 <b>الصحف الوطنية</b>: الصحافة القضائية المغربية\n"
-      "• 🌍 <b>الصحافة الدولية (فرز الدول)</b>: فتح القائمة الفرعية لفرز أمريكا، فرنسا، إسبانيا، الجزائر والهيئات الدولية"
+      "اختر نوع الأخبار أو التصنيف الذي تريد الاطلاع عليه الآن:"
   )
   inline_main = [
-      [{"text": "⚡ تشغيل رصد فوري", "callback_data": "action_run_scan"}, {"text": "🌐 جميع الأخبار", "callback_data": "p_all"}],
-      [{"text": "📰 الصحف الوطنية", "callback_data": "p_press"}, {"text": "🌍 الصحافة الدولية (فرز الدول ▾)", "callback_data": "menu_intl"}],
+      [{"text": "📰 الصحف المغربية", "callback_data": "p_press"}, {"text": "🌍 الصحافة الدولية (حسب الدولة ▾)", "callback_data": "menu_intl"}],
+      [{"text": "🇲🇦 أخبار دولية عن المغرب", "callback_data": "t_ma"}, {"text": "🏛️ قضاء دولي", "callback_data": "t_intl_court"}],
       [{"text": "🟦 فيسبوك", "callback_data": "p_fb"}, {"text": "⬛ إكس", "callback_data": "p_x"}, {"text": "🟥 يوتيوب", "callback_data": "p_yt"}],
+      [{"text": "🌐 جميع الأخبار", "callback_data": "p_all"}, {"text": "⚡ تشغيل رصد فوري", "callback_data": "action_run_scan"}],
   ]
-  reply_kb = {
-      "keyboard": [
-          [{"text": "⚡ تشغيل رصد فوري"}, {"text": "🌐 الكل"}],
-          [{"text": "📰 الصحف الوطنية"}, {"text": "🌍 الصحافة الدولية"}],
-          [{"text": "🟦 فيسبوك"}, {"text": "⬛ إكس"}, {"text": "🟥 يوتيوب"}]
-      ],
-      "resize_keyboard": True,
-      "persistent": True
-  }
   try:
     requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
         json={"chat_id": chat_id, "text": welcome_msg, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": inline_main}},
-        timeout=6,
-    )
-    requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": "⌨️ تم تفعيل لوحة الاختصارات السريعة بالأسفل:", "reply_markup": reply_kb},
         timeout=6,
     )
   except Exception:
@@ -7136,39 +7191,25 @@ def _telegram_send_main_menu(chat_id: str, token: str):
 
 
 def _telegram_send_international_submenu(chat_id: str, token: str):
-  """القائمة الفرعية المستقلة للصحافة الدولية في تلغرام لفرز أخبار كل دولة على حدة."""
+  """القائمة الفرعية للصحافة الدولية في تلغرام بأسماء الدول وأعداد الأخبار المتوفرة."""
   if not token or not chat_id:
     return
 
   counts = {"الولايات المتحدة": 0, "فرنسا": 0, "إسبانيا": 0, "الجزائر": 0, "دولي": 0, "يتطرق للمغرب": 0, "total": 0}
-  try:
-    conn = _open_sqlite_conn()
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT title, raw_snippet, url, source_name, platform, category FROM articles ORDER BY pub_timestamp DESC LIMIT 300")
-    for r in c.fetchall():
-      d = dict(r)
-      normalize_press_platform_and_source(d)
-      if d.get("platform") == "صحافة دولية":
-        counts["total"] += 1
-        c_tag, t_tag = detect_article_country_and_topic(d.get("title", ""), d.get("raw_snippet", ""), d.get("url", ""), d.get("source_name", ""), "صحافة دولية")
-        if c_tag in counts:
-          counts[c_tag] += 1
-        if t_tag == "يتطرق للمغرب" or d.get("category") == "يتطرق للمغرب":
-          counts["يتطرق للمغرب"] += 1
-    conn.close()
-  except Exception:
-    pass
+  for d in _get_all_articles_for_bot():
+    if d.get("platform") == "صحافة دولية":
+      counts["total"] += 1
+      c_tag, t_tag = detect_article_country_and_topic(
+          d.get("title", ""), d.get("raw_snippet", ""), d.get("url", ""), d.get("source_name", ""), "صحافة دولية"
+      )
+      if c_tag in counts:
+        counts[c_tag] += 1
+      if t_tag == "يتطرق للمغرب" or d.get("category") == "يتطرق للمغرب" or _has_morocco_reference(f"{d.get('title', '')} {d.get('raw_snippet', '')}"):
+        counts["يتطرق للمغرب"] += 1
 
   sub_msg = (
-      "🌍 <b>القائمة الفرعية للصحافة الدولية</b>\n\n"
-      "اختر الدولة أو التصنيف لعرض أخبارها مترجمة للعربية حصراً:\n"
-      f"• 🇺🇸 <b>الولايات المتحدة:</b> {counts['الولايات المتحدة']} خبر\n"
-      f"• 🇫🇷 <b>فرنسا:</b> {counts['فرنسا']} خبر\n"
-      f"• 🇪🇸 <b>إسبانيا:</b> {counts['إسبانيا']} خبر\n"
-      f"• 🇩🇿 <b>الجزائر:</b> {counts['الجزائر']} خبر\n"
-      f"• 🏛️ <b>هيئات ومحاكم دولية:</b> {counts['دولي']} خبر\n"
-      f"• 🇲🇦 <b>أخبار دولية تتطرق للمغرب:</b> {counts['يتطرق للمغرب']} خبر"
+      "🌍 <b>الصحافة الدولية — اختر الدولة أو الموضوع:</b>\n\n"
+      "انقر على أي دولة لعرض أحدث أخبارها القضائية والمتطرقة للمغرب مترجمة للعربية:"
   )
 
   inline_intl = [
@@ -7182,7 +7223,7 @@ def _telegram_send_international_submenu(chat_id: str, token: str):
       ],
       [
           {"text": f"🏛️ هيئات دولية ({counts['دولي']})", "callback_data": "c_gl"},
-          {"text": f"🇲🇦 يتطرق للمغرب ({counts['يتطرق للمغرب']})", "callback_data": "t_ma"}
+          {"text": f"🇲🇦 عن المغرب ({counts['يتطرق للمغرب']})", "callback_data": "t_ma"}
       ],
       [
           {"text": f"🌍 كل الدولية ({counts['total']})", "callback_data": "p_intl"},
@@ -7190,26 +7231,10 @@ def _telegram_send_international_submenu(chat_id: str, token: str):
       ]
   ]
 
-  reply_intl_kb = {
-      "keyboard": [
-          [{"text": "🇺🇸 الولايات المتحدة"}, {"text": "🇫🇷 فرنسا"}],
-          [{"text": "🇪🇸 إسبانيا"}, {"text": "🇩🇿 الجزائر"}],
-          [{"text": "🏛️ هيئات دولية"}, {"text": "🇲🇦 يتطرق للمغرب"}],
-          [{"text": "🌍 كل الدولية"}, {"text": "🔙 القائمة الرئيسية"}]
-      ],
-      "resize_keyboard": True,
-      "persistent": True
-  }
-
   try:
     requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
         json={"chat_id": chat_id, "text": sub_msg, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": inline_intl}},
-        timeout=6,
-    )
-    requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": "📌 لوحة دول الصحافة الدولية مفعّلة بالأسفل:", "reply_markup": reply_intl_kb},
         timeout=6,
     )
   except Exception:
@@ -7217,7 +7242,7 @@ def _telegram_send_international_submenu(chat_id: str, token: str):
 
 
 def _telegram_bot_send_filtered_response(filter_key: str, filter_type: str, chat_id: str, token: str):
-  """إرسال أحدث المنشورات المرتبة والمترجمة إجبارياً للعربية إلى تلغرام حسب الدولة أو الموضوع أو الوسيلة."""
+  """عرض الأخبار المطابقة للتصنيف المختار في رسالة واحدة واضحة ومترجمة مع احترام حد طول الرسالة في تلغرام."""
   if not token or not chat_id:
     return
 
@@ -7226,46 +7251,44 @@ def _telegram_bot_send_filtered_response(filter_key: str, filter_type: str, chat
       "فرنسا": "🇫🇷 الصحافة الفرنسية",
       "إسبانيا": "🇪🇸 الصحافة الإسبانية",
       "الجزائر": "🇩🇿 الصحافة الجزائرية",
-      "دولي": "🏛️ الصحافة والهيئات الدولية",
-      "الصحف": "📰 الصحف والمواقع المغربية",
-      "صحافة دولية": "🌍 الصحافة الدولية الشاملة",
-      "فيسبوك": "🟦 منشورات فيسبوك المباشرة",
-      "إكس": "⬛ منشورات منصة إكس (تويتر)",
-      "يوتيوب": "🟥 فيديوهات وتغطيات يوتيوب",
+      "دولي": "🏛️ الهيئات والمحاكم الدولية",
+      "الصحف": "📰 الصحف المغربية الوطنية",
+      "صحافة دولية": "🌍 كل الصحافة الدولية",
+      "فيسبوك": "🟦 منشورات فيسبوك",
+      "إكس": "⬛ منشورات منصة إكس",
+      "يوتيوب": "🟥 فيديوهات يوتيوب",
       "يتطرق للمغرب": "🇲🇦 أخبار دولية تتطرق للمغرب",
       "قضاء دولي": "🏛️ قرارات القضاء الدولي",
       "all": "🌐 جميع المستجدات القضائية",
   }
-  label = titles_map.get(filter_key, f"المستجدات ({filter_key})")
+  label = titles_map.get(filter_key, f"تصنيف: {filter_key}")
 
+  all_articles = _get_all_articles_for_bot()
   rows = []
-  try:
-    conn = _open_sqlite_conn()
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT * FROM articles ORDER BY pub_timestamp DESC, id DESC LIMIT 300")
-    all_recent = [dict(r) for r in c.fetchall()]
-    conn.close()
-
-    for r in all_recent:
-      normalize_press_platform_and_source(r)
-      r_plat = r.get("platform", "الصحف")
-      r_country, r_topic = detect_article_country_and_topic(
-          r.get("title", ""), r.get("raw_snippet", ""), r.get("url", ""), r.get("source_name", ""), r_plat
-      )
-      if filter_type == "country":
-        if r_plat == "صحافة دولية" and r_country == filter_key:
+  for r in all_articles:
+    r_plat = r.get("platform", "الصحف")
+    r_country, r_topic = detect_article_country_and_topic(
+        r.get("title", ""), r.get("raw_snippet", ""), r.get("url", ""), r.get("source_name", ""), r_plat
+    )
+    if filter_type == "country":
+      if r_plat == "صحافة دولية" and r_country == filter_key:
+        rows.append(r)
+    elif filter_type == "topic":
+      if filter_key == "يتطرق للمغرب":
+        if r_plat == "صحافة دولية" and (
+            r_topic == "يتطرق للمغرب"
+            or r.get("category") == "يتطرق للمغرب"
+            or _has_morocco_reference(f"{r.get('title', '')} {r.get('raw_snippet', '')} {r.get('summary', '')}")
+        ):
           rows.append(r)
-      elif filter_type == "topic":
-        if r_plat == "صحافة دولية" and (filter_key in str(r.get("category", "")) or r_topic == filter_key):
+      elif filter_key == "قضاء دولي":
+        if r_plat == "صحافة دولية" and (r_topic == "قضاء دولي" or "قضاء دولي" in str(r.get("category", ""))):
           rows.append(r)
-      elif filter_type == "platform":
-        if filter_key == "all" or r_plat == filter_key:
-          rows.append(r)
-      if len(rows) >= 6:
-        break
-  except Exception:
-    pass
+    elif filter_type == "platform":
+      if filter_key == "all" or r_plat == filter_key:
+        rows.append(r)
+    if len(rows) >= 5:
+      break
 
   inline_nav = [
       [
@@ -7275,37 +7298,43 @@ def _telegram_bot_send_filtered_response(filter_key: str, filter_type: str, chat
           {"text": "🇩🇿 الجزائر", "callback_data": "c_dz"}
       ],
       [
-          {"text": "🏛️ هيئات دولية", "callback_data": "c_gl"},
-          {"text": "🇲🇦 يتطرق للمغرب", "callback_data": "t_ma"}
-      ],
-      [
           {"text": "🌍 القائمة الفرعية للدولية", "callback_data": "menu_intl"},
           {"text": "🔙 القائمة الرئيسية", "callback_data": "menu_main"}
       ]
   ]
 
   if not rows:
-    msg_empty = f"⚖️ <b>المرصد القضائي</b>\n\nلا توجد منشورات مسجلة حالياً في قسم <b>{html.escape(label)}</b>."
+    msg_empty = (
+        f"⚖️ <b>{html.escape(label)}</b>\n\n"
+        "لا توجد أخبار مسجلة حالياً ضمن هذا التصنيف.\n"
+        "💡 يمكنك النقر على <b>⚡ تشغيل رصد فوري</b> لجلب أحدث المستجدات."
+    )
     try:
       requests.post(
           f"https://api.telegram.org/bot{token}/sendMessage",
-          json={"chat_id": chat_id, "text": msg_empty, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": inline_nav}},
+          json={
+              "chat_id": chat_id,
+              "text": msg_empty,
+              "parse_mode": "HTML",
+              "reply_markup": {"inline_keyboard": [[{"text": "⚡ تشغيل رصد فوري", "callback_data": "action_run_scan"}, {"text": "🔙 القائمة الرئيسية", "callback_data": "menu_main"}]]},
+          },
           timeout=6,
       )
     except Exception:
       pass
     return
 
-  resp_lines = [f"⚖️ <b>المرصد القضائي — أحدث أخبار {html.escape(label)}:</b>"]
+  resp_lines = [f"⚖️ <b>{html.escape(label)} (أحدث {len(rows)} أخبار):</b>"]
   for idx, r in enumerate(rows, 1):
     ar_t_r, ar_s_r = _ensure_arabic_title_and_summary(r)
-    t_clean = html.escape(ar_t_r)
-    s_short = html.escape(ar_s_r[:180] + ("..." if len(ar_s_r) > 180 else "")) if ar_s_r else ""
+    t_clean = html.escape(ar_t_r[:160])
+    s_short = html.escape(ar_s_r[:145] + ("..." if len(ar_s_r) > 145 else "")) if ar_s_r else ""
     u_clean = html.escape(clean_social_post_url(r.get("url") or ""))
     src_clean = html.escape(clean_display_text(r.get("source_name") or r.get("platform") or ""))
-    cat_clean = html.escape(clean_display_text(r.get("category") or ""))
-    sum_line = f"\n    📝 {s_short}" if s_short else ""
-    resp_lines.append(f"\n<b>{idx}.</b> <a href=\"{u_clean}\">{t_clean}</a>{sum_line}\n    🏷️ {src_clean} | {cat_clean}")
+    entry_block = f"\n<b>{idx}.</b> <a href=\"{u_clean}\">{t_clean}</a>\n    📝 {s_short}\n    🗞️ {src_clean}"
+    if sum(len(x) for x in resp_lines) + len(entry_block) > 3700:
+      break
+    resp_lines.append(entry_block)
 
   try:
     requests.post(
@@ -7330,6 +7359,7 @@ _TG_CALLBACK_MAP = {
     "c_dz": ("country", "الجزائر"),
     "c_gl": ("country", "دولي"),
     "t_ma": ("topic", "يتطرق للمغرب"),
+    "t_intl_court": ("topic", "قضاء دولي"),
     "p_press": ("platform", "الصحف"),
     "p_intl": ("platform", "صحافة دولية"),
     "p_fb": ("platform", "فيسبوك"),
@@ -7381,7 +7411,7 @@ def _handle_single_telegram_update(upd: dict, token_curr: str, chat_curr: str):
       try:
         requests.post(
             f"https://api.telegram.org/bot{token_curr}/sendMessage",
-            json={"chat_id": cb_chat_id, "text": f"✅ <b>اكتمل الرصد الشامل بنجاح!</b> تم توثيق وحفظ {added} مستجد جديد.", "parse_mode": "HTML"},
+            json={"chat_id": cb_chat_id, "text": f"✅ <b>اكتمل الرصد الشامل بنجاح!</b> تم توثيق وحفظ {added} مستجد جديد.", "parse_mode": "HTML", "reply_markup": {"inline_keyboard": [[{"text": "🔙 القائمة الرئيسية", "callback_data": "menu_main"}]]}},
             timeout=5,
         )
       except Exception:
@@ -7408,7 +7438,7 @@ def _handle_single_telegram_update(upd: dict, token_curr: str, chat_curr: str):
       try:
         requests.post(
             f"https://api.telegram.org/bot{token_curr}/sendMessage",
-            json={"chat_id": m_chat_id, "text": f"✅ <b>اكتمل الرصد بنجاح!</b> تم جلب وتوثيق {added} خبر جديد.", "parse_mode": "HTML"},
+            json={"chat_id": m_chat_id, "text": f"✅ <b>اكتمل الرصد بنجاح!</b> تم جلب وتوثيق {added} خبر جديد.", "parse_mode": "HTML", "reply_markup": {"inline_keyboard": [[{"text": "🔙 القائمة الرئيسية", "callback_data": "menu_main"}]]}},
             timeout=5,
         )
       except Exception:
@@ -7442,24 +7472,15 @@ def _handle_single_telegram_update(upd: dict, token_curr: str, chat_curr: str):
     elif text_in.startswith("/search ") or text_in.startswith("بحث "):
       q_tg = text_in.split(" ", 1)[1].strip() if " " in text_in else ""
       if q_tg:
-        try:
-          conn_s = _open_sqlite_conn()
-          conn_s.row_factory = sqlite3.Row
-          c_s = conn_s.cursor()
-          c_s.execute("SELECT * FROM articles ORDER BY pub_timestamp DESC LIMIT 300")
-          all_db_s = [dict(r) for r in c_s.fetchall()]
-          conn_s.close()
-          hits_tg = smart_search_articles(all_db_s, q_tg)[:6]
-        except Exception:
-          hits_tg = []
+        hits_tg = smart_search_articles(_get_all_articles_for_bot(), q_tg)[:5]
         if hits_tg:
           lines_s = [f"🔎 <b>نتائج البحث في المرصد عن:</b> {html.escape(q_tg)}"]
           for idx_s, r_s in enumerate(hits_tg, 1):
-            ar_t_s, _ = _ensure_arabic_title_and_summary(r_s)
+            ar_t_s, ar_s_s = _ensure_arabic_title_and_summary(r_s)
             t_s = html.escape(ar_t_s)
             u_s = html.escape(clean_social_post_url(r_s.get("url") or ""))
             src_s = html.escape(clean_display_text(r_s.get("source_name") or r_s.get("platform") or ""))
-            lines_s.append(f"\n<b>{idx_s}.</b> <a href=\"{u_s}\">{t_s}</a>\n    🏷️ {src_s}")
+            lines_s.append(f"\n<b>{idx_s}.</b> <a href=\"{u_s}\">{t_s}</a>\n    📝 {html.escape(ar_s_s[:120])}...\n    🏷️ {src_s}")
           requests.post(
               f"https://api.telegram.org/bot{token_curr}/sendMessage",
               json={"chat_id": m_chat_id, "text": "\n".join(lines_s), "parse_mode": "HTML", "disable_web_page_preview": True},
@@ -9190,31 +9211,9 @@ def render_article_cards(
     css_cls = plat_css_map.get(plat, "plat-press")
     type_badge_txt = plat_type_label.get(plat, plat)
 
-    raw_title = clean_display_text(item.get("title") or "")
-    raw_summary = clean_display_text(item.get("summary") or "")
     raw_snip = clean_display_text(item.get("raw_snippet") or "")
     raw_src = clean_display_text(item.get("source_name") or plat)
-
-    if raw_title and not _is_predominantly_arabic(raw_title):
-      tr_t = translate_foreign_title_to_arabic_rulebased(raw_title)
-      if tr_t and _is_predominantly_arabic(tr_t):
-        raw_title = tr_t
-
-    generic_markers_ui = (
-        "أفادت تقارير صادرة عن",
-        "تفيد المعطيات الواردة عبر",
-        "متابعة إعلامية وقضائية دولية",
-        "متابعة قضائية دولية: مستجدات",
-        "تقرير قضائي دولي:",
-    )
-    if (
-        is_summary_just_title(raw_title, raw_summary)
-        or not _is_predominantly_arabic(raw_summary)
-        or any(gm in raw_summary for gm in generic_markers_ui)
-    ):
-      raw_summary = build_extractive_arabic_summary(
-          raw_title, raw_snip, plat, raw_src
-      )
+    raw_title, raw_summary = _ensure_arabic_title_and_summary(item)
 
     pub_ts = float(item.get("pub_timestamp") or (time.time() - 3600))
     raw_pub_date = clean_display_text(item.get("pub_date") or "")
