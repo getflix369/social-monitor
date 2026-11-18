@@ -50,6 +50,7 @@ TELEGRAM_LEDGER_FILE = "telegram_sent_ledger.json"
 
 DEFAULT_TG_TOKEN = "8806182263:AAFw5HbBup_TRif3FHvZP0QFYj0YPI4mb6c"
 DEFAULT_TG_CHAT_ID = "1357905784"
+DEFAULT_ADMIN_PIN = "2026"
 DEFAULT_GEMINI_API_KEY = "AQ.Ab8RN6L0QyUl0JoF76pZJqwGl8oo7SROd0CrCJtxlglyu_D7WQ"
 
 GEMINI_MODELS_FALLBACK = [
@@ -3078,6 +3079,7 @@ def load_credentials():
       "search_period": "آخر 7 أيام",
       "auto_monitor": True,
       "monitor_interval": "كل ساعة",
+      "admin_pin": DEFAULT_ADMIN_PIN,
   }
   if os.path.exists(CREDENTIALS_FILE):
     try:
@@ -3124,6 +3126,8 @@ def load_credentials():
     cfg["monitor_interval"] = "كل ساعة"
   if cfg.get("search_period") not in SEARCH_PERIOD_MAP:
     cfg["search_period"] = "آخر 7 أيام"
+  if not str(cfg.get("admin_pin") or "").strip():
+    cfg["admin_pin"] = DEFAULT_ADMIN_PIN
   return cfg
 
 
@@ -8086,6 +8090,61 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
     min-width: 140px !important;
 }
 
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, rgba(10, 16, 30, 0.98) 0%, rgba(7, 11, 21, 0.99) 100%) !important;
+    border-left: 1px solid rgba(56, 189, 248, 0.22) !important;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+    padding-top: 1rem !important;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+.sidebar-section-card {
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid rgba(56, 189, 248, 0.24);
+    border-radius: 14px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+.sidebar-section-title {
+    font-size: 0.95rem;
+    font-weight: 900;
+    color: #38bdf8;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sidebar-section-sub {
+    font-size: 0.76rem;
+    color: #94a3b8;
+    line-height: 1.4;
+}
+
+.active-feed-banner {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.16) 0%, rgba(15, 23, 42, 0.86) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-right: 4px solid #38bdf8;
+    border-radius: 14px;
+    padding: 12px 18px;
+    margin: 10px 0 14px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
 .hero-glass {
     background: linear-gradient(135deg, rgba(15, 23, 42, 0.88) 0%, rgba(30, 41, 59, 0.72) 100%);
     backdrop-filter: blur(20px);
@@ -8748,80 +8807,311 @@ render_html("""
 
 
 # =====================================================================
-# 13. تحميل الإعدادات والبيانات
+# 13. تحميل الإعدادات والبيانات وتجهيز القوائم
 # =====================================================================
 cfg = load_credentials()
 custom_targets = load_custom_targets()
 monitor_state = load_monitor_state()
 rt_state = get_shared_runtime()
 
-with st.sidebar:
-  st.markdown("### ⚙️ إعدادات المنصة")
-  gemini_key_in = st.text_input(
-      "مفتاح Gemini API", value=cfg.get("gemini_api_key", ""), type="password"
-  )
-  tg_token_in = st.text_input(
-      "Telegram Bot Token",
-      value=cfg.get("telegram_bot_token", DEFAULT_TG_TOKEN),
-  )
-  tg_chat_in = st.text_input(
-      "Telegram Chat ID", value=cfg.get("telegram_chat_id", DEFAULT_TG_CHAT_ID)
-  )
-  auto_mon_in = st.toggle(
-      "تفعيل الرصد الدوري التلقائي", value=bool(cfg.get("auto_monitor", True))
-  )
-  interval_options = list(INTERVAL_MAP.keys())
-  curr_interval = cfg.get("monitor_interval", "كل ساعة")
-  interval_in = st.selectbox(
-      "فترة الرصد التلقائي",
-      options=interval_options,
-      index=interval_options.index(curr_interval)
-      if curr_interval in interval_options
-      else 0,
-  )
+all_articles = fetch_articles_from_db()
+now_ts = time.time()
 
-  if st.button("💾 حفظ الإعدادات"):
-    cfg["gemini_api_key"] = gemini_key_in.strip()
-    cfg["telegram_bot_token"] = tg_token_in.strip() or DEFAULT_TG_TOKEN
-    cfg["telegram_chat_id"] = tg_chat_in.strip() or DEFAULT_TG_CHAT_ID
-    cfg["auto_monitor"] = bool(auto_mon_in)
-    cfg["monitor_interval"] = interval_in
-    save_credentials(cfg)
-    st.success("تم حفظ الإعدادات بنجاح")
+live_articles = []
+archive_articles = []
+for a in all_articles:
+  pub_t = float(a.get("pub_timestamp", 0))
+  mon_t = float(a.get("created_at") or pub_t)
+  if (now_ts - mon_t) < 86400:
+    live_articles.append(a)
+  else:
+    archive_articles.append(a)
 
-  st.markdown("### 🗄️ النسخ الاحتياطي")
-  all_db_articles = fetch_articles_from_db()
-  json_export_str = json.dumps(all_db_articles, ensure_ascii=False, indent=2)
-  st.download_button(
-      "⬇️ تحميل أرشيف البيانات (JSON)",
-      data=json_export_str.encode("utf-8"),
-      file_name="justice_monitor_backup.json",
-      mime="application/json",
-  )
+live_articles.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
+archive_articles.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
 
-  uploaded_backup = st.file_uploader("⬆️ استعادة أرشيف JSON", type=["json"])
-  if uploaded_backup is not None:
-    try:
-      restored_list = json.loads(uploaded_backup.read().decode("utf-8"))
-      if isinstance(restored_list, list):
-        with open(ARCHIVE_JSON_FILE, "w", encoding="utf-8") as f:
-          json.dump(restored_list, f, ensure_ascii=False, indent=2)
-        restore_db_from_json_if_needed()
-        purge_invalid_articles_from_db()
-        st.success("تمت استعادة الأرشيف بنجاح")
-        st.rerun()
-    except Exception:
-      st.error("ملف غير صالح")
+for _a_live in live_articles:
+  normalize_press_platform_and_source(_a_live)
+  if _a_live.get("platform") == "صحافة دولية":
+    _c_tag, _t_tag = detect_article_country_and_topic(
+        _a_live.get("title", ""),
+        _a_live.get("raw_snippet", ""),
+        _a_live.get("url", ""),
+        _a_live.get("source_name", ""),
+        "صحافة دولية",
+    )
+    _a_live["_intl_country"] = _c_tag
+    _a_live["_intl_topic"] = _t_tag
+
+press_live = [a for a in live_articles if a.get("platform") == "الصحف"]
+intl_live = [a for a in live_articles if a.get("platform") == "صحافة دولية"]
+fb_live = [a for a in live_articles if a.get("platform") == "فيسبوك"]
+x_live = [a for a in live_articles if a.get("platform") == "إكس"]
+yt_live = [a for a in live_articles if a.get("platform") == "يوتيوب"]
+other_live = [a for a in live_articles if a.get("platform") == "أخرى"]
+target_live = [
+    a
+    for a in live_articles
+    if int(a.get("is_custom_target", 0)) == 1
+    and belongs_to_any_custom_target(a, custom_targets)
+]
+
+SCAN_MODES = [
+    ("all", "🚀 الرصد الشامل (جميع المصادر الوطنية والدولية)", "الرصد الشامل", len(live_articles)),
+    ("press", "📰 الصحف المغربية (المواقع والجرائد الوطنية)", "الصحف المغربية", len(press_live)),
+    ("intl", "🌍 الصحافة الدولية (أمريكا • فرنسا • إسبانيا • الجزائر • دولي)", "الصحافة الدولية", len(intl_live)),
+    ("fb", "🟦 منصة فيسبوك (الصفحات والمنشورات العامة)", "منصة فيسبوك", len(fb_live)),
+    ("x", "⬛ منصة إكس X (التغريدات والحسابات)", "منصة إكس (X)", len(x_live)),
+    ("yt", "🟥 منصة يوتيوب (القنوات والفيديوهات)", "منصة يوتيوب", len(yt_live)),
+    ("other", "🟪 منصات أخرى (تيك توك • إنستغرام • لينكدإن)", "منصات أخرى", len(other_live)),
+    ("target", f"🎯 الرصد المخصص ({len(custom_targets)} قناة/رابط)", "الرصد المخصص", len(target_live)),
+    ("archive", "🗄️ أرشيف الأخبار السابقة (+24 ساعة)", "الأرشيف", len(archive_articles)),
+]
+
+MODE_KEY_TO_INFO = {m[0]: m for m in SCAN_MODES}
+MODE_KEYS_LIST = [m[0] for m in SCAN_MODES]
+
+if "selected_nav_mode" not in st.session_state or st.session_state["selected_nav_mode"] not in MODE_KEY_TO_INFO:
+  st.session_state["selected_nav_mode"] = "all"
+
+if "admin_settings_unlocked" not in st.session_state:
+  st.session_state["admin_settings_unlocked"] = False
+
+triggered_mode = None
 
 # =====================================================================
-# 14. الهيدر الرئيسي وشريط البحث المخصص وتحديد فترة البحث والروابط المخصصة
+# 14. القائمة الجانبية الموحدة (اختيار نوع الرصد + الفلاتر + قفل إعدادات المشرف برمز سري)
+# =====================================================================
+with st.sidebar:
+  render_html("""
+  <div class="sidebar-section-card" dir="rtl">
+      <div class="sidebar-section-title">📡 مركز التحكم والفرز</div>
+      <div class="sidebar-section-sub">اختر نوع الرصد لعرض أخباره في الواجهة الرئيسية أو تشغيل الفحص الفوري</div>
+  </div>
+  """)
+
+  selected_mode_key = st.selectbox(
+      "📂 اختر نوع الرصد / القسم المعروض:",
+      options=MODE_KEYS_LIST,
+      index=MODE_KEYS_LIST.index(st.session_state["selected_nav_mode"]),
+      format_func=lambda k: f"{MODE_KEY_TO_INFO[k][1]} — ({MODE_KEY_TO_INFO[k][3]})",
+      key="sidebar_mode_selector",
+  )
+  st.session_state["selected_nav_mode"] = selected_mode_key
+
+  # قائمة فرعية للصحافة الدولية عند اختيار قسم الصحافة الدولية
+  if selected_mode_key == "intl":
+    c_opts = ["جميع الدول", "الولايات المتحدة", "فرنسا", "إسبانيا", "الجزائر", "دولي"]
+    if "intl_filter_country" not in st.session_state:
+      st.session_state["intl_filter_country"] = "جميع الدول"
+    st.selectbox(
+        "🏛️ الدولة / النطاق الجغرافي:",
+        options=c_opts,
+        key="intl_filter_country",
+    )
+    t_opts = ["جميع المواضيع", "يتطرق للمغرب", "شؤون قضائية ومحاكم", "قضاء دولي", "قضايا وتسليم واتفاقيات"]
+    if "intl_filter_topic" not in st.session_state:
+      st.session_state["intl_filter_topic"] = "جميع المواضيع"
+    st.selectbox(
+        "⚖️ تصنيف الموضوع الدولي:",
+        options=t_opts,
+        key="intl_filter_topic",
+    )
+
+  scan_target_key = "all" if selected_mode_key == "archive" else selected_mode_key
+  scan_target_short = MODE_KEY_TO_INFO[scan_target_key][2]
+
+  col_sb_play, col_sb_stop = st.columns(2)
+  with col_sb_play:
+    render_html('<span class="media-play-marker" style="display:none;"></span>')
+    if st.button(
+        f"▶ رصد ({scan_target_short})",
+        key="sidebar_start_scan_btn",
+        type="primary",
+        use_container_width=True,
+    ):
+      clear_stop_scan()
+      triggered_mode = scan_target_key
+  with col_sb_stop:
+    render_html('<span class="media-stop-marker" style="display:none;"></span>')
+    if st.button(
+        "⏹ إيقاف الرصد",
+        key="sidebar_stop_scan_btn",
+        type="secondary",
+        use_container_width=True,
+    ):
+      request_stop_scan()
+
+  with st.expander("🔍 خيارات البحث والروابط المخصصة", expanded=False):
+    kw_input = st.text_input(
+        "تخصيص بكلمات مفتاحية (اختياري)",
+        value=cfg.get("keywords_input", ""),
+        placeholder="اتركه فارغاً للرصد القضائي العام...",
+    )
+    if kw_input != cfg.get("keywords_input", ""):
+      cfg["keywords_input"] = kw_input
+      save_credentials(cfg)
+
+    period_options = list(SEARCH_PERIOD_MAP.keys())
+    curr_period = cfg.get("search_period", "آخر 7 أيام")
+    selected_period = st.selectbox(
+        "⏱️ فترة الرصد الزمني",
+        options=period_options,
+        index=period_options.index(curr_period) if curr_period in period_options else 2,
+    )
+    if selected_period != cfg.get("search_period", ""):
+      cfg["search_period"] = selected_period
+      save_credentials(cfg)
+
+    st.markdown(f"**🎯 الروابط والقنوات المخصصة ({len(custom_targets)})**")
+    with st.form("add_custom_target_form", clear_on_submit=True):
+      new_t_url = st.text_input(
+          "الرابط أو اسم القناة/الصفحة",
+          placeholder="رابط أو اسم قناة (يوتيوب/فيسبوك/إكس)...",
+      )
+      new_t_kw = st.text_input(
+          "كلمة فلترة (اختياري)",
+          placeholder="كلمة مفتاحية داخل القناة...",
+      )
+      add_t_btn = st.form_submit_button("➕ إضافة رابط مخصص")
+      if add_t_btn and new_t_url.strip():
+        custom_targets.append({"url": new_t_url.strip(), "keyword": new_t_kw.strip()})
+        save_custom_targets(custom_targets)
+        st.rerun()
+
+    for idx, t_item in enumerate(list(custom_targets)):
+      tc1, tc2 = st.columns([4, 1.3])
+      with tc1:
+        kw_tag = f" ({t_item['keyword']})" if t_item.get("keyword") else ""
+        render_html(
+            f"<div style='font-size:0.78rem;color:#cbd5e1;direction:ltr;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 0;'>🔗 {html.escape(t_item['url'])}{html.escape(kw_tag)}</div>"
+        )
+      with tc2:
+        if st.button("✖", key=f"del_target_{idx}"):
+          custom_targets.pop(idx)
+          save_custom_targets(custom_targets)
+          st.rerun()
+
+  # قسم إعدادات المشرف والمفاتيح السرية (مقفل برمز سري)
+  with st.expander("🔒 إعدادات المشرف والمفاتيح (محمي)", expanded=False):
+    current_admin_pin = str(cfg.get("admin_pin") or DEFAULT_ADMIN_PIN).strip()
+    if not st.session_state.get("admin_settings_unlocked", False):
+      render_html(
+          "<div style='font-size:0.8rem;color:#94a3b8;margin-bottom:6px;'>هذا القسم مخصص لمشرف المنصة فقط. أدخل الرمز السري للوصول إلى المفاتيح والإعدادات:</div>"
+      )
+      pin_input = st.text_input(
+          "🔑 الرمز السري للمشرف",
+          type="password",
+          key="admin_pin_login_input",
+          placeholder="أدخل رمز المشرف...",
+      )
+      if st.button("🔓 فتح قفل الإعدادات", key="btn_unlock_admin", use_container_width=True):
+        if pin_input.strip() == current_admin_pin:
+          st.session_state["admin_settings_unlocked"] = True
+          st.rerun()
+        else:
+          st.error("❌ الرمز السري غير صحيح")
+    else:
+      if st.button("🔒 قفل الإعدادات وإخفاء المفاتيح", key="btn_lock_admin", use_container_width=True):
+        st.session_state["admin_settings_unlocked"] = False
+        st.rerun()
+
+      st.markdown("##### ⚙️ مفاتيح الربط والرصد التلقائي")
+      gemini_key_in = st.text_input(
+          "مفتاح Gemini API",
+          value=cfg.get("gemini_api_key", ""),
+          type="password",
+      )
+      tg_token_in = st.text_input(
+          "Telegram Bot Token",
+          value=cfg.get("telegram_bot_token", DEFAULT_TG_TOKEN),
+          type="password",
+      )
+      tg_chat_in = st.text_input(
+          "Telegram Chat ID",
+          value=cfg.get("telegram_chat_id", DEFAULT_TG_CHAT_ID),
+          type="password",
+      )
+      auto_mon_in = st.toggle(
+          "تفعيل الرصد الدوري التلقائي",
+          value=bool(cfg.get("auto_monitor", True)),
+      )
+      interval_options = list(INTERVAL_MAP.keys())
+      curr_interval = cfg.get("monitor_interval", "كل ساعة")
+      interval_in = st.selectbox(
+          "فترة الرصد التلقائي",
+          options=interval_options,
+          index=interval_options.index(curr_interval) if curr_interval in interval_options else 0,
+      )
+
+      st.markdown("##### 🛡️ تغيير الرمز السري للمشرف")
+      new_pin_in = st.text_input(
+          "الرمز السري الجديد (اتركه فارغاً للإبقاء على الحالي)",
+          type="password",
+          key="new_admin_pin_input",
+      )
+      confirm_pin_in = st.text_input(
+          "تأكيد الرمز السري الجديد",
+          type="password",
+          key="confirm_admin_pin_input",
+      )
+
+      if st.button("💾 حفظ جميع الإعدادات", key="btn_save_admin_cfg", use_container_width=True):
+        if new_pin_in.strip():
+          if new_pin_in.strip() != confirm_pin_in.strip():
+            st.error("❌ الرمز السري الجديد وتأكيده غير متطابقين")
+          elif len(new_pin_in.strip()) < 4:
+            st.error("❌ يجب أن يتكون الرمز السري من 4 رموز على الأقل")
+          else:
+            cfg["admin_pin"] = new_pin_in.strip()
+            cfg["gemini_api_key"] = gemini_key_in.strip()
+            cfg["telegram_bot_token"] = tg_token_in.strip() or DEFAULT_TG_TOKEN
+            cfg["telegram_chat_id"] = tg_chat_in.strip() or DEFAULT_TG_CHAT_ID
+            cfg["auto_monitor"] = bool(auto_mon_in)
+            cfg["monitor_interval"] = interval_in
+            save_credentials(cfg)
+            st.success("✅ تم حفظ الإعدادات وتحديث الرمز السري بنجاح")
+        else:
+          cfg["gemini_api_key"] = gemini_key_in.strip()
+          cfg["telegram_bot_token"] = tg_token_in.strip() or DEFAULT_TG_TOKEN
+          cfg["telegram_chat_id"] = tg_chat_in.strip() or DEFAULT_TG_CHAT_ID
+          cfg["auto_monitor"] = bool(auto_mon_in)
+          cfg["monitor_interval"] = interval_in
+          save_credentials(cfg)
+          st.success("✅ تم حفظ الإعدادات بنجاح")
+
+      st.markdown("##### 🗄️ النسخ الاحتياطي للأرشيف")
+      json_export_str = json.dumps(all_articles, ensure_ascii=False, indent=2)
+      st.download_button(
+          "⬇️ تحميل أرشيف البيانات (JSON)",
+          data=json_export_str.encode("utf-8"),
+          file_name="justice_monitor_backup.json",
+          mime="application/json",
+          use_container_width=True,
+      )
+      uploaded_backup = st.file_uploader("⬆️ استعادة أرشيف JSON", type=["json"])
+      if uploaded_backup is not None:
+        try:
+          restored_list = json.loads(uploaded_backup.read().decode("utf-8"))
+          if isinstance(restored_list, list):
+            with open(ARCHIVE_JSON_FILE, "w", encoding="utf-8") as f:
+              json.dump(restored_list, f, ensure_ascii=False, indent=2)
+            restore_db_from_json_if_needed()
+            purge_invalid_articles_from_db()
+            st.success("تمت استعادة الأرشيف بنجاح")
+            st.rerun()
+        except Exception:
+          st.error("ملف غير صالح")
+
+# =====================================================================
+# 15. الهيدر الرئيسي ومنطقة الرادار الدوار 360° وشريط التقدم
 # =====================================================================
 last_auto_ts = float(monitor_state.get("last_auto_run", 0))
 last_auto_label = (
     format_relative_arabic(last_auto_ts) if last_auto_ts > 0 else "قيد الانطلاق"
 )
 auto_badge_text = (
-    f"الرصد التلقائي نشط ({cfg.get('monitor_interval', 'كل 15 دقيقة')}) • آخر فحص: {last_auto_label}"
+    f"الرصد التلقائي نشط ({cfg.get('monitor_interval', 'كل ساعة')}) • آخر فحص: {last_auto_label}"
     if cfg.get("auto_monitor", True)
     else "الرصد اليدوي"
 )
@@ -8836,154 +9126,6 @@ render_html(f"""
 </div>
 """)
 
-col_kw, col_period = st.columns([2.8, 1.2])
-with col_kw:
-  kw_input = st.text_input(
-      "🔍 تخصيص بكلمات مفتاحية (اختياري)",
-      value=cfg.get("keywords_input", ""),
-      placeholder="🔍 اتركه فارغاً للرصد القضائي العام، أو أدخل كلمات مفتاحية مفصولة بفاصلة...",
-      label_visibility="collapsed",
-  )
-  if kw_input != cfg.get("keywords_input", ""):
-    cfg["keywords_input"] = kw_input
-    save_credentials(cfg)
-
-with col_period:
-  period_options = list(SEARCH_PERIOD_MAP.keys())
-  curr_period = cfg.get("search_period", "آخر 7 أيام")
-  selected_period = st.selectbox(
-      "⏱️ فترة البحث",
-      options=period_options,
-      index=period_options.index(curr_period)
-      if curr_period in period_options
-      else 2,
-      label_visibility="collapsed",
-  )
-  if selected_period != cfg.get("search_period", ""):
-    cfg["search_period"] = selected_period
-    save_credentials(cfg)
-
-with st.expander(
-    f"🎯 الروابط والقنوات المخصصة ({len(custom_targets)})", expanded=False
-):
-  with st.form("add_custom_target_form", clear_on_submit=True):
-    c_u, c_k, c_b = st.columns([2.5, 1.5, 1.0])
-    with c_u:
-      new_t_url = st.text_input(
-          "الرابط",
-          placeholder="رابط قناة/صفحة (يوتيوب/فيسبوك/إكس) أو اكتب اسم القناة أو الصفحة أو صاحبها مباشرة...",
-          label_visibility="collapsed",
-      )
-    with c_k:
-      new_t_kw = st.text_input(
-          "كلمة (اختياري)",
-          placeholder="كلمة فلترة داخل القناة/الصفحة (اختياري)...",
-          label_visibility="collapsed",
-      )
-    with c_b:
-      add_t_btn = st.form_submit_button("➕ إضافة رابط")
-    if add_t_btn and new_t_url.strip():
-      custom_targets.append(
-          {"url": new_t_url.strip(), "keyword": new_t_kw.strip()}
-      )
-      save_custom_targets(custom_targets)
-      st.rerun()
-
-  for idx, t_item in enumerate(list(custom_targets)):
-    tc1, tc2 = st.columns([5, 1])
-    with tc1:
-      kw_tag = f" ({t_item['keyword']})" if t_item.get("keyword") else ""
-      render_html(
-          f"<div style='font-size:0.84rem;color:#cbd5e1;direction:ltr;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 0;'>🔗 {html.escape(t_item['url'])}{html.escape(kw_tag)}</div>"
-      )
-    with tc2:
-      if st.button("❌ حذف", key=f"del_target_{idx}"):
-        custom_targets.pop(idx)
-        save_custom_targets(custom_targets)
-        st.rerun()
-
-# =====================================================================
-# 15. لوحة بطاقات الرصد الزجاجية الشفافة (اسم المنصة كاملاً + زر التشغيل ▶ وزر الإيقاف ⏹)
-# =====================================================================
-SCAN_MODES = [
-    ("all", "الرصد الشامل", "جميع المصادر الوطنية والدولية", "شامل", "🚀", "scan-frame-all"),
-    ("press", "الصحف المغربية", "المواقع والجرائد الوطنية", "صحافة", "📰", "scan-frame-press"),
-    ("intl", "الصحافة الدولية", "أمريكا • فرنسا • إسبانيا • الجزائر", "دولية", "🌍", "scan-frame-intl"),
-    ("fb", "منصة فيسبوك", "الصفحات والمنشورات العامة", "فيسبوك", "🟦", "scan-frame-fb"),
-    ("x", "منصة إكس (X)", "التغريدات والحسابات", "إكس", "⬛", "scan-frame-x"),
-    ("yt", "منصة يوتيوب", "القنوات والفيديوهات", "يوتيوب", "🟥", "scan-frame-yt"),
-    ("other", "منصات أخرى", "تيك توك • إنستغرام • لينكدإن", "أخرى", "🟪", "scan-frame-other"),
-    ("target", "الرصد المخصص", f"القنوات والصفحات المحددة ({len(custom_targets)})", "مخصص", "🎯", "scan-frame-target"),
-]
-
-triggered_mode = None
-
-# توزيع البطاقات الزجاجية في شبكتين متناسقتين بمساحة رحبة تضمن ظهور اسم المنصة كاملاً وبوضوح تام
-row1_modes = SCAN_MODES[:4]
-row2_modes = SCAN_MODES[4:]
-
-for row_modes in (row1_modes, row2_modes):
-  row_cols = st.columns(len(row_modes))
-  for col_idx, (mode_key, mode_title, mode_sub, mode_badge, mode_icon, frame_cls) in enumerate(row_modes):
-    with row_cols[col_idx]:
-      with st.container():
-        render_html(
-            f"""
-            <span class="scan-frame-marker {frame_cls}" style="display:none;"></span>
-            <div class="scan-platform-header" dir="rtl">
-                <div class="scan-platform-right" dir="rtl">
-                    <span class="scan-platform-icon">{mode_icon}</span>
-                    <div>
-                        <div class="scan-platform-title">{html.escape(mode_title)}</div>
-                        <div class="scan-platform-sub">{html.escape(mode_sub)}</div>
-                    </div>
-                </div>
-                <span class="scan-platform-badge">{html.escape(mode_badge)}</span>
-            </div>
-            """
-        )
-        c_play, c_stop = st.columns(2)
-        with c_play:
-          render_html('<span class="media-play-marker" style="display:none;"></span>')
-          try:
-            play_clicked = st.button(
-                "▶ تشغيل",
-                key=f"start_scan_{mode_key}",
-                help=f"تشغيل {mode_title}",
-                type="primary",
-                use_container_width=True,
-            )
-          except TypeError:
-            play_clicked = st.button(
-                "▶ تشغيل",
-                key=f"start_scan_{mode_key}",
-                help=f"تشغيل {mode_title}",
-            )
-          if play_clicked:
-            clear_stop_scan()
-            triggered_mode = mode_key
-        with c_stop:
-          render_html('<span class="media-stop-marker" style="display:none;"></span>')
-          try:
-            stop_clicked = st.button(
-                "⏹ إيقاف",
-                key=f"stop_scan_{mode_key}",
-                help=f"إيقاف {mode_title}",
-                type="secondary",
-                use_container_width=True,
-            )
-          except TypeError:
-            stop_clicked = st.button(
-                "⏹ إيقاف",
-                key=f"stop_scan_{mode_key}",
-                help=f"إيقاف {mode_title}",
-            )
-          if stop_clicked:
-            request_stop_scan()
-
-# =====================================================================
-# 16. منطقة الرادار الدوار 360° وشريط التقدم ومؤشر DONE
-# =====================================================================
 radar_placeholder = st.empty()
 progress_placeholder = st.empty()
 done_placeholder = st.empty()
@@ -9021,18 +9163,12 @@ def execute_interactive_scan(mode_key: str):
   if mode_key == "all":
     steps = [
         ("الصحف المغربية", lambda cb: scrape_moroccan_press(kw, s_period, cb)),
-        ("الصحافة الدولية (فرنسا، إسبانيا، الجزائر)", lambda cb: scrape_international_press(kw, s_period, cb)),
+        ("الصحافة الدولية", lambda cb: scrape_international_press(kw, s_period, cb)),
         ("يوتيوب", lambda cb: scrape_youtube_platform(kw, s_period, cb)),
         ("فيسبوك", lambda cb: scrape_facebook_platform(kw, s_period, cb)),
         ("منصة إكس", lambda cb: scrape_x_platform(kw, s_period, cb)),
-        (
-            "تيك توك وإنستغرام ولينكدإن",
-            lambda cb: scrape_other_platforms(kw, s_period, cb),
-        ),
-        (
-            "الروابط والقنوات المخصصة",
-            lambda cb: scrape_custom_targets(custom_targets, kw, s_period, cb),
-        ),
+        ("تيك توك وإنستغرام ولينكدإن", lambda cb: scrape_other_platforms(kw, s_period, cb)),
+        ("الروابط والقنوات المخصصة", lambda cb: scrape_custom_targets(custom_targets, kw, s_period, cb)),
     ]
     for s_idx, (s_name, s_fn) in enumerate(steps):
       if is_stop_requested():
@@ -9087,6 +9223,7 @@ def execute_interactive_scan(mode_key: str):
 
 if triggered_mode:
   execute_interactive_scan(triggered_mode)
+  st.rerun()
 
 if time.time() - float(rt_state.get("last_done_ts", 0)) < 25:
   if rt_state.get("last_done_mode") == "stopped":
@@ -9112,53 +9249,8 @@ if time.time() - float(rt_state.get("last_done_ts", 0)) < 25:
     )
 
 # =====================================================================
-# 17. فرز الأخبار زمنياً (الأحدث أولاً) وفصل الأخبار النشطة (24 ساعة من الرصد) عن الأرشيف
+# 16. شريط الإحصائيات الموجز ودالة عرض بطاقات الأخبار
 # =====================================================================
-all_articles = fetch_articles_from_db()
-now_ts = time.time()
-selected_period_sec = get_period_config(cfg.get("search_period", "آخر 7 أيام"))[
-    "sec"
-]
-
-live_articles = []
-archive_articles = []
-for a in all_articles:
-  pub_t = float(a.get("pub_timestamp", 0))
-  mon_t = float(a.get("created_at") or pub_t)
-  # يبقى الخبر المرصود في الواجهة النشطة لمدة 24 ساعة من وقت رصده الأول (created_at)، وبمجرد مرور 24 ساعة يُحال تلقائياً إلى الأرشيف ولا يُعاد رصده مرة أخرى
-  is_monitored_within_24h = (now_ts - mon_t) < 86400
-  if is_monitored_within_24h:
-    live_articles.append(a)
-  else:
-    archive_articles.append(a)
-
-live_articles.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
-archive_articles.sort(
-    key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True
-)
-
-for _a_live in live_articles:
-  normalize_press_platform_and_source(_a_live)
-  if _a_live.get("platform") == "صحافة دولية":
-    _c_tag, _t_tag = detect_article_country_and_topic(
-        _a_live.get("title", ""), _a_live.get("raw_snippet", ""), _a_live.get("url", ""), _a_live.get("source_name", ""), "صحافة دولية"
-    )
-    _a_live["_intl_country"] = _c_tag
-    _a_live["_intl_topic"] = _t_tag
-
-press_live = [a for a in live_articles if a.get("platform") == "الصحف"]
-intl_live = [a for a in live_articles if a.get("platform") == "صحافة دولية"]
-fb_live = [a for a in live_articles if a.get("platform") == "فيسبوك"]
-x_live = [a for a in live_articles if a.get("platform") == "إكس"]
-yt_live = [a for a in live_articles if a.get("platform") == "يوتيوب"]
-other_live = [a for a in live_articles if a.get("platform") == "أخرى"]
-target_live = [
-    a
-    for a in live_articles
-    if int(a.get("is_custom_target", 0)) == 1
-    and belongs_to_any_custom_target(a, custom_targets)
-]
-
 metrics_data = [
     ("الكل (النشط)", len(live_articles)),
     ("الصحف الوطنية", len(press_live)),
@@ -9211,7 +9303,6 @@ def render_article_cards(
     css_cls = plat_css_map.get(plat, "plat-press")
     type_badge_txt = plat_type_label.get(plat, plat)
 
-    raw_snip = clean_display_text(item.get("raw_snippet") or "")
     raw_src = clean_display_text(item.get("source_name") or plat)
     raw_title, raw_summary = _ensure_arabic_title_and_summary(item)
 
@@ -9289,12 +9380,8 @@ def render_article_cards(
 
 
 # =====================================================================
-# 18. التبويبات الرئيسية (بأسماء مختصرة من كلمة واحدة)
+# 17. شريط البحث الذكي الشامل وعرض الأخبار وفق الرصد المختار من القائمة الجانبية
 # =====================================================================
-# =====================================================================
-# شريط البحث الذكي الشامل داخل كافة الأخبار والمقالات المرصودة
-# =====================================================================
-st.markdown("#### 🔎 البحث في الأخبار والمقالات المرصودة")
 col_gs_inp, col_gs_scope, col_gs_clr = st.columns([3.2, 1.3, 0.7])
 if "global_site_search" not in st.session_state:
   st.session_state["global_site_search"] = ""
@@ -9303,13 +9390,13 @@ with col_gs_inp:
   global_search_q = st.text_input(
       "البحث داخل المرصد",
       key="global_site_search",
-      placeholder="ابحث بكلمة مفتاحية، كلمتين، ثلاث كلمات، أو جملة كاملة (عربي/فرنسي/إسباني)...",
+      placeholder="🔎 ابحث بكلمة مفتاحية، كلمتين، ثلاث كلمات، أو جملة كاملة...",
       label_visibility="collapsed",
   )
 with col_gs_scope:
   search_scope = st.selectbox(
       "نطاق البحث",
-      options=["الأخبار النشطة والأرشيف معاً", "الأخبار النشطة فقط", "الأرشيف فقط"],
+      options=["في القسم المحدد فقط", "الأخبار النشطة والأرشيف معاً", "الأخبار النشطة فقط", "الأرشيف فقط"],
       key="global_search_scope",
       label_visibility="collapsed",
   )
@@ -9318,139 +9405,45 @@ with col_gs_clr:
     st.session_state["global_site_search"] = ""
     st.rerun()
 
-if global_search_q.strip():
-  q_gs = global_search_q.strip()
-  if search_scope == "الأخبار النشطة فقط":
-    pool_gs = list(live_articles)
-  elif search_scope == "الأرشيف فقط":
-    pool_gs = list(archive_articles)
-  else:
-    # دمج النشط والأرشيف بدون تكرار
-    seen_gs_u = set()
-    pool_gs = []
-    for _it_g in live_articles + archive_articles:
-      _u_g = _it_g.get("url", "")
-      if _u_g not in seen_gs_u:
-        seen_gs_u.add(_u_g)
-        pool_gs.append(_it_g)
+# تحديد القائمة المعروضة وفق الرصد المختار من القائمة الجانبية
+mode_feeds_map = {
+    "all": (live_articles, "الرصد الشامل — جميع الأخبار النشطة (خلال 24 ساعة)"),
+    "press": (press_live, "الصحف المغربية — المواقع والجرائد الوطنية"),
+    "intl": (intl_live, "الصحافة الدولية — أمريكا • فرنسا • إسبانيا • الجزائر • هيئات دولية"),
+    "fb": (fb_live, "منصة فيسبوك — الصفحات والمنشورات القضائية"),
+    "x": (x_live, "منصة إكس (X) — التغريدات والحسابات"),
+    "yt": (yt_live, "منصة يوتيوب — القنوات والفيديوهات"),
+    "other": (other_live, "منصات أخرى — تيك توك • إنستغرام • لينكدإن"),
+    "target": (target_live, "الرصد المخصص — القنوات والصفحات المحددة"),
+    "archive": (archive_articles, "أرشيف الأخبار المرصودة السابقة (+24 ساعة)"),
+}
 
-  gs_matches = smart_search_articles(pool_gs, q_gs)
-  render_html(
-      f'<div dir="rtl" style="background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.35);border-radius:12px;padding:10px 14px;margin-bottom:12px;color:#e2e8f0;font-size:0.9rem;">'
-      f'🎯 نتائج البحث عن <strong style="color:#38bdf8;">«{html.escape(q_gs)}»</strong>: تم العثور على <strong style="color:#34d399;">{len(gs_matches)}</strong> نتيجة (مرتبة من التطابق الدقيق إلى المشابه).'
-      f'</div>'
-  )
-  # تصفية جميع التبويبات تلقائياً لعرض نتائج البحث المطابقة لكل منصة
-  live_articles = smart_search_articles(live_articles, q_gs)
-  press_live = smart_search_articles(press_live, q_gs)
-  intl_live = smart_search_articles(intl_live, q_gs)
-  fb_live = smart_search_articles(fb_live, q_gs)
-  x_live = smart_search_articles(x_live, q_gs)
-  yt_live = smart_search_articles(yt_live, q_gs)
-  other_live = smart_search_articles(other_live, q_gs)
-  target_live = smart_search_articles(target_live, q_gs)
-  archive_articles = smart_search_articles(archive_articles, q_gs)
+active_feed_list, active_feed_title = mode_feeds_map.get(
+    selected_mode_key, (live_articles, "الرصد الشامل")
+)
+displayed_articles = list(active_feed_list)
 
-  with st.expander(f"📋 عرض كافة نتائج البحث المباشرة ({len(gs_matches)})", expanded=True):
-    render_article_cards(
-        gs_matches,
-        empty_msg=f"لم يتم العثور على مقالات مطابقة أو مشابهة لعبارة «{q_gs}».",
-    )
-
-tabs = st.tabs([
-    f"الكل ({len(live_articles)})",
-    f"الصحف ({len(press_live)})",
-    f"الدولية ({len(intl_live)})",
-    f"فيسبوك ({len(fb_live)})",
-    f"إكس ({len(x_live)})",
-    f"يوتيوب ({len(yt_live)})",
-    f"أخرى ({len(other_live)})",
-    f"المخصص ({len(target_live)})",
-    f"الأرشيف ({len(archive_articles)})",
-])
-
-with tabs[0]:
-  render_article_cards(live_articles)
-
-with tabs[1]:
-  render_article_cards(press_live)
-
-with tabs[2]:
-  st.markdown("#### 🌍 فرز وتصنيف الصحافة الدولية")
-  b_all, b_us, b_fr, b_es, b_dz, b_gl = st.columns(6)
-  if "intl_quick_country" not in st.session_state:
-    st.session_state["intl_quick_country"] = "جميع الدول"
-  if "intl_filter_country" not in st.session_state:
-    st.session_state["intl_filter_country"] = st.session_state["intl_quick_country"]
-
-  def _set_intl_country(target_c: str):
-    st.session_state["intl_quick_country"] = target_c
-    st.session_state["intl_filter_country"] = target_c
-    st.rerun()
-
-  with b_all:
-    if st.button("🌐 جميع الدول", key="btn_c_all", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "جميع الدول" else "secondary"):
-      _set_intl_country("جميع الدول")
-  with b_us:
-    if st.button("🇺🇸 أمريكا", key="btn_c_us", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "الولايات المتحدة" else "secondary"):
-      _set_intl_country("الولايات المتحدة")
-  with b_fr:
-    if st.button("🇫🇷 فرنسا", key="btn_c_fr", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "فرنسا" else "secondary"):
-      _set_intl_country("فرنسا")
-  with b_es:
-    if st.button("🇪🇸 إسبانيا", key="btn_c_es", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "إسبانيا" else "secondary"):
-      _set_intl_country("إسبانيا")
-  with b_dz:
-    if st.button("🇩🇿 الجزائر", key="btn_c_dz", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "الجزائر" else "secondary"):
-      _set_intl_country("الجزائر")
-  with b_gl:
-    if st.button("🏛️ هيئات دولية", key="btn_c_gl", use_container_width=True, type="primary" if st.session_state["intl_quick_country"] == "دولي" else "secondary"):
-      _set_intl_country("دولي")
-
-  col_flt_c, col_flt_t, col_flt_s = st.columns([1.5, 1.5, 2.0])
-  with col_flt_c:
-    c_opts = ["جميع الدول", "الولايات المتحدة", "فرنسا", "إسبانيا", "الجزائر", "دولي"]
-    filter_country = st.selectbox(
-        "🏛️ الدولة / النطاق الجغرافي:",
-        options=c_opts,
-        key="intl_filter_country",
-    )
-    if filter_country != st.session_state.get("intl_quick_country"):
-      st.session_state["intl_quick_country"] = filter_country
-  with col_flt_t:
-    filter_topic = st.selectbox(
-        "⚖️ تصنيف الموضوع:",
-        options=["جميع المواضيع", "يتطرق للمغرب", "شؤون قضائية ومحاكم", "قضاء دولي", "قضايا وتسليم واتفاقيات"],
-        key="intl_filter_topic",
-    )
-  with col_flt_s:
-    filter_search = st.text_input(
-        "🔎 تصفية نصية بالكلمة أو المصدر:",
-        placeholder="ابحث بالعنوان أو اسم الجريدة...",
-        key="intl_filter_search",
-    )
-
-  filtered_intl = list(intl_live)
+# تطبيق الفلاتر الفرعية للصحافة الدولية إن كان القسم المختار هو الصحافة الدولية
+if selected_mode_key == "intl":
+  filter_country = st.session_state.get("intl_filter_country", "جميع الدول")
+  filter_topic = st.session_state.get("intl_filter_topic", "جميع المواضيع")
 
   if filter_country != "جميع الدول":
-    filtered_intl = [
-        a for a in filtered_intl
+    displayed_articles = [
+        a for a in displayed_articles
         if (a.get("_intl_country") or detect_article_country_and_topic(
             a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), a.get("platform", "")
         )[0]) == filter_country
     ]
 
   if filter_topic != "جميع المواضيع":
-    filtered_intl = [
-        a for a in filtered_intl
+    displayed_articles = [
+        a for a in displayed_articles
         if filter_topic in str(a.get("category", ""))
         or (a.get("_intl_topic") or detect_article_country_and_topic(
             a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), a.get("platform", "")
         )[1]) == filter_topic
     ]
-
-  if filter_search.strip():
-    filtered_intl = smart_search_articles(filtered_intl, filter_search.strip())
 
   c_us = len([a for a in intl_live if (a.get("_intl_country") or detect_article_country_and_topic(a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), "صحافة دولية")[0]) == "الولايات المتحدة"])
   c_fr = len([a for a in intl_live if (a.get("_intl_country") or detect_article_country_and_topic(a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), "صحافة دولية")[0]) == "فرنسا"])
@@ -9461,51 +9454,59 @@ with tabs[2]:
 
   render_html(
       f"""
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;direction:rtl;">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 12px 0;direction:rtl;">
           <span style="background:rgba(56,189,248,0.15);color:#38bdf8;padding:4px 10px;border-radius:8px;font-size:0.82rem;font-weight:700;">🇲🇦 يتطرق للمغرب: {c_ma_rel}</span>
           <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇺🇸 أمريكا: {c_us}</span>
           <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇫🇷 فرنسا: {c_fr}</span>
           <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇪🇸 إسبانيا: {c_es}</span>
           <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇩🇿 الجزائر: {c_dz}</span>
           <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🏛️ دولي: {c_gl}</span>
-          <span style="background:rgba(52,211,153,0.15);color:#34d399;padding:4px 10px;border-radius:8px;font-size:0.82rem;">📊 المعروض حالياً: {len(filtered_intl)}</span>
       </div>
       """
   )
 
-  render_article_cards(
-      filtered_intl,
-      empty_msg="لا توجد مقالات دولية تطابق الفلتر المحدد حالياً. جرّب تغيير معايير التصفية أو تشغيل الرصد الشامل.",
+# تطبيق البحث النصي الشامل إن وجد
+if global_search_q.strip():
+  q_gs = global_search_q.strip()
+  if search_scope == "في القسم المحدد فقط":
+    pool_gs = displayed_articles
+  elif search_scope == "الأخبار النشطة فقط":
+    pool_gs = list(live_articles)
+  elif search_scope == "الأرشيف فقط":
+    pool_gs = list(archive_articles)
+  else:
+    seen_gs_u = set()
+    pool_gs = []
+    for _it_g in live_articles + archive_articles:
+      _u_g = _it_g.get("url", "")
+      if _u_g not in seen_gs_u:
+        seen_gs_u.add(_u_g)
+        pool_gs.append(_it_g)
+
+  displayed_articles = smart_search_articles(pool_gs, q_gs)
+  render_html(
+      f'<div dir="rtl" style="background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.35);border-radius:12px;padding:10px 14px;margin-bottom:12px;color:#e2e8f0;font-size:0.9rem;">'
+      f'🎯 نتائج البحث عن <strong style="color:#38bdf8;">«{html.escape(q_gs)}»</strong>: تم العثور على <strong style="color:#34d399;">{len(displayed_articles)}</strong> نتيجة مطابقة أو مشابهة.'
+      f'</div>'
   )
 
-with tabs[3]:
-  render_article_cards(fb_live)
+render_html(
+    f"""
+    <div class="active-feed-banner" dir="rtl">
+        <div style="font-size:1.02rem;font-weight:900;color:#f8fafc;">
+            📌 القسم المعروض: <span style="color:#38bdf8;">{html.escape(active_feed_title)}</span>
+        </div>
+        <div style="font-size:0.84rem;font-weight:800;color:#34d399;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.35);padding:3px 12px;border-radius:999px;">
+            عدد المنشورات المعروضة: {len(displayed_articles)}
+        </div>
+    </div>
+    """
+)
 
-with tabs[4]:
-  render_article_cards(x_live)
-
-with tabs[5]:
-  render_article_cards(yt_live)
-
-with tabs[6]:
-  render_article_cards(other_live)
-
-with tabs[7]:
-  render_article_cards(target_live)
-
-with tabs[8]:
-  arch_q = st.text_input(
-      "🔎 البحث في الأرشيف",
-      placeholder="ابحث بالعنوان أو المصدر أو الكلمة المفتاحية...",
-      key="archive_search_box",
-  )
-  filtered_arch = archive_articles
-  if arch_q.strip():
-    filtered_arch = smart_search_articles(archive_articles, arch_q.strip())
-  render_article_cards(
-      filtered_arch,
-      empty_msg="لا توجد عناصر في الأرشيف حالياً (تنتقل الأخبار تلقائياً إلى الأرشيف بعد مرور 24 ساعة على رصدها).",
-  )
+render_article_cards(
+    displayed_articles,
+    empty_msg="لا توجد منشورات مرصودة حالياً في هذا القسم. يمكنك تشغيل الرصد من القائمة الجانبية.",
+)
 
 # =====================================================================
 # 19. فحص الرصد الدوري غير المتزامن (بدون تجميد الواجهة أو قفل SQLite)
