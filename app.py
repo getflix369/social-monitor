@@ -2080,6 +2080,34 @@ COMPREHENSIVE_FR_ES_TRANSLATIONS = {
     "marroquíes": "مغاربة",
     "españa": "إسبانيا",
     "madrid": "مدريد",
+
+    # --- مصطلحات قضائية وإعلامية إنجليزية ---
+    "supreme court": "المحكمة العليا",
+    "court of justice": "محكمة العدل",
+    "international court of justice": "محكمة العدل الدولية",
+    "european court": "المحكمة الأوروبية",
+    "criminal court": "المحكمة الجنائية",
+    "federal court": "المحكمة الفيدرالية",
+    "high court": "المحكمة العليا",
+    "appeals court": "محكمة الاستئناف",
+    "department of justice": "وزارة العدل",
+    "justice department": "وزارة العدل",
+    "attorney general": "المدعي العام",
+    "prosecutor": "النيابة العامة",
+    "extradition": "تسليم المطلوبين",
+    "judicial cooperation": "التعاون القضائي",
+    "judicial": "قضائي",
+    "justice": "العدالة",
+    "verdict": "حكم قضائي",
+    "ruling": "قرار قضائي",
+    "lawsuit": "دعوى قضائية",
+    "indictment": "لائحة اتهام",
+    "trial": "محاكمة",
+    "human rights": "حقوق الإنسان",
+    "western sahara": "الصحراء المغربية",
+    "morocco": "المغرب",
+    "moroccan": "مغربي",
+    "rabat": "الرباط",
 }
 
 _TRANSLATION_CACHE = {}
@@ -2821,7 +2849,10 @@ def deduplicate_and_seed_telegram_ledger():
       save_telegram_sent_ledger(ledger)
 
 
-def init_db():
+def init_db(force: bool = False):
+  rt = get_shared_runtime()
+  if not force and rt.get("_db_initialized_once"):
+    return
   lock = get_db_lock()
   with lock:
     if (
@@ -2852,9 +2883,11 @@ def init_db():
     restore_db_from_json_if_needed()
     purge_invalid_articles_from_db()
     deduplicate_and_seed_telegram_ledger()
+    rt["_db_initialized_once"] = True
 
 
 def sync_db_to_json(extra_items: list = None):
+  invalidate_articles_cache()
   lock = get_db_lock()
   current_targets = load_custom_targets()
   with lock:
@@ -3018,7 +3051,26 @@ def restore_db_from_json_if_needed():
       pass
 
 
-def fetch_articles_from_db():
+def invalidate_articles_cache():
+  try:
+    rt = get_shared_runtime()
+    rt["_articles_cache_ts"] = 0
+    rt["_articles_cache_data"] = None
+  except Exception:
+    pass
+
+
+def fetch_articles_from_db(use_cache: bool = True):
+  try:
+    rt = get_shared_runtime()
+    if (
+        use_cache
+        and rt.get("_articles_cache_data") is not None
+        and (time.time() - float(rt.get("_articles_cache_ts", 0))) < 20.0
+    ):
+      return list(rt["_articles_cache_data"])
+  except Exception:
+    rt = None
   lock = get_db_lock()
   current_targets = load_custom_targets()
   with lock:
@@ -3060,7 +3112,10 @@ def fetch_articles_from_db():
           continue
         seen_display_keys.update(dk)
         unique_rows.append(r)
-      return unique_rows
+      if rt is not None:
+        rt["_articles_cache_data"] = unique_rows
+        rt["_articles_cache_ts"] = time.time()
+      return list(unique_rows)
 
     if os.path.exists(ARCHIVE_JSON_FILE):
       try:
@@ -6899,62 +6954,166 @@ def analyze_with_gemini(item: dict, api_key: str):
   return default_result
 
 
-def _ensure_arabic_title_and_summary(item: dict) -> tuple:
-  """ضمان تعريب العنوان والملخص إجبارياً إلى العربية قبل العرض في الويب أو الإرسال إلى بوت تلغرام."""
-  raw_title = clean_display_text(item.get("title") or "")
-  raw_summary = clean_display_text(item.get("summary") or "")
+def _persist_translated_article_to_db(item: dict, ar_title: str, ar_summary: str):
+  """حفظ العنوان والملخص المعرّبين في قاعدة البيانات كي لا يُعاد طلبهما أو يظهرا بلغة أجنبية لاحقاً."""
+  art_id = item.get("id")
+  if not art_id:
+    return
+  if ar_title == item.get("title") and ar_summary == item.get("summary"):
+    return
+  item["title"] = ar_title
+  item["summary"] = ar_summary
+  try:
+    lock = get_db_lock()
+    with lock:
+      conn = _open_sqlite_conn()
+      c = conn.cursor()
+      c.execute(
+          "UPDATE articles SET title = ?, summary = ? WHERE id = ?",
+          (ar_title, ar_summary, art_id),
+      )
+      conn.commit()
+      conn.close()
+  except Exception:
+    pass
+
+
+def _translate_via_gemini_fallback(foreign_title: str, foreign_body: str, source_name: str, is_intl: bool) -> tuple:
+  """مسار احتياطي عبر Gemini API عند تعذر محركات الترجمة المجانية."""
+  try:
+    api_key = (load_credentials().get("gemini_api_key") or DEFAULT_GEMINI_API_KEY or "").strip()
+    if not api_key:
+      return "", ""
+    extra_ma = " وإبراز ما يخص المغرب في صدارة الملخص إذا أشار النص للمغرب" if is_intl else ""
+    prompt = (
+        f"ترجم العنوان التالي إلى العربية الفصحى ولخّص الخبر في جملتين بالعربية الفصحى{extra_ma}. "
+        'أرجع JSON فقط: {"title": "...", "summary": "..."}\n'
+        f"المصدر: {source_name}\nالعنوان: {foreign_title}\nالنص: {foreign_body[:1000]}"
+    )
+    txt = _call_gemini_rest_or_sdk(prompt, api_key)
+    if txt:
+      m = re.search(r"\{.*\}", txt, re.DOTALL)
+      if m:
+        parsed = json.loads(m.group(0))
+        return clean_display_text(parsed.get("title")), clean_display_text(parsed.get("summary"))
+  except Exception:
+    pass
+  return "", ""
+
+
+def _translate_foreign_title_instant_local(foreign_title: str, source_name: str = "", country_lbl: str = "") -> str:
+  """ترجمة فورية محلية (0ms) بدون انتظار الشبكة لضمان سرعة تحميل الصفحة."""
+  txt = clean_display_text(foreign_title or "")
+  if not txt or _is_predominantly_arabic(txt):
+    return txt
+  cache_Hit = _TRANSLATION_CACHE.get(f"auto::{txt[:300]}")
+  if cache_Hit and _is_predominantly_arabic(cache_Hit):
+    return cache_Hit
+  low = txt.lower()
+  matched_terms = []
+  for term_raw, ar_term in sorted(COMPREHENSIVE_FR_ES_TRANSLATIONS.items(), key=lambda x: len(x[0]), reverse=True):
+    if term_raw in low:
+      matched_terms.append(ar_term)
+      low = low.replace(term_raw, " ")
+      if len(matched_terms) >= 4:
+        break
+  if matched_terms:
+    return " — ".join(matched_terms[:3])
+  return f"مستجد قضائي وإعلامي عبر {source_name or 'الصحافة الدولية'}" + (f" ({country_lbl})" if country_lbl else "")
+
+
+def _ensure_arabic_title_and_summary(item: dict, fast_render: bool = False) -> tuple:
+  """ضمان تعريب العنوان والملخص إجبارياً 100% إلى العربية قبل العرض في الويب أو الإرسال إلى بوت تلغرام (النسخة الأصلية تبقى في رابط المصدر)."""
+  orig_t = clean_display_text(item.get("title") or "")
+  orig_s = clean_display_text(item.get("summary") or "")
+  raw_title = orig_t
+  raw_summary = orig_s
   raw_snip = clean_display_text(item.get("raw_snippet") or "")
   plat = clean_display_text(item.get("platform") or "الصحف")
   raw_src = clean_display_text(item.get("source_name") or plat)
+  is_intl_plat = (plat == "صحافة دولية")
+
+  c_lbl, _ = detect_article_country_and_topic(orig_t, raw_snip, item.get("url", ""), raw_src, plat)
+
+  if fast_render:
+    if raw_title and not _is_predominantly_arabic(raw_title):
+      raw_title = _translate_foreign_title_instant_local(raw_title, raw_src, c_lbl)
+    if not raw_summary or not _is_predominantly_arabic(raw_summary):
+      cached_s = _TRANSLATION_CACHE.get(f"auto::{(raw_snip or orig_s)[:300]}")
+      if cached_s and _is_predominantly_arabic(cached_s):
+        raw_summary = cached_s
+      else:
+        local_s = _translate_foreign_title_instant_local(raw_snip or orig_s, raw_src, c_lbl)
+        if _has_morocco_reference(f"{orig_t} {raw_snip} {orig_s}") and is_intl_plat:
+          raw_summary = f"يتناول هذا التقرير الصادر عن {raw_src} ({c_lbl}) مستجدات قضائية تتعلق بالمغرب حول: {raw_title}."
+        else:
+          raw_summary = f"تقرير قضائي صادر عن {raw_src} ({c_lbl}) يتناول: {local_s}."
+  else:
+    if raw_title and not _is_predominantly_arabic(raw_title):
+      tr_t = translate_foreign_title_to_arabic_rulebased(raw_title)
+      if tr_t and _is_predominantly_arabic(tr_t):
+        raw_title = tr_t
+
+    generic_markers = (
+        "أفادت تقارير صادرة عن",
+        "تفيد المعطيات الواردة عبر",
+        "متابعة إعلامية وقضائية دولية",
+        "متابعة قضائية دولية: مستجدات",
+        "تقرير قضائي دولي:",
+    )
+    if (
+        not raw_summary
+        or is_summary_just_title(raw_title, raw_summary)
+        or not _is_predominantly_arabic(raw_summary)
+        or any(gm in raw_summary for gm in generic_markers)
+    ):
+      if raw_summary and not _is_predominantly_arabic(raw_summary) and len(raw_summary) > 30:
+        tr_s_direct = translate_text_to_arabic_live(raw_summary)
+        if tr_s_direct and _is_predominantly_arabic(tr_s_direct):
+          raw_summary = tr_s_direct
+      if not raw_summary or not _is_predominantly_arabic(raw_summary) or any(gm in raw_summary for gm in generic_markers):
+        raw_summary = build_extractive_arabic_summary(raw_title, raw_snip or item.get("summary") or "", plat, raw_src)
+        if raw_summary and not _is_predominantly_arabic(raw_summary):
+          tr_s = translate_text_to_arabic_live(raw_summary)
+          if tr_s and _is_predominantly_arabic(tr_s):
+            raw_summary = tr_s
+
+    if (raw_title and not _is_predominantly_arabic(raw_title)) or (not raw_summary or not _is_predominantly_arabic(raw_summary)):
+      gem_t, gem_s = _translate_via_gemini_fallback(orig_t, raw_snip or orig_s, raw_src, is_intl_plat)
+      if gem_t and _is_predominantly_arabic(gem_t):
+        raw_title = gem_t
+      if gem_s and _is_predominantly_arabic(gem_s):
+        raw_summary = gem_s
 
   if raw_title and not _is_predominantly_arabic(raw_title):
-    tr_t = translate_foreign_title_to_arabic_rulebased(raw_title)
-    if tr_t and _is_predominantly_arabic(tr_t):
-      raw_title = tr_t
+    c_lbl, _ = detect_article_country_and_topic(orig_t, raw_snip, item.get("url", ""), raw_src, plat)
+    raw_title = f"مستجد قضائي في {raw_src} ({c_lbl})"
 
-  generic_markers = (
-      "أفادت تقارير صادرة عن",
-      "تفيد المعطيات الواردة عبر",
-      "متابعة إعلامية وقضائية دولية",
-      "متابعة قضائية دولية: مستجدات",
-      "تقرير قضائي دولي:",
-  )
-  if (
-      not raw_summary
-      or is_summary_just_title(raw_title, raw_summary)
-      or not _is_predominantly_arabic(raw_summary)
-      or any(gm in raw_summary for gm in generic_markers)
-  ):
-    # إذا كان الملخص نفسه نصاً أجنبياً غنياً نترجمه مباشرة
-    if raw_summary and not _is_predominantly_arabic(raw_summary) and len(raw_summary) > 30:
-      tr_s_direct = translate_text_to_arabic_live(raw_summary)
-      if tr_s_direct and _is_predominantly_arabic(tr_s_direct):
-        raw_summary = tr_s_direct
-    if not raw_summary or not _is_predominantly_arabic(raw_summary) or any(gm in raw_summary for gm in generic_markers):
-      raw_summary = build_extractive_arabic_summary(raw_title, raw_snip or item.get("summary") or "", plat, raw_src)
-      if raw_summary and not _is_predominantly_arabic(raw_summary):
-        tr_s = translate_text_to_arabic_live(raw_summary)
-        if tr_s and _is_predominantly_arabic(tr_s):
-          raw_summary = tr_s
+  if not raw_summary or not _is_predominantly_arabic(raw_summary):
+    c_lbl, _ = detect_article_country_and_topic(orig_t, raw_snip, item.get("url", ""), raw_src, plat)
+    if is_intl_plat and _has_morocco_reference(f"{orig_t} {raw_snip} {orig_s}"):
+      raw_summary = f"تقرير إعلامي صادر عن {raw_src} ({c_lbl}) يتطرق إلى مستجدات قضائية ذات صلة بالمغرب؛ يمكن الاطلاع على النص الكامل بلغته الأصلية عبر رابط المصدر."
+    else:
+      raw_summary = f"تقرير إعلامي صادر عن {raw_src} ({c_lbl}): {raw_title}."
 
-  is_intl_plat = (plat == "صحافة دولية")
   if not is_intl_plat:
-    # إزالة أي عبارات "يتطرق للمغرب" أو "يهم المغرب" من أخبار الصحف والمواقع الوطنية المغربية
     raw_title = re.sub(r"\s*\((?:يتطرق للمغرب|يتعلق بالمغرب|يهم المغرب)\)\s*", "", raw_title).strip()
     raw_summary = re.sub(r"^(?:🇲🇦\s*)?(?:\((?:يتعلق بالمغرب|يتطرق للمغرب|يهم المغرب)\)|في سياق يهم المغرب|فيما يتعلق بالمغرب)\s*:?\s*", "", raw_summary).strip()
     if item.get("category") in ("يتطرق للمغرب", "يهم المغرب"):
       item["category"] = "شؤون قضائية ومحاكم"
   else:
-    # للأخبار الدولية فقط: إذا كان المقال يتطرق للمغرب، نركز الملخص على الجمل الخاصة بالمغرب باللغة العربية
-    orig_combined = f"{item.get('title', '')} {item.get('raw_snippet', '')} {item.get('summary', '')} {item.get('category', '')}"
+    orig_combined = f"{orig_t} {raw_snip} {orig_s} {item.get('category', '')}"
     if _has_morocco_reference(orig_combined):
-      if raw_snip:
-        focused_ar = translate_foreign_snippet_to_arabic_rulebased(raw_snip, item.get("title", ""), raw_src, is_international=True)
+      if raw_snip and not fast_render:
+        focused_ar = translate_foreign_snippet_to_arabic_rulebased(raw_snip, orig_t, raw_src, is_international=True)
         if focused_ar and _is_predominantly_arabic(focused_ar) and any(k in focused_ar for k in ("المغرب", "مغربي", "مغربية", "المغاربة", "الرباط", "الصحراء", "سبتة", "مليلية")):
           raw_summary = focused_ar
       raw_summary = _extract_morocco_focused_sentences_ar(raw_summary, orig_combined, is_international=True)
       if raw_title and not any(k in raw_title for k in ("المغرب", "مغربي", "مغربية", "المغاربة", "الرباط", "الصحراء")):
         raw_title = f"{raw_title} (يتطرق للمغرب)"
+
+  if not fast_render and (orig_t != raw_title or orig_s != raw_summary):
+    _persist_translated_article_to_db(item, raw_title, raw_summary)
 
   return raw_title, raw_summary
 
@@ -8121,6 +8280,24 @@ if os.environ.get("CRON_MODE") == "1" or st is None:
 # =====================================================================
 # 12. تهيئة واجهة Streamlit والتصميم الزجاجي المتجاوب مع فرض صارم لاتجاه RTL
 # =====================================================================
+try:
+  _st_cfg_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".streamlit")
+  os.makedirs(_st_cfg_dir, exist_ok=True)
+  _st_cfg_path = os.path.join(_st_cfg_dir, "config.toml")
+  _desired_toml = (
+      '[theme]\n'
+      'base = "dark"\n'
+      'primaryColor = "#d4af37"\n'
+      'backgroundColor = "#061318"\n'
+      'secondaryBackgroundColor = "#091c22"\n'
+      'textColor = "#ffffff"\n'
+  )
+  if not os.path.exists(_st_cfg_path) or 'base = "dark"' not in open(_st_cfg_path, encoding="utf-8").read():
+    with open(_st_cfg_path, "w", encoding="utf-8") as _tf:
+      _tf.write(_desired_toml)
+except Exception:
+  pass
+
 st.set_page_config(
     page_title="المرصد القضائي",
     page_icon="⚖️",
@@ -8225,9 +8402,16 @@ label[data-testid="stWidgetLabel"] p {
 }
 
 /* صندوق القائمة المنسدلة قبل فتحها (Closed Selectbox) + حقول الإدخال بأعلى أولوية ممكنة */
+html body .stApp [data-testid="stTextInputRootElement"],
+html body .stApp [data-testid="stTextInputRootElement"] > div,
+html body .stApp [data-testid="stTextInputRootElement"] > div > div,
+html body .stApp div[data-testid="stTextInput"] > div,
+html body .stApp div[data-testid="stTextInput"] > div > div,
+html body .stApp div[data-testid="stTextInput"] > div > div > div,
 html body .stApp div[data-baseweb="select"],
 html body .stApp div[data-baseweb="select"] > div,
 html body .stApp div[data-baseweb="select"] > div > div,
+html body .stApp div[data-baseweb="select"] > div > div > div,
 html body .stApp div[data-testid="stSelectbox"] > div,
 html body .stApp div[data-testid="stSelectbox"] div[data-baseweb="select"],
 html body .stApp div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
@@ -8235,8 +8419,7 @@ html body .stApp div[data-testid="stSelectbox"] div[data-baseweb="select"] > div
 html body .stApp div[data-baseweb="input"],
 html body .stApp div[data-baseweb="input"] > div,
 html body .stApp div[data-baseweb="base-input"],
-html body .stApp div[data-baseweb="base-input"] > div,
-html body .stApp div[data-testid="stTextInput"] > div > div {
+html body .stApp div[data-baseweb="base-input"] > div {
     background: linear-gradient(145deg, #0b2229 0%, #07161b 100%) !important;
     background-color: #091c22 !important;
     border: 1.5px solid rgba(212, 175, 55, 0.42) !important;
@@ -8356,9 +8539,10 @@ input,
 textarea,
 div[data-baseweb="input"] input,
 div[data-baseweb="base-input"] input,
+div[data-testid="stTextInputRootElement"] input,
 div[data-testid="stTextInput"] input {
-    background: transparent !important;
-    background-color: transparent !important;
+    background: #091c22 !important;
+    background-color: #091c22 !important;
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
     caret-color: #d4af37 !important;
@@ -9031,21 +9215,57 @@ if "admin_settings_unlocked" not in st.session_state:
 triggered_mode = None
 
 # =====================================================================
-# 14. الهيدر الرئيسي وتقسيم الشاشة: 25% للقسم الجانبي للتحكم والفرز و75% لعرض الأخبار
+# 14. القائمة الموحدة لجميع وظائف الرصد والتنقل التفاعلي السريع
 # =====================================================================
+UNIFIED_MONITOR_OPTIONS = [
+    ("all", "🌐 جميع الأخبار النشطة (الرصد الشامل)", "الرصد الشامل", len(live_articles)),
+    ("press", "📰 الصحف والمواقع الوطنية المغربية", "الصحف المغربية", len(press_live)),
+    ("intl", "🌍 الصحافة الدولية (جميع الدول)", "الصحافة الدولية", len(intl_live)),
+    ("intl_ma", "🇲🇦 أخبار دولية تتطرق للمغرب", "صحافة دولية عن المغرب", len([a for a in intl_live if a.get("_intl_topic") == "يتطرق للمغرب" or a.get("category") == "يتطرق للمغرب"])),
+    ("intl_us", "🇺🇸 الصحافة الأمريكية (USA)", "الصحافة الأمريكية", len([a for a in intl_live if a.get("_intl_country") == "الولايات المتحدة"])),
+    ("intl_fr", "🇫🇷 الصحافة الفرنسية (France)", "الصحافة الفرنسية", len([a for a in intl_live if a.get("_intl_country") == "فرنسا"])),
+    ("intl_es", "🇪🇸 الصحافة الإسبانية (Spain)", "الصحافة الإسبانية", len([a for a in intl_live if a.get("_intl_country") == "إسبانيا"])),
+    ("intl_dz", "🇩🇿 الصحافة الجزائرية (Algeria)", "الصحافة الجزائرية", len([a for a in intl_live if a.get("_intl_country") == "الجزائر"])),
+    ("intl_gl", "🏛️ المحاكم والهيئات الدولية (CIJ / CPI / CJUE)", "الهيئات الدولية", len([a for a in intl_live if a.get("_intl_country") == "دولي"])),
+    ("fb", "🟦 منصة فيسبوك (Facebook)", "منصة فيسبوك", len(fb_live)),
+    ("x", "⬛ منصة إكس (X / Twitter)", "منصة إكس", len(x_live)),
+    ("yt", "🟥 منصة يوتيوب (YouTube)", "منصة يوتيوب", len(yt_live)),
+    ("other", "🟪 منصات رقمية أخرى (تيك توك • إنستغرام • لينكدإن)", "منصات أخرى", len(other_live)),
+    ("target", f"🎯 الرصد المخصص للقنوات والروابط ({len(custom_targets)})", "الرصد المخصص", len(target_live)),
+    ("archive", "🗄️ الأرشيف الشامل للأخبار السابقة (+24 ساعة)", "الأرشيف العام", len(archive_articles)),
+]
+
+UNIFIED_KEY_TO_INFO = {m[0]: m for m in UNIFIED_MONITOR_OPTIONS}
+UNIFIED_KEYS_LIST = [m[0] for m in UNIFIED_MONITOR_OPTIONS]
+
+if "selected_nav_mode" not in st.session_state or st.session_state["selected_nav_mode"] not in UNIFIED_KEY_TO_INFO:
+  st.session_state["selected_nav_mode"] = "all"
+
+if "feed_page_limit" not in st.session_state:
+  st.session_state["feed_page_limit"] = 15
+
+def _switch_active_view(mode_k: str):
+  if mode_k in UNIFIED_KEY_TO_INFO:
+    st.session_state["selected_nav_mode"] = mode_k
+    st.session_state["sidebar_mode_selector"] = mode_k
+    st.session_state["feed_page_limit"] = 15
+
 last_auto_ts = float(monitor_state.get("last_auto_run", 0))
 last_auto_label = (
     format_relative_arabic(last_auto_ts) if last_auto_ts > 0 else "قيد الانطلاق"
 )
 auto_badge_text = (
-    f"الرصد التلقائي نشط ({cfg.get('monitor_interval', 'كل ساعة')}) • آخر فحص: {last_auto_label}"
+    f"الرصد التلقائي نشط ({cfg.get('monitor_interval', 'كل ساعة')}) • آخر تحديث: {last_auto_label}"
     if cfg.get("auto_monitor", True)
-    else "الرصد اليدوي"
+    else "وضع الرصد اليدوي"
 )
 
 render_html(f"""
 <div class="hero-glass" dir="rtl">
-    <h1 class="hero-title">⚖️ المرصد القضائي</h1>
+    <div>
+        <h1 class="hero-title">⚖️ المرصد القضائي</h1>
+        <div style="font-size:0.84rem;color:#cbd5e1;font-weight:700;margin-top:2px;">منظومة الرصد الإعلامي والقضائي الوطني والدولي</div>
+    </div>
     <div class="status-pill" dir="rtl">
         <span class="pulse-dot"></span>
         <span>{html.escape(auto_badge_text)}</span>
@@ -9053,51 +9273,69 @@ render_html(f"""
 </div>
 """)
 
-# تقسيم الصفحة الرئيسية بنسبة 25% للقسم الجانبي (عمود التحكم والفرز) و 75% لقسم عرض الأخبار المقابل له
+# شريط بطاقات التصنيف التفاعلية القابلة للنقر (Clickable Category Switcher Cards)
+QUICK_NAV_CARDS = [
+    ("all", "🌐 الكل", len(live_articles)),
+    ("press", "📰 الصحف الوطنية", len(press_live)),
+    ("intl", "🌍 الصحافة الدولية", len(intl_live)),
+    ("intl_ma", "🇲🇦 دولية عن المغرب", len([a for a in intl_live if a.get("_intl_topic") == "يتطرق للمغرب" or a.get("category") == "يتطرق للمغرب"])),
+    ("fb", "🟦 فيسبوك", len(fb_live)),
+    ("x", "⬛ إكس (X)", len(x_live)),
+    ("yt", "🟥 يوتيوب", len(yt_live)),
+    ("target", "🎯 الرصد المخصص", len(target_live)),
+    ("archive", "🗄️ الأرشيف", len(archive_articles)),
+]
+
+nav_cols = st.columns(len(QUICK_NAV_CARDS), gap="small")
+for idx_nc, (nc_key, nc_label, nc_count) in enumerate(QUICK_NAV_CARDS):
+  with nav_cols[idx_nc]:
+    is_active_nc = (st.session_state["selected_nav_mode"] == nc_key)
+    if st.button(
+        f"{nc_label} ({nc_count})",
+        key=f"quick_nav_card_{nc_key}",
+        type="primary" if is_active_nc else "secondary",
+        use_container_width=True,
+    ):
+      _switch_active_view(nc_key)
+      st.rerun()
+
+# تقسيم الصفحة الرئيسية: 25% للوحة وظائف الرصد الموحدة والإعدادات و 75% لمنصة عرض الأخبار والفلاتر المتقدمة
 col_side_panel, col_main_feed = st.columns([1, 3], gap="large")
 
 with col_side_panel:
   render_html("""
-  <div class="sidebar-section-card" dir="rtl" style="background:linear-gradient(145deg, rgba(15,23,42,0.94) 0%, rgba(30,41,59,0.82) 100%);border:1px solid rgba(56,189,248,0.38);border-radius:16px;padding:14px 16px;margin-bottom:14px;box-shadow:0 10px 25px rgba(0,0,0,0.35);">
-      <div class="sidebar-section-title" style="font-size:1.05rem;">📡 قائمة الرصد والفرز</div>
-      <div class="sidebar-section-sub" style="font-size:0.82rem;">اختر نوع الرصد من القائمة المنسدلة لعرض أخباره في الجهة المقابلة أو تشغيل الفحص</div>
+  <div class="sidebar-section-card" dir="rtl">
+      <div class="sidebar-section-title">📡 القائمة الموحدة لوظائف الرصد</div>
+      <div class="sidebar-section-sub">اختر نوع الرصد أو المنصة أو الدولة لعرض أخبارها فوراً أو تشغيل الفحص المباشر</div>
   </div>
   """)
 
+  def _on_dropdown_change():
+    sel_val = st.session_state.get("sidebar_mode_selector", "all")
+    st.session_state["selected_nav_mode"] = sel_val
+    st.session_state["feed_page_limit"] = 15
+
   selected_mode_key = st.selectbox(
-      "📂 نوع الرصد / القسم المعروض:",
-      options=MODE_KEYS_LIST,
-      index=MODE_KEYS_LIST.index(st.session_state["selected_nav_mode"]),
-      format_func=lambda k: f"{MODE_KEY_TO_INFO[k][1]} ({MODE_KEY_TO_INFO[k][3]})",
+      "📂 قائمة الرصد الموحدة (اختر نوع الرصد):",
+      options=UNIFIED_KEYS_LIST,
+      index=UNIFIED_KEYS_LIST.index(st.session_state["selected_nav_mode"]),
+      format_func=lambda k: f"{UNIFIED_KEY_TO_INFO[k][1]} — [{UNIFIED_KEY_TO_INFO[k][3]}]",
       key="sidebar_mode_selector",
+      on_change=_on_dropdown_change,
   )
   st.session_state["selected_nav_mode"] = selected_mode_key
 
-  # قوائم منسدلة فرعية للصحافة الدولية عند اختيار قسم الصحافة الدولية
-  if selected_mode_key == "intl":
-    c_opts = ["جميع الدول", "الولايات المتحدة", "فرنسا", "إسبانيا", "الجزائر", "دولي"]
-    if "intl_filter_country" not in st.session_state:
-      st.session_state["intl_filter_country"] = "جميع الدول"
-    st.selectbox(
-        "🏛️ الدولة / النطاق الجغرافي:",
-        options=c_opts,
-        key="intl_filter_country",
-    )
-    t_opts = ["جميع المواضيع", "يتطرق للمغرب", "شؤون قضائية ومحاكم", "قضاء دولي", "قضايا وتسليم واتفاقيات"]
-    if "intl_filter_topic" not in st.session_state:
-      st.session_state["intl_filter_topic"] = "جميع المواضيع"
-    st.selectbox(
-        "⚖️ تصنيف الموضوع الدولي:",
-        options=t_opts,
-        key="intl_filter_topic",
-    )
+  # تحديد محرك الفحص المقابل للخيار المحدد في القائمة الموحدة
+  if selected_mode_key.startswith("intl"):
+    scan_target_key = "intl"
+  elif selected_mode_key == "archive":
+    scan_target_key = "all"
+  else:
+    scan_target_key = selected_mode_key
+  scan_target_short = UNIFIED_KEY_TO_INFO[selected_mode_key][2]
 
-  scan_target_key = "all" if selected_mode_key == "archive" else selected_mode_key
-  scan_target_short = MODE_KEY_TO_INFO[scan_target_key][2]
-
-  render_html('<span class="media-play-marker" style="display:none;"></span>')
   if st.button(
-      f"▶ تشغيل {scan_target_short} الآن",
+      f"▶ تشغيل رصد ({scan_target_short})",
       key="sidebar_start_scan_btn",
       type="primary",
       use_container_width=True,
@@ -9105,7 +9343,6 @@ with col_side_panel:
     clear_stop_scan()
     triggered_mode = scan_target_key
 
-  render_html('<span class="media-stop-marker" style="display:none;"></span>')
   if st.button(
       "⏹ إيقاف عملية الرصد",
       key="sidebar_stop_scan_btn",
@@ -9114,21 +9351,28 @@ with col_side_panel:
   ):
     request_stop_scan()
 
+  # إعدادات الرصد المخصص تظهر مباشرة كجزء من اختيار الرصد المخصص في القائمة الموحدة
   if selected_mode_key == "target":
-    st.markdown(f"**🎯 إدارة الروابط والقنوات المخصصة ({len(custom_targets)})**")
+    render_html("""
+    <div class="sidebar-section-card" dir="rtl" style="margin-top:10px;">
+        <div class="sidebar-section-title">🎯 إدارة قنوات وروابط الرصد المخصص</div>
+        <div class="sidebar-section-sub">أضف رابط أو اسم قناة (يوتيوب / فيسبوك / إكس / موقع) لرصدها ضمن هذا القسم</div>
+    </div>
+    """)
     with st.form("add_custom_target_form", clear_on_submit=True):
       new_t_url = st.text_input(
           "الرابط أو اسم القناة/الصفحة",
           placeholder="رابط أو اسم قناة (يوتيوب/فيسبوك/إكس)...",
       )
       new_t_kw = st.text_input(
-          "كلمة فلترة (اختياري)",
-          placeholder="كلمة مفتاحية داخل القناة...",
+          "كلمة فلترة داخل القناة (اختياري)",
+          placeholder="مثال: المجلس الأعلى، محكمة...",
       )
-      add_t_btn = st.form_submit_button("➕ إضافة رابط مخصص")
+      add_t_btn = st.form_submit_button("➕ إضافة إلى قائمة الرصد المخصص")
       if add_t_btn and new_t_url.strip():
         custom_targets.append({"url": new_t_url.strip(), "keyword": new_t_kw.strip()})
         save_custom_targets(custom_targets)
+        invalidate_articles_cache()
         st.rerun()
 
     for idx, t_item in enumerate(list(custom_targets)):
@@ -9139,11 +9383,12 @@ with col_side_panel:
       if st.button(f"🗑️ حذف الرابط #{idx + 1}", key=f"del_target_{idx}", use_container_width=True):
         custom_targets.pop(idx)
         save_custom_targets(custom_targets)
+        invalidate_articles_cache()
         st.rerun()
 
-  with st.expander("🔍 خيارات البحث والفترة الزمنية", expanded=False):
+  with st.expander("⚙️ معايير الرصد المسبقة (الكلمات والفترة)", expanded=False):
     kw_input = st.text_input(
-        "تخصيص بكلمات مفتاحية (اختياري)",
+        "تخصيص الرصد بكلمات مفتاحية (اختياري)",
         value=cfg.get("keywords_input", ""),
         placeholder="اتركه فارغاً للرصد القضائي العام...",
     )
@@ -9154,7 +9399,7 @@ with col_side_panel:
     period_options = list(SEARCH_PERIOD_MAP.keys())
     curr_period = cfg.get("search_period", "آخر 7 أيام")
     selected_period = st.selectbox(
-        "⏱️ فترة الرصد الزمني",
+        "⏱️ النطاق الزمني لجلب الأخبار الجديدة",
         options=period_options,
         index=period_options.index(curr_period) if curr_period in period_options else 2,
     )
@@ -9167,7 +9412,7 @@ with col_side_panel:
     current_admin_pin = str(cfg.get("admin_pin") or DEFAULT_ADMIN_PIN).strip()
     if not st.session_state.get("admin_settings_unlocked", False):
       render_html(
-          "<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:8px;'>هذا القسم مخصص لمشرف المنصة فقط. أدخل الرمز السري للوصول إلى المفاتيح والإعدادات:</div>"
+          "<div style='font-size:0.82rem;color:#cbd5e1;margin-bottom:8px;'>هذا القسم مخصص لمشرف المنصة فقط. أدخل الرمز السري للوصول إلى المفاتيح والإعدادات:</div>"
       )
       pin_input = st.text_input(
           "🔑 الرمز السري للمشرف",
@@ -9266,8 +9511,8 @@ with col_side_panel:
           if isinstance(restored_list, list):
             with open(ARCHIVE_JSON_FILE, "w", encoding="utf-8") as f:
               json.dump(restored_list, f, ensure_ascii=False, indent=2)
-            restore_db_from_json_if_needed()
-            purge_invalid_articles_from_db()
+            init_db(force=True)
+            invalidate_articles_cache()
             st.success("تمت استعادة الأرشيف بنجاح")
             st.rerun()
         except Exception:
@@ -9280,7 +9525,7 @@ def render_article_cards(
 ):
   if not items_list:
     render_html(
-        f"<div dir='rtl' style='direction:rtl;text-align:center;padding:30px;color:#64748b;background:rgba(15,23,42,0.5);border-radius:16px;border:1px dashed rgba(148,163,184,0.2);'>{html.escape(empty_msg)}</div>"
+        f"<div dir='rtl' style='direction:rtl;text-align:center;padding:30px;color:#cbd5e1;background:rgba(9,28,34,0.75);border-radius:16px;border:1px dashed rgba(212,175,55,0.35);'>{html.escape(empty_msg)}</div>"
     )
     return
 
@@ -9309,7 +9554,8 @@ def render_article_cards(
     type_badge_txt = plat_type_label.get(plat, plat)
 
     raw_src = clean_display_text(item.get("source_name") or plat)
-    raw_title, raw_summary = _ensure_arabic_title_and_summary(item)
+    # fast_render=True يمنع أي طلب HTTP متزامن أثناء رسم البطاقات لضمان تحميل فوري (0ms)
+    raw_title, raw_summary = _ensure_arabic_title_and_summary(item, fast_render=True)
 
     pub_ts = float(item.get("pub_timestamp") or (time.time() - 3600))
     raw_pub_date = clean_display_text(item.get("pub_date") or "")
@@ -9328,7 +9574,7 @@ def render_article_cards(
 
     fallback_svg_uri = get_fallback_thumbnail_data_uri(plat, raw_src)
     raw_img = (item.get("image_url") or "").strip()
-    if not raw_img:
+    if not raw_img and ("youtube.com" in clean_link_url or "youtu.be" in clean_link_url):
       raw_img = extract_thumbnail_for_item(clean_link_url, "", plat)
     final_img_src = html.escape(
         raw_img if raw_img else fallback_svg_uri, quote=True
@@ -9363,7 +9609,7 @@ def render_article_cards(
         f'<span class="badge-plat">{html.escape(type_badge_txt)}</span>'
         f"{target_tag}"
         f'<span style="font-weight:800;color:#e2e8f0;font-size:0.86rem;">{source_safe}</span>'
-        f'<span style="color:#64748b;font-size:0.82rem;">• {category_safe}</span>'
+        f'<span style="color:#cbd5e1;font-size:0.82rem;">• {category_safe}</span>'
         "</div>"
         f'<div class="news-title" dir="rtl" style="direction:rtl !important;text-align:right !important;"><a href="{url_safe}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;">{title_safe}</a></div>'
         '<div class="news-dates-row" dir="rtl" style="direction:rtl !important;text-align:right !important;">'
@@ -9386,7 +9632,7 @@ def render_article_cards(
 
 
 # =====================================================================
-# 15. القسم الرئيسي المقابل للشريط الجانبي (75% من عرض الصفحة) لعرض الأخبار والبحث
+# 15. القسم الرئيسي المقابل للقائمة الجانبية (75% من الصفحة): محرك البحث والفلاتر المتقدمة وعرض الأخبار الفوري
 # =====================================================================
 with col_main_feed:
   radar_placeholder = st.empty()
@@ -9405,10 +9651,10 @@ with col_main_feed:
           <div class="radar-panel" dir="rtl">
               <div class="radar-scanner"></div>
               <div style="flex:1;direction:rtl;text-align:right;">
-                  <div style="font-size:1rem;font-weight:800;color:#38bdf8;margin-bottom:3px;">
+                  <div style="font-size:1rem;font-weight:800;color:#f3e5ab;margin-bottom:3px;">
                       📡 {html.escape(clean_display_text(status_msg))}
                   </div>
-                  <div style="font-size:0.82rem;color:#94a3b8;">
+                  <div style="font-size:0.82rem;color:#cbd5e1;">
                       مسح ذكي بزاوية 360° ({html.escape(s_period)})... ({pct_int}%)
                   </div>
               </div>
@@ -9468,6 +9714,7 @@ with col_main_feed:
       added_count = quick_process_and_save(
           collected, cfg, is_target_run=is_target_mode
       )
+      invalidate_articles_cache()
       update_ui_progress(1.0, "اكتملت عملية الرصد بنجاح")
       time.sleep(0.25)
       rt_state["last_done_mode"] = mode_key
@@ -9509,111 +9756,111 @@ with col_main_feed:
           target=done_placeholder,
       )
 
-  metrics_data = [
-      ("الكل (النشط)", len(live_articles)),
-      ("الصحف الوطنية", len(press_live)),
-      ("صحافة دولية", len(intl_live)),
-      ("فيسبوك", len(fb_live)),
-      ("إكس", len(x_live)),
-      ("يوتيوب", len(yt_live)),
-      ("أخرى", len(other_live)),
-      ("المخصص", len(target_live)),
-      ("الأرشيف", len(archive_articles)),
-  ]
-  metrics_cards_html = "".join(
-      f'<div class="metric-glass" dir="rtl"><div class="metric-num">{m_val}</div><div class="metric-lbl">{m_label}</div></div>'
-      for m_label, m_val in metrics_data
-  )
-  render_html(f'<div class="metrics-grid" dir="rtl">{metrics_cards_html}</div>')
+  # تحديد القائمة الأساسية وفق الخيار المحدد في القائمة الموحدة أو البطاقات التفاعلية
+  mode_feeds_map = {
+      "all": (live_articles, "جميع الأخبار النشطة (الرصد الشامل)"),
+      "press": (press_live, "الصحف والمواقع الوطنية المغربية"),
+      "intl": (intl_live, "الصحافة الدولية — جميع الدول"),
+      "intl_ma": ([a for a in intl_live if a.get("_intl_topic") == "يتطرق للمغرب" or a.get("category") == "يتطرق للمغرب"], "الصحافة الدولية — أخبار تتطرق للمغرب"),
+      "intl_us": ([a for a in intl_live if a.get("_intl_country") == "الولايات المتحدة"], "الصحافة الأمريكية (USA)"),
+      "intl_fr": ([a for a in intl_live if a.get("_intl_country") == "فرنسا"], "الصحافة الفرنسية (France)"),
+      "intl_es": ([a for a in intl_live if a.get("_intl_country") == "إسبانيا"], "الصحافة الإسبانية (Spain)"),
+      "intl_dz": ([a for a in intl_live if a.get("_intl_country") == "الجزائر"], "الصحافة الجزائرية (Algeria)"),
+      "intl_gl": ([a for a in intl_live if a.get("_intl_country") == "دولي"], "المحاكم والهيئات الدولية (CIJ / CPI / CJUE)"),
+      "fb": (fb_live, "منصة فيسبوك — الصفحات والمنشورات القضائية"),
+      "x": (x_live, "منصة إكس (X) — التغريدات والحسابات"),
+      "yt": (yt_live, "منصة يوتيوب — القنوات والفيديوهات"),
+      "other": (other_live, "منصات رقمية أخرى — تيك توك • إنستغرام • لينكدإن"),
+      "target": (target_live, "الرصد المخصص — القنوات والصفحات المحددة"),
+      "archive": (archive_articles, "الأرشيف الشامل للأخبار السابقة (+24 ساعة)"),
+  }
 
-  col_gs_inp, col_gs_scope, col_gs_clr = st.columns([3.2, 1.3, 0.7])
+  active_feed_list, active_feed_title = mode_feeds_map.get(
+      selected_mode_key, (live_articles, "جميع الأخبار النشطة")
+  )
+  displayed_articles = list(active_feed_list)
+
+  # =====================================================================
+  # لوحة البحث الاحترافية والفلاتر المتقدمة متعددة المعايير
+  # =====================================================================
+  render_html("""
+  <div style="background:linear-gradient(145deg, rgba(11,36,44,0.92) 0%, rgba(7,22,28,0.88) 100%);border:1px solid rgba(212,175,55,0.38);border-radius:16px;padding:12px 16px;margin-bottom:10px;" dir="rtl">
+      <div style="font-size:0.96rem;font-weight:900;color:#f3e5ab;margin-bottom:4px;">🔎 محرك البحث الذكي والفلاتر المتقدمة</div>
+      <div style="font-size:0.78rem;color:#cbd5e1;">ابحث بالكلمات أو الجمل وقم بتصفية الأخبار حسب المصدر، الدولة، الموضوع، الفترة الزمنية، والترتيب</div>
+  </div>
+  """)
+
+  col_gs_inp, col_gs_scope, col_gs_sort, col_gs_clr = st.columns([2.8, 1.3, 1.1, 0.7])
   if "global_site_search" not in st.session_state:
     st.session_state["global_site_search"] = ""
 
   with col_gs_inp:
     global_search_q = st.text_input(
-        "البحث داخل المرصد",
+        "البحث بالكلمات المفتاحية أو الجمل",
         key="global_site_search",
-        placeholder="🔎 ابحث بكلمة مفتاحية، كلمتين، ثلاث كلمات، أو جملة كاملة...",
+        placeholder="🔎 ابحث بكلمة، كلمتين، أو جملة كاملة في العناوين والملخصات...",
         label_visibility="collapsed",
     )
   with col_gs_scope:
     search_scope = st.selectbox(
         "نطاق البحث",
-        options=["في القسم المحدد فقط", "الأخبار النشطة والأرشيف معاً", "الأخبار النشطة فقط", "الأرشيف فقط"],
+        options=["في القسم المعروض حالياً", "في جميع الأخبار النشطة والأرشيف", "في الأخبار النشطة فقط", "في الأرشيف فقط"],
         key="global_search_scope",
         label_visibility="collapsed",
     )
+  with col_gs_sort:
+    sort_order = st.selectbox(
+        "ترتيب العرض",
+        options=["الأحدث نشراً أولاً", "الأحدث رصداً أولاً", "الأقدم أولاً"],
+        key="global_sort_order",
+        label_visibility="collapsed",
+    )
   with col_gs_clr:
-    if st.button("✖️ مسح", key="btn_clear_global_search", use_container_width=True):
+    if st.button("🔄 ضبط", key="btn_clear_global_search", use_container_width=True):
       st.session_state["global_site_search"] = ""
+      st.session_state["adv_filter_country"] = "الكل"
+      st.session_state["adv_filter_topic"] = "الكل"
+      st.session_state["adv_filter_source"] = "الكل"
+      st.session_state["adv_filter_time"] = "كل الأوقات"
+      st.session_state["feed_page_limit"] = 15
       st.rerun()
 
-  mode_feeds_map = {
-      "all": (live_articles, "الرصد الشامل — جميع الأخبار النشطة (خلال 24 ساعة)"),
-      "press": (press_live, "الصحف المغربية — المواقع والجرائد الوطنية"),
-      "intl": (intl_live, "الصحافة الدولية — أمريكا • فرنسا • إسبانيا • الجزائر • هيئات دولية"),
-      "fb": (fb_live, "منصة فيسبوك — الصفحات والمنشورات القضائية"),
-      "x": (x_live, "منصة إكس (X) — التغريدات والحسابات"),
-      "yt": (yt_live, "منصة يوتيوب — القنوات والفيديوهات"),
-      "other": (other_live, "منصات أخرى — تيك توك • إنستغرام • لينكدإن"),
-      "target": (target_live, "الرصد المخصص — القنوات والصفحات المحددة"),
-      "archive": (archive_articles, "أرشيف الأخبار المرصودة السابقة (+24 ساعة)"),
-  }
-
-  active_feed_list, active_feed_title = mode_feeds_map.get(
-      selected_mode_key, (live_articles, "الرصد الشامل")
-  )
-  displayed_articles = list(active_feed_list)
-
-  if selected_mode_key == "intl":
-    filter_country = st.session_state.get("intl_filter_country", "جميع الدول")
-    filter_topic = st.session_state.get("intl_filter_topic", "جميع المواضيع")
-
-    if filter_country != "جميع الدول":
-      displayed_articles = [
-          a for a in displayed_articles
-          if (a.get("_intl_country") or detect_article_country_and_topic(
-              a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), a.get("platform", "")
-          )[0]) == filter_country
-      ]
-
-    if filter_topic != "جميع المواضيع":
-      displayed_articles = [
-          a for a in displayed_articles
-          if filter_topic in str(a.get("category", ""))
-          or (a.get("_intl_topic") or detect_article_country_and_topic(
-              a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), a.get("platform", "")
-          )[1]) == filter_topic
-      ]
-
-    c_us = len([a for a in intl_live if (a.get("_intl_country") or detect_article_country_and_topic(a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), "صحافة دولية")[0]) == "الولايات المتحدة"])
-    c_fr = len([a for a in intl_live if (a.get("_intl_country") or detect_article_country_and_topic(a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), "صحافة دولية")[0]) == "فرنسا"])
-    c_es = len([a for a in intl_live if (a.get("_intl_country") or detect_article_country_and_topic(a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), "صحافة دولية")[0]) == "إسبانيا"])
-    c_dz = len([a for a in intl_live if (a.get("_intl_country") or detect_article_country_and_topic(a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), "صحافة دولية")[0]) == "الجزائر"])
-    c_gl = len([a for a in intl_live if (a.get("_intl_country") or detect_article_country_and_topic(a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), "صحافة دولية")[0]) == "دولي"])
-    c_ma_rel = len([a for a in intl_live if (a.get("_intl_topic") or detect_article_country_and_topic(a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), "صحافة دولية")[1]) == "يتطرق للمغرب" or a.get("category") == "يتطرق للمغرب"])
-
-    render_html(
-        f"""
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 12px 0;direction:rtl;">
-            <span style="background:rgba(56,189,248,0.15);color:#38bdf8;padding:4px 10px;border-radius:8px;font-size:0.82rem;font-weight:700;">🇲🇦 يتطرق للمغرب: {c_ma_rel}</span>
-            <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇺🇸 أمريكا: {c_us}</span>
-            <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇫🇷 فرنسا: {c_fr}</span>
-            <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇪🇸 إسبانيا: {c_es}</span>
-            <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🇩🇿 الجزائر: {c_dz}</span>
-            <span style="background:rgba(148,163,184,0.15);color:#cbd5e1;padding:4px 10px;border-radius:8px;font-size:0.82rem;">🏛️ دولي: {c_gl}</span>
-        </div>
-        """
+  # شريط الفلاتر المتقدمة (الدولة، الموضوع القضائي، المصدر/الجريدة، والنافذة الزمنية)
+  available_sources = sorted(list({clean_display_text(a.get("source_name") or "") for a in displayed_articles if clean_display_text(a.get("source_name") or "")}))
+  col_af_country, col_af_topic, col_af_source, col_af_time = st.columns(4)
+  with col_af_country:
+    adv_country = st.selectbox(
+        "🌍 تصفية حسب الدولة:",
+        options=["الكل", "المغرب", "الولايات المتحدة", "فرنسا", "إسبانيا", "الجزائر", "دولي"],
+        key="adv_filter_country",
+    )
+  with col_af_topic:
+    adv_topic = st.selectbox(
+        "⚖️ تصفية حسب الموضوع:",
+        options=["الكل", "شؤون قضائية ومحاكم", "يتطرق للمغرب", "قضاء دولي", "قضايا وتسليم واتفاقيات"],
+        key="adv_filter_topic",
+    )
+  with col_af_source:
+    adv_source = st.selectbox(
+        "🗞️ تصفية حسب المصدر / الصحيفة:",
+        options=["الكل"] + available_sources[:80],
+        key="adv_filter_source",
+    )
+  with col_af_time:
+    adv_time = st.selectbox(
+        "⏱️ تصفية حسب وقت النشر:",
+        options=["كل الأوقات", "آخر 6 ساعات", "آخر 24 ساعة", "آخر 3 أيام", "آخر 7 أيام", "آخر 30 يوماً"],
+        key="adv_filter_time",
     )
 
+  # تطبيق البحث النصي الشامل إن وجد
   if global_search_q.strip():
     q_gs = global_search_q.strip()
-    if search_scope == "في القسم المحدد فقط":
+    if search_scope == "في القسم المعروض حالياً":
       pool_gs = displayed_articles
-    elif search_scope == "الأخبار النشطة فقط":
+    elif search_scope == "في الأخبار النشطة فقط":
       pool_gs = list(live_articles)
-    elif search_scope == "الأرشيف فقط":
+    elif search_scope == "في الأرشيف فقط":
       pool_gs = list(archive_articles)
     else:
       seen_gs_u = set()
@@ -9623,13 +9870,59 @@ with col_main_feed:
         if _u_g not in seen_gs_u:
           seen_gs_u.add(_u_g)
           pool_gs.append(_it_g)
-
     displayed_articles = smart_search_articles(pool_gs, q_gs)
-    render_html(
-        f'<div dir="rtl" style="background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.35);border-radius:12px;padding:10px 14px;margin-bottom:12px;color:#e2e8f0;font-size:0.9rem;">'
-        f'🎯 نتائج البحث عن <strong style="color:#38bdf8;">«{html.escape(q_gs)}»</strong>: تم العثور على <strong style="color:#34d399;">{len(displayed_articles)}</strong> نتيجة مطابقة أو مشابهة.'
-        f'</div>'
-    )
+
+  # تطبيق الفلاتر المتقدمة الأربعة
+  if adv_country != "الكل":
+    displayed_articles = [
+        a for a in displayed_articles
+        if (a.get("_intl_country") or detect_article_country_and_topic(
+            a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), a.get("platform", "")
+        )[0]) == adv_country
+    ]
+
+  if adv_topic != "الكل":
+    displayed_articles = [
+        a for a in displayed_articles
+        if adv_topic in str(a.get("category", ""))
+        or (a.get("_intl_topic") or detect_article_country_and_topic(
+            a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), a.get("platform", "")
+        )[1]) == adv_topic
+    ]
+
+  if adv_source != "الكل":
+    displayed_articles = [
+        a for a in displayed_articles
+        if clean_display_text(a.get("source_name") or "") == adv_source
+    ]
+
+  if adv_time != "كل الأوقات":
+    time_win_map = {
+        "آخر 6 ساعات": 6 * 3600,
+        "آخر 24 ساعة": 24 * 3600,
+        "آخر 3 أيام": 3 * 86400,
+        "آخر 7 أيام": 7 * 86400,
+        "آخر 30 يوماً": 30 * 86400,
+    }
+    max_age_sec = time_win_map.get(adv_time, 0)
+    if max_age_sec > 0:
+      displayed_articles = [
+          a for a in displayed_articles
+          if (now_ts - float(a.get("pub_timestamp") or a.get("created_at") or now_ts)) <= max_age_sec
+      ]
+
+  # تطبيق الترتيب المختار (عند عدم وجود بحث نصي يرتب حسب التطابق)
+  if not global_search_q.strip():
+    if sort_order == "الأحدث رصداً أولاً":
+      displayed_articles.sort(key=lambda x: float(x.get("created_at") or x.get("pub_timestamp") or 0), reverse=True)
+    elif sort_order == "الأقدم أولاً":
+      displayed_articles.sort(key=lambda x: float(x.get("pub_timestamp") or 0), reverse=False)
+    else:
+      displayed_articles.sort(key=lambda x: float(x.get("pub_timestamp") or 0), reverse=True)
+
+  total_matching = len(displayed_articles)
+  page_limit = int(st.session_state.get("feed_page_limit", 15))
+  paginated_articles = displayed_articles[:page_limit]
 
   render_html(
       f"""
@@ -9637,17 +9930,22 @@ with col_main_feed:
           <div style="font-size:1.02rem;font-weight:900;color:#f8fafc;">
               📌 القسم المعروض: <span style="color:#f3e5ab;">{html.escape(active_feed_title)}</span>
           </div>
-          <div style="font-size:0.84rem;font-weight:800;color:#34d399;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.35);padding:3px 12px;border-radius:999px;">
-              عدد المنشورات المعروضة: {len(displayed_articles)}
+          <div style="font-size:0.84rem;font-weight:800;color:#6ee7b7;background:rgba(16,185,129,0.16);border:1px solid rgba(52,211,153,0.4);padding:4px 14px;border-radius:999px;">
+              إجمالي النتائج المطابقة: {total_matching} (المعروض حالياً: {len(paginated_articles)})
           </div>
       </div>
       """
   )
 
   render_article_cards(
-      displayed_articles,
-      empty_msg="لا توجد منشورات مرصودة حالياً في هذا القسم. يمكنك تشغيل الرصد من القائمة الجانبية.",
+      paginated_articles,
+      empty_msg="لا توجد منشورات تطابق معايير الفلترة الحالية. جرّب تغيير الفلتر أو اضغط (🔄 ضبط) أو شغّل الرصد من القائمة الموحدة.",
   )
+
+  if total_matching > page_limit:
+    if st.button(f"⬇️ عرض المزيد من الأخبار ({total_matching - page_limit} خبر إضافي)", key="btn_load_more_articles", use_container_width=True):
+      st.session_state["feed_page_limit"] = page_limit + 20
+      st.rerun()
 
 # =====================================================================
 # 19. فحص الرصد الدوري غير المتزامن (بدون تجميد الواجهة أو قفل SQLite)
