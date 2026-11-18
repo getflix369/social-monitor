@@ -8133,7 +8133,25 @@ ensure_background_daemon()
 
 render_html("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Tajawal:wght@500;700;800&display=swap');
+
+:root {
+    --bg-primary: #061318;
+    --bg-secondary: #0b2027;
+    --bg-card: rgba(11, 32, 39, 0.88);
+    --bg-field: #091a20;
+    --bg-dropdown: #08181e;
+    --gold-primary: #d4af37;
+    --gold-light: #f3e5ab;
+    --emerald-accent: #10b981;
+    --teal-accent: #14b8a6;
+    --text-bright: #ffffff;
+    --text-main: #f8fafc;
+    --text-sub: #cbd5e1;
+    --border-gold: rgba(212, 175, 55, 0.36);
+    --border-teal: rgba(20, 184, 166, 0.34);
+    color-scheme: dark !important;
+}
 
 *, *::before, *::after {
     box-sizing: border-box;
@@ -8141,24 +8159,34 @@ render_html("""
 
 html, body, .stApp, .main,
 [data-testid="stAppViewContainer"],
+[data-testid="stHeader"],
 [data-testid="stMarkdownContainer"],
 [data-testid="stVerticalBlock"],
 [data-baseweb="tab-panel"],
 [class*="st-emotion-cache"] {
-    font-family: 'Cairo', sans-serif !important;
+    font-family: 'Cairo', 'Tajawal', sans-serif !important;
     direction: rtl !important;
     text-align: right !important;
+    color: var(--text-main) !important;
 }
 
-.stApp {
-    background: radial-gradient(circle at 15% 15%, #111c35 0%, #090d16 55%, #05080f 100%) !important;
-    color: #f1f5f9 !important;
+[data-testid="stHeader"] {
+    background: transparent !important;
+}
+
+.stApp,
+[data-testid="stAppViewContainer"] {
+    background:
+        radial-gradient(circle at 12% 10%, rgba(20, 184, 166, 0.14) 0%, transparent 40%),
+        radial-gradient(circle at 88% 18%, rgba(212, 175, 55, 0.11) 0%, transparent 38%),
+        linear-gradient(160deg, #071920 0%, #051116 55%, #030a0e 100%) !important;
+    color: var(--text-main) !important;
     overflow-x: hidden !important;
 }
 
 .block-container {
     padding-top: 1rem !important;
-    padding-bottom: 2.2rem !important;
+    padding-bottom: 2.4rem !important;
     padding-left: clamp(0.8rem, 2vw, 1.8rem) !important;
     padding-right: clamp(0.8rem, 2vw, 1.8rem) !important;
     max-width: 98% !important;
@@ -8167,7 +8195,7 @@ html, body, .stApp, .main,
     text-align: right !important;
 }
 
-/* إخفاء الشريط الجانبي الافتراضي الضيق لـ Streamlit لأننا نعتمد تخطيط 25% / 75% ثابتاً ومريحاً داخل الصفحة الرئيسية */
+/* إخفاء الشريط الجانبي الافتراضي الضيق لـ Streamlit لاعتماد تخطيط 25% / 75% الثابت داخل الصفحة */
 section[data-testid="stSidebar"],
 [data-testid="collapsedControl"],
 [data-testid="stSidebarCollapsedControl"] {
@@ -8177,170 +8205,254 @@ section[data-testid="stSidebar"],
 div[data-testid="stHorizontalBlock"] {
     direction: rtl !important;
     align-items: flex-start !important;
-    gap: 18px !important;
+    gap: 20px !important;
 }
 
-/* ضمان استقرار القوائم المنسدلة وحقول الإدخال بوضوح تام وبدون أي اقتطاع للنص */
-div[data-baseweb="select"] > div {
-    min-height: 46px !important;
-    height: auto !important;
-    padding: 6px 12px !important;
-    background-color: rgba(15, 23, 42, 0.92) !important;
-    border: 1px solid rgba(56, 189, 248, 0.38) !important;
+/* =====================================================================
+   علاج جذري وشامل للقوائم المنسدلة وحقول الإدخال (قبل الفتح وبعد الفتح)
+   ===================================================================== */
+div[data-testid="stSelectbox"] label,
+div[data-testid="stSelectbox"] label p,
+div[data-testid="stTextInput"] label,
+div[data-testid="stTextInput"] label p,
+div[data-testid="stFileUploader"] label,
+div[data-testid="stFileUploader"] label p,
+label[data-testid="stWidgetLabel"] p {
+    color: #f3e5ab !important;
+    font-size: 0.92rem !important;
+    font-weight: 800 !important;
+    margin-bottom: 4px !important;
+}
+
+/* صندوق القائمة المنسدلة قبل فتحها (Closed Selectbox) + حقول الإدخال بأعلى أولوية ممكنة */
+html body .stApp div[data-baseweb="select"],
+html body .stApp div[data-baseweb="select"] > div,
+html body .stApp div[data-baseweb="select"] > div > div,
+html body .stApp div[data-testid="stSelectbox"] > div,
+html body .stApp div[data-testid="stSelectbox"] div[data-baseweb="select"],
+html body .stApp div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+html body .stApp div[data-testid="stSelectbox"] div[data-baseweb="select"] > div > div,
+html body .stApp div[data-baseweb="input"],
+html body .stApp div[data-baseweb="input"] > div,
+html body .stApp div[data-baseweb="base-input"],
+html body .stApp div[data-baseweb="base-input"] > div,
+html body .stApp div[data-testid="stTextInput"] > div > div {
+    background: linear-gradient(145deg, #0b2229 0%, #07161b 100%) !important;
+    background-color: #091c22 !important;
+    border: 1.5px solid rgba(212, 175, 55, 0.42) !important;
     border-radius: 12px !important;
+    min-height: 48px !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+    direction: rtl !important;
+    text-align: right !important;
 }
 
-div[data-baseweb="select"] span,
-div[data-baseweb="select"] div {
+div[data-baseweb="select"] > div:hover,
+div[data-baseweb="input"] > div:hover,
+div[data-baseweb="select"] > div:focus-within,
+div[data-baseweb="input"] > div:focus-within {
+    border-color: #d4af37 !important;
+    box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.22), 0 6px 18px rgba(0, 0, 0, 0.45) !important;
+}
+
+/* النص المعروض داخل القائمة المنسدلة قبل فتحها: أبيض ناصع وواضح بدون أي خلفية بيضاء داخلية */
+div[data-baseweb="select"] *,
+div[data-testid="stSelectbox"] div[data-baseweb="select"] span,
+div[data-testid="stSelectbox"] div[data-baseweb="select"] div {
+    background: transparent !important;
+    background-color: transparent !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    font-family: 'Cairo', sans-serif !important;
+    font-size: 0.95rem !important;
+    font-weight: 800 !important;
     white-space: normal !important;
     overflow: visible !important;
     text-overflow: unset !important;
+    opacity: 1 !important;
+}
+
+div[data-baseweb="select"] svg {
+    fill: #d4af37 !important;
+    color: #d4af37 !important;
+}
+
+/* القائمة المنسدلة بعد فتحها (Opened Dropdown Portal / Popover / Listbox) */
+html body div[data-baseweb="popover"],
+html body div[data-baseweb="popover"] > div,
+html body div[data-baseweb="popover"] > div > div,
+html body div[data-baseweb="menu"],
+html body ul[data-testid="stSelectboxVirtualDropdown"],
+html body div[data-testid="stSelectboxVirtualDropdown"],
+html body ul[role="listbox"],
+html body div[role="listbox"] {
+    background: #081b21 !important;
+    background-color: #081b21 !important;
+    border: 1.5px solid rgba(212, 175, 55, 0.55) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.78) !important;
+    padding: 6px !important;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+/* عناصر وخيارات القائمة المفتوحة: خط أبيض ناصع وعريض واضح تماماً فوق الخلفية الزمردية الداكنة */
+div[data-baseweb="popover"] li,
+div[data-baseweb="popover"] [role="option"],
+div[data-baseweb="menu"] li,
+ul[data-testid="stSelectboxVirtualDropdown"] li,
+li[role="option"] {
+    background: rgba(13, 37, 45, 0.65) !important;
+    background-color: rgba(13, 37, 45, 0.65) !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    font-family: 'Cairo', sans-serif !important;
     font-size: 0.94rem !important;
     font-weight: 800 !important;
-    color: #f8fafc !important;
-}
-
-div[data-baseweb="popover"] li,
-ul[data-testid="stSelectboxVirtualDropdown"] li {
+    padding: 10px 14px !important;
+    margin-bottom: 4px !important;
+    border-radius: 10px !important;
+    border: 1px solid rgba(255, 255, 255, 0.05) !important;
     direction: rtl !important;
     text-align: right !important;
-    font-family: 'Cairo', sans-serif !important;
-    font-size: 0.92rem !important;
-    font-weight: 700 !important;
-    padding: 9px 14px !important;
     white-space: normal !important;
     line-height: 1.45 !important;
+    opacity: 1 !important;
 }
 
-section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, rgba(10, 16, 30, 0.98) 0%, rgba(7, 11, 21, 0.99) 100%) !important;
-    border-left: 1px solid rgba(56, 189, 248, 0.25) !important;
-    width: 390px !important;
-    min-width: 360px !important;
-    max-width: 430px !important;
+div[data-baseweb="popover"] li *,
+div[data-baseweb="popover"] [role="option"] *,
+div[data-baseweb="menu"] li *,
+ul[data-testid="stSelectboxVirtualDropdown"] li *,
+li[role="option"] * {
+    background: transparent !important;
+    background-color: transparent !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    font-family: 'Cairo', sans-serif !important;
+    font-weight: 800 !important;
+    opacity: 1 !important;
+}
+
+/* تمييز الخيار عند التمرير بالماوس أو الاختيار باللون الذهبي والزمردي */
+div[data-baseweb="popover"] li:hover,
+div[data-baseweb="popover"] [role="option"]:hover,
+ul[data-testid="stSelectboxVirtualDropdown"] li:hover,
+li[role="option"]:hover,
+li[role="option"][aria-selected="true"] {
+    background: linear-gradient(135deg, rgba(20, 184, 166, 0.32) 0%, rgba(212, 175, 55, 0.24) 100%) !important;
+    border-color: rgba(212, 175, 55, 0.65) !important;
+}
+
+li[role="option"][aria-selected="true"] *,
+li[role="option"]:hover * {
+    color: #f3e5ab !important;
+    -webkit-text-fill-color: #f3e5ab !important;
+}
+
+/* حقول النصوص والمفاتيح السرية */
+input,
+textarea,
+div[data-baseweb="input"] input,
+div[data-baseweb="base-input"] input,
+div[data-testid="stTextInput"] input {
+    background: transparent !important;
+    background-color: transparent !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    caret-color: #d4af37 !important;
+    font-family: 'Cairo', sans-serif !important;
+    font-size: 0.94rem !important;
+    font-weight: 700 !important;
     direction: rtl !important;
     text-align: right !important;
 }
 
-@media (max-width: 768px) {
-    section[data-testid="stSidebar"] {
-        width: 88vw !important;
-        min-width: 290px !important;
-        max-width: 92vw !important;
-    }
+input::placeholder,
+textarea::placeholder {
+    color: #94a3b8 !important;
+    -webkit-text-fill-color: #94a3b8 !important;
+    opacity: 0.85 !important;
 }
 
-section[data-testid="stSidebar"] > div:first-child,
-section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
-section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
-    width: 100% !important;
-    padding-top: 0.85rem !important;
-    padding-left: 14px !important;
-    padding-right: 14px !important;
-    direction: rtl !important;
-    text-align: right !important;
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 40px #091c22 inset !important;
+    -webkit-text-fill-color: #ffffff !important;
+    caret-color: #d4af37 !important;
 }
 
-/* منع انضغاط القوائم المنسدلة وحقول الإدخال داخل الشريط الجانبي وإظهار النصوص كاملة */
-section[data-testid="stSidebar"] div[data-baseweb="select"] > div {
-    min-height: 46px !important;
-    height: auto !important;
-    padding: 6px 10px !important;
-    white-space: normal !important;
-    line-height: 1.4 !important;
+/* زر إظهار/إخفاء كلمة المرور داخل حقول المفاتيح */
+div[data-baseweb="input"] button,
+div[data-baseweb="base-input"] button,
+div[data-testid="stTextInput"] button {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: #d4af37 !important;
+    min-height: 28px !important;
+    width: auto !important;
+    padding: 0 8px !important;
 }
 
-section[data-testid="stSidebar"] div[data-baseweb="select"] span,
-section[data-testid="stSidebar"] div[data-baseweb="select"] div {
-    white-space: normal !important;
-    overflow: visible !important;
-    text-overflow: unset !important;
-    font-size: 0.92rem !important;
+/* صناديق الأكورديون (Expander) والنماذج */
+details[data-testid="stExpander"],
+div[data-testid="stExpander"],
+div[data-testid="stForm"],
+section[data-testid="stFileUploaderDropzone"],
+div[data-testid="stFileUploader"] section {
+    background: rgba(9, 28, 34, 0.88) !important;
+    background-color: #091c22 !important;
+    border: 1px solid rgba(212, 175, 55, 0.32) !important;
+    border-radius: 14px !important;
+    color: #ffffff !important;
+}
+
+details[data-testid="stExpander"] summary,
+div[data-testid="stExpander"] summary {
+    background: rgba(13, 39, 47, 0.78) !important;
+    border-radius: 12px !important;
+    padding: 10px 14px !important;
+    color: #f3e5ab !important;
     font-weight: 800 !important;
 }
 
-div[data-baseweb="popover"] li,
-ul[data-testid="stSelectboxVirtualDropdown"] li {
-    direction: rtl !important;
-    text-align: right !important;
-    font-family: 'Cairo', sans-serif !important;
-    font-size: 0.9rem !important;
-    font-weight: 700 !important;
-    padding: 8px 12px !important;
-    white-space: normal !important;
-    line-height: 1.45 !important;
-}
-
-section[data-testid="stSidebar"] label p {
-    font-size: 0.88rem !important;
+details[data-testid="stExpander"] summary *,
+div[data-testid="stExpander"] summary * {
+    color: #f3e5ab !important;
     font-weight: 800 !important;
-    color: #e2e8f0 !important;
 }
 
-.sidebar-section-card {
-    background: rgba(15, 23, 42, 0.75);
-    border: 1px solid rgba(56, 189, 248, 0.24);
-    border-radius: 14px;
-    padding: 12px 14px;
-    margin-bottom: 12px;
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-.sidebar-section-title {
-    font-size: 0.95rem;
-    font-weight: 900;
-    color: #38bdf8;
-    margin-bottom: 4px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.sidebar-section-sub {
-    font-size: 0.76rem;
-    color: #94a3b8;
-    line-height: 1.4;
-}
-
-.active-feed-banner {
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.16) 0%, rgba(15, 23, 42, 0.86) 100%);
-    border: 1px solid rgba(56, 189, 248, 0.35);
-    border-right: 4px solid #38bdf8;
-    border-radius: 14px;
-    padding: 12px 18px;
-    margin: 10px 0 14px 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 10px;
-    direction: rtl !important;
-    text-align: right !important;
-}
-
+/* =====================================================================
+   الهيدر المؤسساتي والبطاقات والإحصائيات والأزرار
+   ===================================================================== */
 .hero-glass {
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.88) 0%, rgba(30, 41, 59, 0.72) 100%);
+    background: linear-gradient(135deg, rgba(11, 36, 44, 0.95) 0%, rgba(7, 22, 28, 0.92) 100%);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(56, 189, 248, 0.28);
+    border: 1px solid rgba(212, 175, 55, 0.42);
+    border-right: 5px solid #d4af37;
     border-radius: 18px;
-    padding: clamp(12px, 2vw, 20px) clamp(14px, 2.5vw, 26px);
-    margin-bottom: 14px;
-    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    padding: clamp(14px, 2vw, 20px) clamp(16px, 2.5vw, 28px);
+    margin-bottom: 18px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 12px;
     direction: rtl !important;
     text-align: right !important;
 }
 
 .hero-title {
-    font-size: clamp(1.2rem, 2.6vw, 1.75rem);
+    font-size: clamp(1.3rem, 2.6vw, 1.85rem);
     font-weight: 900;
-    background: linear-gradient(90deg, #38bdf8, #818cf8, #f472b6);
+    background: linear-gradient(90deg, #f3e5ab 0%, #d4af37 50%, #34d399 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin: 0;
@@ -8351,14 +8463,13 @@ section[data-testid="stSidebar"] label p {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    background: rgba(16, 185, 129, 0.14);
-    border: 1px solid rgba(16, 185, 129, 0.4);
-    color: #34d399;
-    padding: 5px 13px;
+    background: rgba(16, 185, 129, 0.16);
+    border: 1px solid rgba(52, 211, 153, 0.45);
+    color: #6ee7b7;
+    padding: 6px 14px;
     border-radius: 999px;
-    font-size: clamp(0.74rem, 1.4vw, 0.84rem);
-    font-weight: 700;
-    max-width: 100%;
+    font-size: clamp(0.76rem, 1.4vw, 0.86rem);
+    font-weight: 800;
     direction: rtl !important;
 }
 
@@ -8377,11 +8488,51 @@ section[data-testid="stSidebar"] label p {
     50% { transform: scale(1.35); opacity: 0.55; }
 }
 
-/* فرض الوضع الداكن ومنع الخلفية البيضاء الافتراضية لجميع أزرار Streamlit في كافة المتصفحات */
-:root, html, body, .stApp {
-    color-scheme: dark !important;
+.sidebar-section-card {
+    background: linear-gradient(145deg, rgba(11, 36, 44, 0.95) 0%, rgba(7, 22, 28, 0.92) 100%) !important;
+    border: 1px solid rgba(212, 175, 55, 0.4) !important;
+    border-right: 4px solid #d4af37 !important;
+    border-radius: 16px !important;
+    padding: 14px 16px !important;
+    margin-bottom: 14px !important;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4) !important;
+    direction: rtl !important;
+    text-align: right !important;
 }
 
+.sidebar-section-title {
+    font-size: 1.05rem;
+    font-weight: 900;
+    color: #f3e5ab !important;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sidebar-section-sub {
+    font-size: 0.82rem;
+    color: #cbd5e1 !important;
+    line-height: 1.45;
+}
+
+.active-feed-banner {
+    background: linear-gradient(135deg, rgba(13, 42, 50, 0.94) 0%, rgba(8, 25, 31, 0.94) 100%);
+    border: 1px solid rgba(212, 175, 55, 0.42);
+    border-right: 5px solid #d4af37;
+    border-radius: 14px;
+    padding: 12px 18px;
+    margin: 10px 0 14px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+/* الأزرار العامة وأزرار التشغيل والإيقاف */
 .stApp button[kind="secondary"],
 .stApp button[kind="primary"],
 .stApp [data-testid="stBaseButton-secondary"],
@@ -8393,20 +8544,17 @@ div[data-testid="stButton"] > button,
 div.stDownloadButton > button,
 div[data-testid="stFormSubmitButton"] > button {
     width: 100% !important;
-    min-height: 42px !important;
-    background: rgba(15, 23, 42, 0.78) !important;
-    background-color: rgba(15, 23, 42, 0.78) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    color: #f8fafc !important;
-    border: 1px solid rgba(148, 163, 184, 0.35) !important;
+    min-height: 44px !important;
+    background: linear-gradient(135deg, #0d2932 0%, #081b21 100%) !important;
+    background-color: #0b2229 !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(212, 175, 55, 0.42) !important;
     border-radius: 12px !important;
-    padding: 0.45rem 0.65rem !important;
+    padding: 0.48rem 0.75rem !important;
     font-family: 'Cairo', sans-serif !important;
     font-weight: 800 !important;
-    font-size: 0.92rem !important;
-    white-space: nowrap !important;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3) !important;
+    font-size: 0.93rem !important;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.35) !important;
     transition: all 0.2s ease !important;
 }
 
@@ -8415,7 +8563,7 @@ div.stButton > button *,
 div[data-testid="stButton"] > button *,
 div.stDownloadButton > button *,
 div[data-testid="stFormSubmitButton"] > button * {
-    color: #f8fafc !important;
+    color: #ffffff !important;
     font-family: 'Cairo', sans-serif !important;
     font-weight: 800 !important;
 }
@@ -8424,324 +8572,71 @@ div.stButton > button:hover,
 div[data-testid="stButton"] > button:hover,
 div.stDownloadButton > button:hover,
 div[data-testid="stFormSubmitButton"] > button:hover {
-    transform: translateY(-2px) !important;
-    border-color: #38bdf8 !important;
-    box-shadow: 0 8px 22px rgba(56, 189, 248, 0.28) !important;
+    transform: translateY(-1px) !important;
+    border-color: #d4af37 !important;
+    box-shadow: 0 8px 22px rgba(212, 175, 55, 0.25) !important;
 }
 
-/* البطاقات الزجاجية الشفافة للرصد (Glassmorphic Monitoring Frames) */
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-marker)),
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.scan-frame-marker) {
-    border-radius: 18px !important;
-    padding: 14px 16px 12px 16px !important;
-    margin-bottom: 10px !important;
-    backdrop-filter: blur(24px) saturate(170%) !important;
-    -webkit-backdrop-filter: blur(24px) saturate(170%) !important;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32), inset 0 1px 1px rgba(255, 255, 255, 0.22) !important;
-    transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease !important;
-}
-
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-marker)):hover,
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.scan-frame-marker):hover {
-    transform: translateY(-3px) !important;
-}
-
-div[data-testid="stVerticalBlock"]:has(.scan-frame-all):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-all)) {
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.20) 0%, rgba(15, 23, 42, 0.52) 100%) !important;
-    border: 1px solid rgba(56, 189, 248, 0.48) !important;
-}
-div[data-testid="stVerticalBlock"]:has(.scan-frame-press):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-press)) {
-    background: linear-gradient(135deg, rgba(16, 185, 129, 0.20) 0%, rgba(15, 23, 42, 0.52) 100%) !important;
-    border: 1px solid rgba(52, 211, 153, 0.48) !important;
-}
-div[data-testid="stVerticalBlock"]:has(.scan-frame-fb):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-fb)) {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.22) 0%, rgba(15, 23, 42, 0.52) 100%) !important;
-    border: 1px solid rgba(96, 165, 250, 0.48) !important;
-}
-div[data-testid="stVerticalBlock"]:has(.scan-frame-x):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-x)) {
-    background: linear-gradient(135deg, rgba(148, 163, 184, 0.22) 0%, rgba(15, 23, 42, 0.56) 100%) !important;
-    border: 1px solid rgba(203, 213, 225, 0.42) !important;
-}
-div[data-testid="stVerticalBlock"]:has(.scan-frame-yt):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-yt)) {
-    background: linear-gradient(135deg, rgba(239, 68, 68, 0.22) 0%, rgba(15, 23, 42, 0.52) 100%) !important;
-    border: 1px solid rgba(248, 113, 113, 0.48) !important;
-}
-div[data-testid="stVerticalBlock"]:has(.scan-frame-other):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-other)) {
-    background: linear-gradient(135deg, rgba(168, 85, 247, 0.22) 0%, rgba(15, 23, 42, 0.52) 100%) !important;
-    border: 1px solid rgba(192, 132, 252, 0.48) !important;
-}
-div[data-testid="stVerticalBlock"]:has(.scan-frame-target):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-target)) {
-    background: linear-gradient(135deg, rgba(245, 158, 11, 0.24) 0%, rgba(15, 23, 42, 0.54) 100%) !important;
-    border: 1px solid rgba(251, 191, 36, 0.52) !important;
-}
-
-/* ترويسة اسم المنصة داخل الإطار الزجاجي: عرض كامل وواضح بدون أي اقتطاع */
-.scan-platform-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    direction: rtl !important;
-    text-align: right !important;
-    padding: 4px 2px 10px 2px;
-    margin-bottom: 6px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-    width: 100%;
-}
-
-.scan-platform-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    direction: rtl !important;
-    text-align: right !important;
-    flex: 1 1 auto;
-}
-
-.scan-platform-icon {
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
-    border-radius: 12px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.2rem;
-    background: rgba(15, 23, 42, 0.55);
-    border: 1px solid rgba(255, 255, 255, 0.22);
-    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.18), 0 4px 10px rgba(0, 0, 0, 0.25);
-}
-
-.scan-platform-title {
-    font-size: 1.04rem;
-    font-weight: 900;
-    color: #ffffff;
-    line-height: 1.3;
-    white-space: normal !important;
-    overflow: visible !important;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-}
-
-.scan-platform-sub {
-    font-size: 0.77rem;
-    font-weight: 700;
-    color: #e2e8f0;
-    opacity: 0.92;
-    white-space: normal !important;
-    line-height: 1.25;
-    margin-top: 2px;
-}
-
-.scan-platform-badge {
-    font-size: 0.72rem;
-    font-weight: 800;
-    padding: 3px 9px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.12);
-    border: 1px solid rgba(255, 255, 255, 0.22);
-    color: #f8fafc;
-    white-space: nowrap;
-}
-
-/* صف أزرار التشغيل (▶) والإيقاف (⏹) داخل الإطار الزجاجي */
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-marker)) div[data-testid="stHorizontalBlock"] {
-    flex-wrap: nowrap !important;
-    align-items: center !important;
-    gap: 8px !important;
-}
-
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-marker)) div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker):not(:has(div[data-testid="stVerticalBlock"] .scan-frame-marker)) div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
-    min-width: 0 !important;
-    flex: 1 1 50% !important;
-}
-
-/* زر التشغيل الزجاجي (▶ تشغيل) — يستهدف جميع محددات Streamlit لضمان عدم ظهور أي خلفية بيضاء إطلاقاً */
-[class*="st-key-start_scan_"] button,
-div[data-testid="column"]:has(.media-play-marker) button,
-div[data-testid="stColumn"]:has(.media-play-marker) button,
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) button[kind="primary"],
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseButton-primary"],
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="baseButton-primary"] {
-    background: linear-gradient(135deg, rgba(16, 185, 129, 0.72) 0%, rgba(5, 150, 105, 0.88) 100%) !important;
-    background-color: rgba(16, 185, 129, 0.8) !important;
-    backdrop-filter: blur(14px) !important;
-    -webkit-backdrop-filter: blur(14px) !important;
-    border: 1.5px solid rgba(110, 231, 183, 0.75) !important;
+/* زر تشغيل الرصد باللون الزمردي الفاخر */
+[class*="st-key-sidebar_start_scan_btn"] button,
+.stApp button[kind="primary"],
+.stApp [data-testid="stBaseButton-primary"] {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
+    border: 1.5px solid #6ee7b7 !important;
     color: #ffffff !important;
-    min-height: 42px !important;
-    height: 42px !important;
-    padding: 0 10px !important;
-    border-radius: 12px !important;
-    font-size: 0.94rem !important;
-    font-weight: 900 !important;
-    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+    box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35) !important;
 }
 
-[class*="st-key-start_scan_"] button:hover,
-div[data-testid="column"]:has(.media-play-marker) button:hover,
-div[data-testid="stColumn"]:has(.media-play-marker) button:hover,
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) button[kind="primary"]:hover,
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseButton-primary"]:hover {
-    background: linear-gradient(135deg, rgba(52, 211, 153, 0.88) 0%, rgba(4, 120, 87, 0.95) 100%) !important;
-    border-color: #ffffff !important;
-    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.55) !important;
-    transform: translateY(-1px) scale(1.02) !important;
-}
-
-/* زر الإيقاف الزجاجي (⏹ إيقاف) — يستهدف جميع محددات Streamlit لضمان عدم ظهور أي خلفية بيضاء إطلاقاً */
-[class*="st-key-stop_scan_"] button,
-div[data-testid="column"]:has(.media-stop-marker) button,
-div[data-testid="stColumn"]:has(.media-stop-marker) button,
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) button[kind="secondary"],
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseButton-secondary"],
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="baseButton-secondary"] {
-    background: linear-gradient(135deg, rgba(239, 68, 68, 0.68) 0%, rgba(153, 27, 27, 0.86) 100%) !important;
-    background-color: rgba(220, 38, 38, 0.78) !important;
-    backdrop-filter: blur(14px) !important;
-    -webkit-backdrop-filter: blur(14px) !important;
-    border: 1.5px solid rgba(252, 165, 165, 0.7) !important;
+/* زر إيقاف الرصد باللون القرمزي المتناسق */
+[class*="st-key-sidebar_stop_scan_btn"] button {
+    background: linear-gradient(135deg, rgba(185, 28, 28, 0.85) 0%, rgba(127, 29, 29, 0.92) 100%) !important;
+    border: 1.5px solid rgba(252, 165, 165, 0.65) !important;
     color: #ffffff !important;
-    min-height: 42px !important;
-    height: 42px !important;
-    padding: 0 10px !important;
-    border-radius: 12px !important;
-    font-size: 0.94rem !important;
-    font-weight: 900 !important;
-    box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
 }
 
-[class*="st-key-stop_scan_"] button:hover,
-div[data-testid="column"]:has(.media-stop-marker) button:hover,
-div[data-testid="stColumn"]:has(.media-stop-marker) button:hover,
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) button[kind="secondary"]:hover,
-div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseButton-secondary"]:hover {
-    background: linear-gradient(135deg, rgba(248, 113, 113, 0.88) 0%, rgba(185, 28, 28, 0.95) 100%) !important;
-    border-color: #ffffff !important;
-    box-shadow: 0 6px 20px rgba(239, 68, 68, 0.55) !important;
-    transform: translateY(-1px) scale(1.02) !important;
-}
-
-.radar-panel {
-    background: rgba(15, 23, 42, 0.88);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(56, 189, 248, 0.42);
-    border-radius: 16px;
-    padding: 14px 18px;
-    margin: 10px 0 14px 0;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    box-shadow: 0 10px 30px rgba(2, 132, 199, 0.22);
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-.radar-scanner {
-    width: 58px;
-    height: 58px;
-    min-width: 58px;
-    border-radius: 50%;
-    position: relative;
-    background:
-        radial-gradient(circle, rgba(56, 189, 248, 0.15) 20%, transparent 21%),
-        radial-gradient(circle, transparent 48%, rgba(56, 189, 248, 0.25) 49%, transparent 51%),
-        #070d19;
-    border: 2px solid #38bdf8;
-    box-shadow: 0 0 18px rgba(56, 189, 248, 0.45), inset 0 0 12px rgba(56, 189, 248, 0.25);
-    overflow: hidden;
-}
-
-.radar-scanner::before {
-    content: "";
-    position: absolute;
-    inset: -50%;
-    background: conic-gradient(from 0deg, transparent 55%, rgba(56, 189, 248, 0.8) 100%);
-    animation: radarSpin 1.3s linear infinite;
-}
-
-.radar-scanner::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 7px;
-    height: 7px;
-    background: #38bdf8;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-    box-shadow: 0 0 10px #38bdf8;
-}
-
-@keyframes radarSpin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-.done-banner {
-    background: linear-gradient(135deg, rgba(6, 95, 70, 0.88) 0%, rgba(4, 120, 87, 0.78) 100%);
-    backdrop-filter: blur(14px);
-    border: 1px solid rgba(52, 211, 153, 0.55);
-    border-radius: 14px;
-    padding: 11px 18px;
-    margin: 8px 0 14px 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 8px;
-    color: #ecfdf5;
-    font-weight: 800;
-    font-size: clamp(0.84rem, 1.5vw, 0.96rem);
-    box-shadow: 0 8px 25px rgba(16, 185, 129, 0.25);
-    direction: rtl !important;
-    text-align: right !important;
-}
-
+/* شريط الإحصائيات */
 .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
     gap: 10px;
-    margin: 10px 0 16px 0;
+    margin: 6px 0 16px 0;
     direction: rtl !important;
 }
 
 .metric-glass {
-    background: rgba(15, 23, 42, 0.72);
-    backdrop-filter: blur(14px);
-    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: linear-gradient(145deg, rgba(11, 35, 43, 0.92) 0%, rgba(7, 22, 28, 0.88) 100%);
+    border: 1px solid rgba(212, 175, 55, 0.28);
     border-radius: 14px;
     padding: 12px 10px;
     text-align: center !important;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
 }
 
 .metric-num {
-    font-size: clamp(1.3rem, 2.2vw, 1.65rem);
+    font-size: clamp(1.3rem, 2.1vw, 1.65rem);
     font-weight: 900;
-    color: #38bdf8;
+    color: #f3e5ab;
     line-height: 1.2;
     text-align: center !important;
 }
 
 .metric-lbl {
-    font-size: clamp(0.75rem, 1.2vw, 0.84rem);
-    color: #94a3b8;
+    font-size: clamp(0.76rem, 1.2vw, 0.85rem);
+    color: #cbd5e1;
     font-weight: 700;
-    margin-top: 2px;
+    margin-top: 3px;
     text-align: center !important;
 }
 
+/* بطاقات الأخبار الاحترافية */
 .news-card {
-    background: linear-gradient(145deg, rgba(15, 23, 42, 0.92) 0%, rgba(30, 41, 59, 0.74) 100%);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(148, 163, 184, 0.24);
-    border-right: 5px solid #38bdf8;
+    background: linear-gradient(145deg, rgba(11, 35, 43, 0.95) 0%, rgba(7, 22, 28, 0.90) 100%);
+    border: 1px solid rgba(212, 175, 55, 0.26);
+    border-right: 5px solid #d4af37;
     border-radius: 16px;
-    padding: clamp(14px, 2vw, 20px);
+    padding: clamp(15px, 2vw, 22px);
     margin-bottom: 14px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
     transition: transform 0.2s ease, border-color 0.2s ease;
     word-wrap: break-word;
     overflow-wrap: anywhere;
@@ -8751,15 +8646,15 @@ div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseB
 
 .news-card:hover {
     transform: translateY(-2px);
-    border-color: rgba(56, 189, 248, 0.5);
+    border-color: rgba(212, 175, 55, 0.65);
 }
 
 .news-card.plat-press { border-right-color: #10b981; }
-.news-card.plat-intl { border-right-color: #38bdf8; }
-.news-card.plat-fb { border-right-color: #3b82f6; }
-.news-card.plat-x { border-right-color: #cbd5e1; }
-.news-card.plat-yt { border-right-color: #ef4444; }
-.news-card.plat-other { border-right-color: #a855f7; }
+.news-card.plat-intl { border-right-color: #d4af37; }
+.news-card.plat-fb { border-right-color: #38bdf8; }
+.news-card.plat-x { border-right-color: #e2e8f0; }
+.news-card.plat-yt { border-right-color: #f87171; }
+.news-card.plat-other { border-right-color: #c084fc; }
 
 .news-card-layout {
     display: flex !important;
@@ -8778,10 +8673,10 @@ div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseB
     height: 132px;
     border-radius: 12px;
     overflow: hidden;
-    border: 1px solid rgba(148, 163, 184, 0.28);
-    background: #090d16;
+    border: 1px solid rgba(212, 175, 55, 0.35);
+    background: #061318;
     flex-shrink: 0;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
 .news-thumb-img {
@@ -8804,7 +8699,7 @@ div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseB
     align-items: center !important;
     justify-content: flex-start !important;
     gap: 8px !important;
-    margin: 6px 0 10px 0 !important;
+    margin: 7px 0 10px 0 !important;
     direction: rtl !important;
     text-align: right !important;
 }
@@ -8813,24 +8708,24 @@ div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseB
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    background: rgba(15, 23, 42, 0.88);
-    border: 1px solid rgba(56, 189, 248, 0.32);
-    color: #e2e8f0;
+    background: rgba(6, 19, 24, 0.88);
+    border: 1px solid rgba(212, 175, 55, 0.32);
+    color: #f1f5f9;
     padding: 3px 11px;
     border-radius: 999px;
-    font-size: clamp(0.74rem, 1.2vw, 0.82rem);
+    font-size: clamp(0.75rem, 1.2vw, 0.83rem);
     font-weight: 700;
     direction: rtl !important;
 }
 
 .badge-plat {
-    padding: 3px 11px;
+    padding: 3px 12px;
     border-radius: 999px;
     font-weight: 800;
-    font-size: 0.78rem;
-    background: rgba(56, 189, 248, 0.18);
-    color: #7dd3fc;
-    border: 1px solid rgba(56, 189, 248, 0.38);
+    font-size: 0.79rem;
+    background: rgba(212, 175, 55, 0.16);
+    color: #f3e5ab;
+    border: 1px solid rgba(212, 175, 55, 0.42);
     display: inline-block;
 }
 
@@ -8839,16 +8734,16 @@ div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseB
     border-radius: 999px;
     font-weight: 800;
     font-size: 0.76rem;
-    background: rgba(217, 119, 6, 0.22);
-    color: #fcd34d;
-    border: 1px solid rgba(245, 158, 11, 0.45);
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+    border: 1px solid rgba(16, 185, 129, 0.45);
     display: inline-block;
 }
 
 .news-title {
-    font-size: clamp(1.02rem, 1.8vw, 1.18rem);
-    font-weight: 800;
-    color: #f8fafc;
+    font-size: clamp(1.04rem, 1.8vw, 1.2rem);
+    font-weight: 900;
+    color: #ffffff;
     margin: 6px 0 6px 0;
     line-height: 1.55;
     direction: rtl !important;
@@ -8856,14 +8751,14 @@ div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseB
 }
 
 .news-summary-box {
-    background: rgba(9, 13, 22, 0.58);
-    border-right: 3px solid rgba(56, 189, 248, 0.6);
+    background: rgba(5, 16, 20, 0.72);
+    border-right: 3px solid #d4af37;
     border-radius: 10px;
-    padding: 9px 13px;
+    padding: 10px 14px;
     margin-bottom: 10px;
-    font-size: clamp(0.87rem, 1.45vw, 0.95rem);
-    color: #cbd5e1;
-    line-height: 1.72;
+    font-size: clamp(0.89rem, 1.45vw, 0.97rem);
+    color: #f1f5f9;
+    line-height: 1.75;
     direction: rtl !important;
     text-align: right !important;
 }
@@ -8872,145 +8767,74 @@ div[data-testid="stVerticalBlock"]:has(.scan-frame-marker) [data-testid="stBaseB
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(56, 189, 248, 0.16);
-    border: 1px solid rgba(56, 189, 248, 0.4);
-    color: #38bdf8 !important;
+    background: rgba(212, 175, 55, 0.16);
+    border: 1px solid rgba(212, 175, 55, 0.45);
+    color: #f3e5ab !important;
     text-decoration: none !important;
-    padding: 5px 14px;
+    padding: 6px 15px;
     border-radius: 10px;
-    font-size: 0.83rem;
+    font-size: 0.84rem;
     font-weight: 800;
     direction: rtl !important;
 }
 
 .news-link:hover {
-    background: rgba(56, 189, 248, 0.3);
+    background: rgba(212, 175, 55, 0.3);
 }
 
-div[data-baseweb="tab-list"] {
-    gap: 6px !important;
-    background: rgba(15, 23, 42, 0.78) !important;
-    padding: 6px !important;
-    border-radius: 14px !important;
-    border: 1px solid rgba(148, 163, 184, 0.2) !important;
-    overflow-x: auto !important;
-    flex-wrap: nowrap !important;
-    scrollbar-width: thin;
-    direction: rtl !important;
-}
-
-button[data-baseweb="tab"] {
-    background: transparent !important;
-    color: #94a3b8 !important;
-    border-radius: 10px !important;
-    padding: 7px 13px !important;
-    font-family: 'Cairo', sans-serif !important;
-    font-weight: 800 !important;
-    font-size: clamp(0.78rem, 1.4vw, 0.9rem) !important;
-    white-space: nowrap !important;
-    flex-shrink: 0 !important;
-}
-
-button[data-baseweb="tab"][aria-selected="true"] {
-    background: linear-gradient(135deg, #0284c7 0%, #1e40af 100%) !important;
-    color: #ffffff !important;
-}
-
-/* إزالة أي خلفية بيضاء في كافة حقول الإدخال وحقول المفاتيح السرية والقوائم المنسدلة والنوافذ المنبثقة */
-div[data-baseweb="input"],
-div[data-baseweb="input"] > div,
-div[data-baseweb="base-input"],
-div[data-baseweb="base-input"] > div,
-div[data-baseweb="select"],
-div[data-baseweb="select"] > div,
-div[data-testid="stTextInput"] div[data-baseweb="input"],
-div[data-testid="stTextInput"] div[data-baseweb="base-input"],
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-div[data-testid="stForm"],
-details[data-testid="stExpander"],
-div[data-testid="stExpander"],
-div[data-testid="stExpander"] summary,
-div[data-testid="stExpanderDetails"],
-section[data-testid="stFileUploaderDropzone"],
-div[data-testid="stFileUploader"] section {
-    background: rgba(15, 23, 42, 0.92) !important;
-    background-color: #0f172a !important;
-    border-color: rgba(56, 189, 248, 0.32) !important;
-    color: #f8fafc !important;
-    border-radius: 12px !important;
+.radar-panel {
+    background: rgba(8, 25, 31, 0.92);
+    border: 1px solid rgba(212, 175, 55, 0.45);
+    border-radius: 16px;
+    padding: 14px 18px;
+    margin: 10px 0 14px 0;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
     direction: rtl !important;
     text-align: right !important;
 }
 
-input,
-textarea,
-div[data-baseweb="input"] input,
-div[data-baseweb="base-input"] input,
-div[data-testid="stTextInput"] input {
-    background: transparent !important;
-    background-color: transparent !important;
-    color: #f8fafc !important;
-    caret-color: #38bdf8 !important;
+.radar-scanner {
+    width: 54px;
+    height: 54px;
+    min-width: 54px;
+    border-radius: 50%;
+    position: relative;
+    background: radial-gradient(circle, rgba(212, 175, 55, 0.2) 20%, transparent 21%), #051116;
+    border: 2px solid #d4af37;
+    overflow: hidden;
+}
+
+.radar-scanner::before {
+    content: "";
+    position: absolute;
+    inset: -50%;
+    background: conic-gradient(from 0deg, transparent 55%, rgba(212, 175, 55, 0.85) 100%);
+    animation: radarSpin 1.3s linear infinite;
+}
+
+@keyframes radarSpin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.done-banner {
+    background: linear-gradient(135deg, rgba(6, 95, 70, 0.92) 0%, rgba(4, 120, 87, 0.85) 100%);
+    border: 1px solid rgba(110, 231, 183, 0.6);
+    border-radius: 14px;
+    padding: 11px 18px;
+    margin: 8px 0 14px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: #ffffff;
+    font-weight: 800;
     direction: rtl !important;
     text-align: right !important;
-}
-
-/* منع المتصفح من تلوين حقول كلمات المرور والمفاتيح باللون الأبيض أو الأصفر عند التعبئة التلقائية */
-input:-webkit-autofill,
-input:-webkit-autofill:hover,
-input:-webkit-autofill:focus,
-input:-webkit-autofill:active {
-    -webkit-box-shadow: 0 0 0 40px #0f172a inset !important;
-    -webkit-text-fill-color: #f8fafc !important;
-    caret-color: #38bdf8 !important;
-}
-
-/* زر إظهار/إخفاء كلمة المرور داخل حقول المفاتيح والرمز السري */
-div[data-baseweb="input"] button,
-div[data-baseweb="base-input"] button,
-div[data-testid="stTextInput"] button {
-    background: transparent !important;
-    background-color: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    color: #94a3b8 !important;
-    min-height: 28px !important;
-    width: auto !important;
-    padding: 0 6px !important;
-}
-
-/* القوائم المنسدلة المفتوحة (Popover / Dropdown Menu List) بخلفية داكنة كاملة بدون أي إطار أبيض */
-div[data-baseweb="popover"],
-div[data-baseweb="popover"] > div,
-div[data-baseweb="menu"],
-ul[data-testid="stSelectboxVirtualDropdown"],
-ul[role="listbox"],
-div[role="listbox"] {
-    background: #0b1324 !important;
-    background-color: #0b1324 !important;
-    border: 1px solid rgba(56, 189, 248, 0.38) !important;
-    border-radius: 12px !important;
-    color: #f8fafc !important;
-    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.65) !important;
-}
-
-div[data-baseweb="popover"] li,
-div[data-baseweb="menu"] li,
-ul[data-testid="stSelectboxVirtualDropdown"] li,
-li[role="option"] {
-    background: transparent !important;
-    background-color: transparent !important;
-    color: #f1f5f9 !important;
-}
-
-div[data-baseweb="popover"] li:hover,
-div[data-baseweb="menu"] li:hover,
-ul[data-testid="stSelectboxVirtualDropdown"] li:hover,
-li[role="option"]:hover,
-li[role="option"][aria-selected="true"] {
-    background: rgba(56, 189, 248, 0.22) !important;
-    background-color: rgba(56, 189, 248, 0.22) !important;
-    color: #38bdf8 !important;
 }
 
 @media (max-width: 900px) {
@@ -9036,32 +8860,101 @@ li[role="option"][aria-selected="true"] {
         width: 100% !important;
         height: 165px !important;
     }
-    .radar-panel {
-        padding: 12px 14px;
-        gap: 12px;
-    }
-    .radar-scanner {
-        width: 46px;
-        height: 46px;
-        min-width: 46px;
-    }
 }
 </style>
 """)
-render_html("""
-<script>
-// نبضات متزامنة في المتصفح لمنع قطع جلسة Streamlit وتجاوز خمول الصفحة بعد سويعات
-(function() {
-    if (window._marsad_keep_alive_active) return;
-    window._marsad_keep_alive_active = true;
-    setInterval(function() {
-        try {
-            fetch(window.location.href, { method: "HEAD", cache: "no-store" }).catch(function(){});
-        } catch(e) {}
-    }, 120000); // إرسال نبضة كل دقيقتين لمنع إغلاق WebSocket
-})();
-</script>
-""")
+try:
+  import streamlit.components.v1 as _st_components
+  _st_components.html(
+      """
+      <script>
+      (function() {
+          try {
+              var parentDoc = window.parent.document;
+              var styleId = "marsad-parent-dark-select-override";
+              var existing = parentDoc.getElementById(styleId);
+              if (existing) existing.remove();
+              var stEl = parentDoc.createElement("style");
+              stEl.id = styleId;
+              stEl.innerHTML = `
+                  html body div[data-baseweb="select"],
+                  html body div[data-baseweb="select"] > div,
+                  html body div[data-baseweb="select"] > div > div,
+                  html body div[data-baseweb="input"],
+                  html body div[data-baseweb="input"] > div,
+                  html body div[data-baseweb="base-input"],
+                  html body div[data-baseweb="base-input"] > div {
+                      background: #091c22 !important;
+                      background-color: #091c22 !important;
+                      border-color: rgba(212, 175, 55, 0.48) !important;
+                      color: #ffffff !important;
+                  }
+                  html body div[data-baseweb="select"] *,
+                  html body div[data-baseweb="input"] input {
+                      color: #ffffff !important;
+                      -webkit-text-fill-color: #ffffff !important;
+                      background-color: transparent !important;
+                      font-weight: 800 !important;
+                  }
+                  html body div[data-baseweb="popover"],
+                  html body div[data-baseweb="popover"] > div,
+                  html body div[data-baseweb="popover"] > div > div,
+                  html body div[data-baseweb="menu"],
+                  html body ul[data-testid="stSelectboxVirtualDropdown"],
+                  html body div[data-testid="stSelectboxVirtualDropdown"],
+                  html body ul[role="listbox"],
+                  html body div[role="listbox"] {
+                      background: #081b21 !important;
+                      background-color: #081b21 !important;
+                      border: 1.5px solid rgba(212, 175, 55, 0.6) !important;
+                  }
+                  html body div[data-baseweb="popover"] li,
+                  html body div[data-baseweb="popover"] [role="option"],
+                  html body ul[data-testid="stSelectboxVirtualDropdown"] li,
+                  html body li[role="option"] {
+                      background: #0c252e !important;
+                      background-color: #0c252e !important;
+                      color: #ffffff !important;
+                      -webkit-text-fill-color: #ffffff !important;
+                      font-weight: 800 !important;
+                      margin-bottom: 3px !important;
+                      border-radius: 8px !important;
+                  }
+                  html body div[data-baseweb="popover"] li *,
+                  html body div[data-baseweb="popover"] [role="option"] *,
+                  html body ul[data-testid="stSelectboxVirtualDropdown"] li *,
+                  html body li[role="option"] * {
+                      color: #ffffff !important;
+                      -webkit-text-fill-color: #ffffff !important;
+                      background-color: transparent !important;
+                      font-weight: 800 !important;
+                  }
+                  html body div[data-baseweb="popover"] li:hover,
+                  html body li[role="option"]:hover,
+                  html body li[role="option"][aria-selected="true"] {
+                      background: #134e4a !important;
+                      background-color: #134e4a !important;
+                      border: 1px solid #d4af37 !important;
+                  }
+              `;
+              parentDoc.head.appendChild(stEl);
+          } catch (err) {}
+
+          if (!window.parent._marsad_keep_alive_active) {
+              window.parent._marsad_keep_alive_active = true;
+              setInterval(function() {
+                  try {
+                      fetch(window.parent.location.href, { method: "HEAD", cache: "no-store" }).catch(function(){});
+                  } catch(e) {}
+              }, 120000);
+          }
+      })();
+      </script>
+      """,
+      height=0,
+  )
+except Exception:
+  pass
 
 
 # =====================================================================
@@ -9221,7 +9114,34 @@ with col_side_panel:
   ):
     request_stop_scan()
 
-  with st.expander("🔍 خيارات الرصد والروابط المخصصة", expanded=False):
+  if selected_mode_key == "target":
+    st.markdown(f"**🎯 إدارة الروابط والقنوات المخصصة ({len(custom_targets)})**")
+    with st.form("add_custom_target_form", clear_on_submit=True):
+      new_t_url = st.text_input(
+          "الرابط أو اسم القناة/الصفحة",
+          placeholder="رابط أو اسم قناة (يوتيوب/فيسبوك/إكس)...",
+      )
+      new_t_kw = st.text_input(
+          "كلمة فلترة (اختياري)",
+          placeholder="كلمة مفتاحية داخل القناة...",
+      )
+      add_t_btn = st.form_submit_button("➕ إضافة رابط مخصص")
+      if add_t_btn and new_t_url.strip():
+        custom_targets.append({"url": new_t_url.strip(), "keyword": new_t_kw.strip()})
+        save_custom_targets(custom_targets)
+        st.rerun()
+
+    for idx, t_item in enumerate(list(custom_targets)):
+      kw_tag = f" ({t_item['keyword']})" if t_item.get("keyword") else ""
+      render_html(
+          f"<div style='font-size:0.82rem;color:#f8fafc;direction:ltr;text-align:left;word-break:break-all;background:rgba(9,28,34,0.85);border:1px solid rgba(212,175,55,0.3);padding:6px 8px;border-radius:8px;margin-top:6px;'>🔗 {html.escape(t_item['url'])}{html.escape(kw_tag)}</div>"
+      )
+      if st.button(f"🗑️ حذف الرابط #{idx + 1}", key=f"del_target_{idx}", use_container_width=True):
+        custom_targets.pop(idx)
+        save_custom_targets(custom_targets)
+        st.rerun()
+
+  with st.expander("🔍 خيارات البحث والفترة الزمنية", expanded=False):
     kw_input = st.text_input(
         "تخصيص بكلمات مفتاحية (اختياري)",
         value=cfg.get("keywords_input", ""),
@@ -9241,32 +9161,6 @@ with col_side_panel:
     if selected_period != cfg.get("search_period", ""):
       cfg["search_period"] = selected_period
       save_credentials(cfg)
-
-    st.markdown(f"**🎯 الروابط والقنوات المخصصة ({len(custom_targets)})**")
-    with st.form("add_custom_target_form", clear_on_submit=True):
-      new_t_url = st.text_input(
-          "الرابط أو اسم القناة/الصفحة",
-          placeholder="رابط أو اسم قناة (يوتيوب/فيسبوك/إكس)...",
-      )
-      new_t_kw = st.text_input(
-          "كلمة فلترة (اختياري)",
-          placeholder="كلمة مفتاحية داخل القناة...",
-      )
-      add_t_btn = st.form_submit_button("➕ إضافة رابط مخصص")
-      if add_t_btn and new_t_url.strip():
-        custom_targets.append({"url": new_t_url.strip(), "keyword": new_t_kw.strip()})
-        save_custom_targets(custom_targets)
-        st.rerun()
-
-    for idx, t_item in enumerate(list(custom_targets)):
-      kw_tag = f" ({t_item['keyword']})" if t_item.get("keyword") else ""
-      render_html(
-          f"<div style='font-size:0.82rem;color:#cbd5e1;direction:ltr;text-align:left;word-break:break-all;background:rgba(15,23,42,0.6);padding:6px 8px;border-radius:8px;margin-top:6px;'>🔗 {html.escape(t_item['url'])}{html.escape(kw_tag)}</div>"
-      )
-      if st.button(f"🗑️ حذف الرابط #{idx + 1}", key=f"del_target_{idx}", use_container_width=True):
-        custom_targets.pop(idx)
-        save_custom_targets(custom_targets)
-        st.rerun()
 
   # قسم إعدادات المشرف والمفاتيح السرية (مقفل برمز سري)
   with st.expander("🔒 إعدادات المشرف والمفاتيح (محمي)", expanded=False):
@@ -9473,11 +9367,11 @@ def render_article_cards(
         "</div>"
         f'<div class="news-title" dir="rtl" style="direction:rtl !important;text-align:right !important;"><a href="{url_safe}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;">{title_safe}</a></div>'
         '<div class="news-dates-row" dir="rtl" style="direction:rtl !important;text-align:right !important;">'
-        f'<span class="date-chip" dir="rtl">📅 تاريخ النشر: <strong style="color:#38bdf8;" dir="ltr">{pub_date_safe}</strong> <span style="color:#34d399;">({rel_time})</span></span>'
-        f'<span class="date-chip" dir="rtl">📡 تاريخ الرصد: <strong style="color:#f472b6;" dir="ltr">{mon_date_safe}</strong></span>'
+        f'<span class="date-chip" dir="rtl">📅 تاريخ النشر: <strong style="color:#f3e5ab;" dir="ltr">{pub_date_safe}</strong> <span style="color:#6ee7b7;">({rel_time})</span></span>'
+        f'<span class="date-chip" dir="rtl">📡 تاريخ الرصد: <strong style="color:#5eead4;" dir="ltr">{mon_date_safe}</strong></span>'
         "</div>"
         f'<div class="news-summary-box" dir="rtl" style="direction:rtl !important;text-align:right !important;">'
-        f'<strong style="color:#38bdf8;">📝 ملخص الخبر: </strong>{summary_safe}'
+        f'<strong style="color:#f3e5ab;">📝 ملخص الخبر: </strong>{summary_safe}'
         "</div>"
         '<div dir="rtl" style="direction:rtl !important;text-align:right !important;">'
         f'<a class="news-link" href="{url_safe}" target="_blank" rel="noopener noreferrer">🔗 فتح المصدر الأصلي</a>'
@@ -9741,7 +9635,7 @@ with col_main_feed:
       f"""
       <div class="active-feed-banner" dir="rtl">
           <div style="font-size:1.02rem;font-weight:900;color:#f8fafc;">
-              📌 القسم المعروض: <span style="color:#38bdf8;">{html.escape(active_feed_title)}</span>
+              📌 القسم المعروض: <span style="color:#f3e5ab;">{html.escape(active_feed_title)}</span>
           </div>
           <div style="font-size:0.84rem;font-weight:800;color:#34d399;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.35);padding:3px 12px;border-radius:999px;">
               عدد المنشورات المعروضة: {len(displayed_articles)}
@@ -9773,11 +9667,3 @@ if cfg.get("auto_monitor", True):
         daemon=True,
         name="OnLoadAsyncCycle",
     ).start()
-
-  render_html("""
-    <script>
-    setTimeout(function() {
-        window.parent.location.reload();
-    }, 60000);
-    </script>
-    """)
