@@ -3087,7 +3087,7 @@ def fetch_articles_from_db(use_cache: bool = True):
       for r in c.fetchall():
         d = dict(r)
         is_tgt = bool(d.get("is_custom_target", 0))
-        if not is_strictly_judicial_and_clean(
+        if d.get("category") != "رصد حر بالويب" and not is_strictly_judicial_and_clean(
             d.get("title", ""),
             f"{d.get('summary', '')} {d.get('raw_snippet', '')}",
             d.get("url", ""),
@@ -3854,12 +3854,19 @@ def scrape_open_web_keyword(
   max_age = p_cfg["sec"]
   ddg_tag = p_cfg["ddg"]
 
+  sports_eu_sites = "site:lequipe.fr OR site:marca.com OR site:as.com OR site:mundodeportivo.com OR site:sport.es OR site:rmcsport.bfmtv.com OR site:footmercato.net OR site:gazzetta.it OR site:corrieredellosport.it OR site:abola.pt"
+  sports_en_sites = "site:espn.com OR site:skysports.com OR site:bbc.com/sport OR site:goal.com OR site:theathletic.com OR site:nytimes.com/athletic OR site:fourfourtwo.com OR site:kicker.de OR site:beinsports.com"
+  sports_ar_sites = "site:kooora.com OR site:winwin.com OR site:beinsports.com OR site:filgoal.com OR site:almountakhab.com OR site:hesport.com OR site:elbotola.com"
+
   gnews_editions = [
-      ("أخبار الويب (عربي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=ar&gl=MA&ceid=MA:ar", "الصحف"),
-      ("أخبار الويب (دولي - عربي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=ar&gl=EG&ceid=EG:ar", "صحافة دولية"),
-      ("أخبار الويب (فرنسي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=fr&gl=FR&ceid=FR:fr", "صحافة دولية"),
-      ("أخبار الويب (إنجليزي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=en-US&gl=US&ceid=US:en", "صحافة دولية"),
-      ("أخبار الويب (إسباني)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=es&gl=ES&ceid=ES:es", "صحافة دولية"),
+      ("صحف رياضية دولية (أوروبا)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' (' + sports_eu_sites + ') when:' + when_tag)}&hl=fr&gl=FR&ceid=FR:fr", "صحافة دولية"),
+      ("صحف ومواقع رياضية عالمية", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' (' + sports_en_sites + ') when:' + when_tag)}&hl=en-US&gl=US&ceid=US:en", "صحافة دولية"),
+      ("مواقع رياضية عربية متخصصة", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' (' + sports_ar_sites + ') when:' + when_tag)}&hl=ar&gl=MA&ceid=MA:ar", "صحافة دولية"),
+      ("الويب المفتوح (عربي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=ar&gl=MA&ceid=MA:ar", "الصحف"),
+      ("الويب المفتوح (عربي دولي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=ar&gl=EG&ceid=EG:ar", "صحافة دولية"),
+      ("الويب المفتوح (فرنسي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=fr&gl=FR&ceid=FR:fr", "صحافة دولية"),
+      ("الويب المفتوح (إنجليزي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=en-US&gl=US&ceid=US:en", "صحافة دولية"),
+      ("الويب المفتوح (إسباني)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=es&gl=ES&ceid=ES:es", "صحافة دولية"),
       ("أخبار Bing الشاملة", f"https://www.bing.com/news/search?q={urllib.parse.quote(kw)}&format=rss", "صحافة دولية"),
   ]
 
@@ -3877,6 +3884,8 @@ def scrape_open_web_keyword(
           if u and u not in seen_urls:
             seen_urls.add(u)
             normalize_press_platform_and_source(entry)
+            entry["category"] = "رصد حر بالويب"
+            entry["_open_web_kw"] = True
             items.append(entry)
     except Exception:
       pass
@@ -3919,6 +3928,8 @@ def scrape_open_web_keyword(
               "pub_timestamp": time.time(),
               "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
               "is_custom_target": 0,
+              "category": "رصد حر بالويب",
+              "_open_web_kw": True,
           }
           normalize_press_platform_and_source(entry)
           items.append(entry)
@@ -7108,7 +7119,7 @@ def _translate_foreign_title_instant_local(foreign_title: str, source_name: str 
         break
   if matched_terms:
     return " — ".join(matched_terms[:3])
-  return f"مستجد قضائي وإعلامي عبر {source_name or 'الصحافة الدولية'}" + (f" ({country_lbl})" if country_lbl else "")
+  return f"تغطية إعلامية عبر {source_name or 'الصحافة الدولية'}" + (f" ({country_lbl})" if country_lbl else "")
 
 
 def _ensure_arabic_title_and_summary(item: dict, fast_render: bool = False) -> tuple:
@@ -7133,10 +7144,12 @@ def _ensure_arabic_title_and_summary(item: dict, fast_render: bool = False) -> t
         raw_summary = cached_s
       else:
         local_s = _translate_foreign_title_instant_local(raw_snip or orig_s, raw_src, c_lbl)
-        if _has_morocco_reference(f"{orig_t} {raw_snip} {orig_s}") and is_intl_plat:
+        if item.get("_open_web_kw") or item.get("category") == "رصد حر بالويب":
+          raw_summary = f"تغطية منشورة على {raw_src} ({c_lbl}) حول: {raw_title}."
+        elif _has_morocco_reference(f"{orig_t} {raw_snip} {orig_s}") and is_intl_plat:
           raw_summary = f"يتناول هذا التقرير الصادر عن {raw_src} ({c_lbl}) مستجدات قضائية تتعلق بالمغرب حول: {raw_title}."
         else:
-          raw_summary = f"تقرير قضائي صادر عن {raw_src} ({c_lbl}) يتناول: {local_s}."
+          raw_summary = f"تقرير إعلامي صادر عن {raw_src} ({c_lbl}) يتناول: {local_s}."
   else:
     if raw_title and not _is_predominantly_arabic(raw_title):
       tr_t = translate_foreign_title_to_arabic_rulebased(raw_title)
@@ -7176,7 +7189,10 @@ def _ensure_arabic_title_and_summary(item: dict, fast_render: bool = False) -> t
 
   if raw_title and not _is_predominantly_arabic(raw_title):
     c_lbl, _ = detect_article_country_and_topic(orig_t, raw_snip, item.get("url", ""), raw_src, plat)
-    raw_title = f"مستجد قضائي في {raw_src} ({c_lbl})"
+    if item.get("_open_web_kw") or item.get("category") == "رصد حر بالويب":
+      raw_title = f"تغطية عبر {raw_src} ({c_lbl})"
+    else:
+      raw_title = f"مستجد قضائي في {raw_src} ({c_lbl})"
 
   if not raw_summary or not _is_predominantly_arabic(raw_summary):
     c_lbl, _ = detect_article_country_and_topic(orig_t, raw_snip, item.get("url", ""), raw_src, plat)
@@ -8042,7 +8058,16 @@ def quick_process_and_save(
     raw_snip = clean_display_text(it.get("raw_snippet") or "")
     img_url = (it.get("image_url") or "").strip()
 
-    if ai_calls < 20 and api_key:
+    if open_web_keyword:
+      ar_t_kw, ar_s_kw = _ensure_arabic_title_and_summary(it, fast_render=False)
+      ai_res = {
+          "translated_title": ar_t_kw or it.get("title", ""),
+          "summary": ar_s_kw or raw_snip,
+          "sentiment": "محايد",
+          "category": "رصد حر بالويب",
+          "relevance_score": 95,
+      }
+    elif ai_calls < 20 and api_key:
       ai_res = analyze_with_gemini(it, api_key)
       ai_calls += 1
     else:
@@ -9860,7 +9885,14 @@ with col_main_feed:
           collected, cfg, is_target_run=is_target_mode, open_web_keyword=is_web_kw
       )
       if is_web_kw:
-        st.session_state["last_web_keyword_results"] = list(collected)
+        translated_kw_list = []
+        for _wk_item in collected[:30]:
+          _ar_t, _ar_s = _ensure_arabic_title_and_summary(_wk_item, fast_render=False)
+          _wk_item["title"] = _ar_t
+          _wk_item["summary"] = _ar_s
+          _wk_item["category"] = "رصد حر بالويب"
+          translated_kw_list.append(_wk_item)
+        st.session_state["last_web_keyword_results"] = translated_kw_list
         st.session_state["last_web_keyword_query"] = (st.session_state.get("global_site_search") or kw or "").strip()
         st.session_state["last_web_keyword_period"] = s_period
       invalidate_articles_cache()
