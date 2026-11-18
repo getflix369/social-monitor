@@ -2236,8 +2236,26 @@ def _has_morocco_reference(text: str) -> bool:
   )
 
 
-def _extract_morocco_focused_sentences_ar(translated_body: str, orig_text: str) -> str:
-  """استخلاص الجمل التي تركز على صلة الخبر بالمغرب وتقديمها في صدارة الملخص."""
+def _extract_morocco_focused_sentences(raw_text: str) -> str:
+  """استخراج الجمل من المتن الأصلي (الأجنبي أو العربي) التي تتحدث عن المغرب أولاً قبل ترجمتها وتلخيصها."""
+  if not raw_text:
+    return ""
+  sents = [
+      seg.strip()
+      for seg in re.split(r"(?<=[.!؟\n])\s+", raw_text)
+      if len(seg.strip()) > 15
+  ]
+  if not sents:
+    return raw_text[:1200]
+  ma_sents = [s for s in sents if _has_morocco_reference(s)]
+  other_sents = [s for s in sents if s not in ma_sents]
+  if ma_sents:
+    return " ".join(ma_sents[:3] + other_sents[:1])[:1400]
+  return " ".join(sents[:3])[:1200]
+
+
+def _extract_morocco_focused_sentences_ar(translated_body: str, orig_text: str, is_international: bool = True) -> str:
+  """استخلاص الجمل العربية التي تركز على صلة الخبر الدولي بالمغرب وتقديمها في صدارة الملخص."""
   if not translated_body:
     return ""
   sentences = [
@@ -2248,7 +2266,10 @@ def _extract_morocco_focused_sentences_ar(translated_body: str, orig_text: str) 
   if not sentences:
     return translated_body[:450]
 
-  ma_sents = [s for s in sentences if any(k in s for k in ("المغرب", "مغربي", "مغربية", "المغاربة", "الرباط", "الدار البيضاء", "الصحراء", "سبتة", "مليلية", "طنجة"))]
+  ma_sents = [
+      s for s in sentences
+      if any(k in s for k in ("المغرب", "مغربي", "مغربية", "المغاربة", "الرباط", "الدار البيضاء", "الصحراء", "سبتة", "مليلية", "طنجة", "مراكش", "فاس", "أكادير", "العيون", "الداخلة"))
+  ]
   other_sents = [s for s in sentences if s not in ma_sents]
 
   if ma_sents:
@@ -2256,26 +2277,28 @@ def _extract_morocco_focused_sentences_ar(translated_body: str, orig_text: str) 
     res = " ".join(ordered)
   else:
     res = " ".join(sentences[:3])
-    # إذا كان المقال الأصلي يشير للمغرب ولكن الجمل المستخلصة لم تذكره صراحة، نوضح الصلة بالمغرب في مطلع الملخص
-    if _has_morocco_reference(orig_text) and not any(k in res for k in ("المغرب", "مغربي", "مغربية")):
-      res = f"في سياق يهم المغرب: {res}"
+    if is_international and _has_morocco_reference(orig_text) and not any(k in res for k in ("المغرب", "مغربي", "مغربية", "المغاربة")):
+      res = f"فيما يتعلق بالمغرب: {res}"
 
   return res[:450] + ("..." if len(res) > 450 else "")
 
-def translate_foreign_snippet_to_arabic_rulebased(snippet: str, title: str, source_name: str) -> str:
-  """ترجمة متن الخبر الأجنبي نفسه إلى العربية الفصحى لاستخلاص ملخص دقيق ومباشر للوقائع."""
+
+def translate_foreign_snippet_to_arabic_rulebased(snippet: str, title: str, source_name: str, is_international: bool = True) -> str:
+  """ترجمة متن الخبر الأجنبي إلى العربية الفصحى مع إعطاء الأولوية للجمل التي تتطرق للمغرب."""
   s_clean = clean_display_text(snippet or "")
   t_clean = clean_display_text(title or "")
-  target_text = s_clean if len(s_clean) > len(t_clean) + 10 else f"{t_clean}. {s_clean}".strip(". ")
+  prioritized_source = _extract_morocco_focused_sentences(s_clean) if len(s_clean) > len(t_clean) + 10 else f"{t_clean}. {s_clean}".strip(". ")
 
-  live_body_ar = translate_text_to_arabic_live(target_text[:1500])
-  if live_body_ar and len(live_body_ar) >= 25:
-    return _extract_morocco_focused_sentences_ar(live_body_ar, f"{t_clean} {s_clean}")
+  live_body_ar = translate_text_to_arabic_live(prioritized_source[:1500])
+  if live_body_ar and len(live_body_ar) >= 20 and _is_predominantly_arabic(live_body_ar):
+    return _extract_morocco_focused_sentences_ar(live_body_ar, f"{t_clean} {s_clean}", is_international=is_international)
 
   t_ar = translate_foreign_title_to_arabic_rulebased(t_clean)
-  if t_ar and t_ar != t_clean:
+  if t_ar and _is_predominantly_arabic(t_ar):
+    if is_international and _has_morocco_reference(f"{t_clean} {s_clean}") and not any(k in t_ar for k in ("المغرب", "مغربي", "مغربية")):
+      return f"يتناول الخبر ما يتعلق بالمغرب بخصوص: {t_ar}."
     return f"{t_ar}."
-  return s_clean[:420] or t_clean
+  return t_ar or s_clean[:420] or t_clean
 
 
 def build_extractive_arabic_summary(
@@ -2283,15 +2306,16 @@ def build_extractive_arabic_summary(
 ) -> str:
   t_clean = clean_display_text(title)
   s_clean = clean_display_text(snippet)
+  is_intl = (platform == "صحافة دولية")
 
-  # إذا كان المتن بلغة أجنبية، نترجم المتن الفعلي للخبر نفسه بدلاً من كتابة عبارة عامة
+  # إذا كان المتن بلغة أجنبية، نترجم المتن الفعلي للخبر نفسه مع التركيز على الجمل المتعلقة بالمغرب
   if s_clean and not _is_predominantly_arabic(s_clean):
-    translated_body = translate_foreign_snippet_to_arabic_rulebased(s_clean, t_clean, source_name or platform)
+    translated_body = translate_foreign_snippet_to_arabic_rulebased(s_clean, t_clean, source_name or platform, is_international=is_intl)
     if translated_body and _is_predominantly_arabic(translated_body):
       return translated_body
 
   if not _is_predominantly_arabic(f"{t_clean} {s_clean}"):
-    return translate_foreign_snippet_to_arabic_rulebased(s_clean, t_clean, source_name or platform)
+    return translate_foreign_snippet_to_arabic_rulebased(s_clean, t_clean, source_name or platform, is_international=is_intl)
 
   if s_clean and t_clean:
     if s_clean.startswith(t_clean):
@@ -2314,6 +2338,8 @@ def build_extractive_arabic_summary(
         if len(seg.strip()) > 20 and seg.strip() != t_clean
     ]
     if sentences:
+      if is_intl and _has_morocco_reference(f"{t_clean} {s_clean}"):
+        return _extract_morocco_focused_sentences_ar(" ".join(sentences), f"{t_clean} {s_clean}", is_international=True)
       summary_txt = " ".join(sentences[:3])
       return summary_txt[:450] + ("..." if len(summary_txt) > 450 else "")
     return s_clean[:450] + ("..." if len(s_clean) > 450 else "")
@@ -6834,7 +6860,7 @@ def analyze_with_gemini(item: dict, api_key: str):
       "قم بقراءة الخبر التالي الصادر عن الصحافة (عربي أو فرنسي أو إسباني أو إنجليزي) ونفذ بدقة تامة:\n"
       "1) translated_title: ترجم العنوان الأصلي ترجمة حرفية وصحفية دقيقة إلى اللغة العربية الفصحى (إذا كان بلغة أجنبية، اذكر الوقائع والأطراف بدقة دون اختصار مخل أو عبارات عامة).\n"
       "2) summary: لخص مضمون الخبر نفسه في جملتين إلى ثلاث جمل بالعربية الفصحى تشرح الوقائع المحددة والأطراف والمحكمة والقرار الوارد في النص مباشرة.\n"
-      "3) إذا كان المقال يتطرق إلى المغرب (بشكل مباشر أو ضمني مثل الصحراء المغربية، اتفاقيات الصيد أو الفلاحة، سبتة ومليلية، أو تسليم مطلوبين)، فيجب إجبارياً إبراز اسم (المغرب) في العنوان والملخص والتركيز على ما يهم المغرب في هذا الخبر.\n"
+      "3) إذا كان المقال صادراً عن صحافة دولية أجنبية ويتطرق إلى المغرب (بشكل مباشر أو ضمني مثل الصحراء المغربية، اتفاقيات الصيد أو الفلاحة، سبتة ومليلية، أو تسليم مطلوبين)، فيجب إجبارياً تركيز الملخص باللغة العربية على ما يخص المغرب في هذا الخبر. أما الصحف الوطنية المغربية فلا تضف لها عبارة يتطرق للمغرب أو يهم المغرب.\n"
       "أرجع النتيجة بصيغة JSON فقط بالمفاتيح التالية:\n"
       '{"translated_title": "الترجمة العربية الدقيقة للعنوان...", '
       '"summary": "ملخص الوقائع المباشرة للخبر باللغة العربية...", '
@@ -6911,12 +6937,24 @@ def _ensure_arabic_title_and_summary(item: dict) -> tuple:
         if tr_s and _is_predominantly_arabic(tr_s):
           raw_summary = tr_s
 
-  # إذا كان المقال يشير إلى المغرب (صراحة أو ضمناً) ولم يذكر الملخص كلمة المغرب، نبرز الصلة بالمغرب بوضوح
-  orig_combined = f"{item.get('title', '')} {item.get('raw_snippet', '')} {item.get('summary', '')} {item.get('category', '')}"
-  if _has_morocco_reference(orig_combined) and raw_summary and not any(k in raw_summary for k in ("المغرب", "مغربي", "مغربية", "المغاربة")):
-    raw_summary = f"🇲🇦 (يتعلق بالمغرب): {raw_summary}"
-  if _has_morocco_reference(orig_combined) and raw_title and not any(k in raw_title for k in ("المغرب", "مغربي", "مغربية", "المغاربة")) and item.get("platform") == "صحافة دولية":
-    raw_title = f"{raw_title} (يتطرق للمغرب)"
+  is_intl_plat = (plat == "صحافة دولية")
+  if not is_intl_plat:
+    # إزالة أي عبارات "يتطرق للمغرب" أو "يهم المغرب" من أخبار الصحف والمواقع الوطنية المغربية
+    raw_title = re.sub(r"\s*\((?:يتطرق للمغرب|يتعلق بالمغرب|يهم المغرب)\)\s*", "", raw_title).strip()
+    raw_summary = re.sub(r"^(?:🇲🇦\s*)?(?:\((?:يتعلق بالمغرب|يتطرق للمغرب|يهم المغرب)\)|في سياق يهم المغرب|فيما يتعلق بالمغرب)\s*:?\s*", "", raw_summary).strip()
+    if item.get("category") in ("يتطرق للمغرب", "يهم المغرب"):
+      item["category"] = "شؤون قضائية ومحاكم"
+  else:
+    # للأخبار الدولية فقط: إذا كان المقال يتطرق للمغرب، نركز الملخص على الجمل الخاصة بالمغرب باللغة العربية
+    orig_combined = f"{item.get('title', '')} {item.get('raw_snippet', '')} {item.get('summary', '')} {item.get('category', '')}"
+    if _has_morocco_reference(orig_combined):
+      if raw_snip:
+        focused_ar = translate_foreign_snippet_to_arabic_rulebased(raw_snip, item.get("title", ""), raw_src, is_international=True)
+        if focused_ar and _is_predominantly_arabic(focused_ar) and any(k in focused_ar for k in ("المغرب", "مغربي", "مغربية", "المغاربة", "الرباط", "الصحراء", "سبتة", "مليلية")):
+          raw_summary = focused_ar
+      raw_summary = _extract_morocco_focused_sentences_ar(raw_summary, orig_combined, is_international=True)
+      if raw_title and not any(k in raw_title for k in ("المغرب", "مغربي", "مغربية", "المغاربة", "الرباط", "الصحراء")):
+        raw_title = f"{raw_title} (يتطرق للمغرب)"
 
   return raw_title, raw_summary
 
@@ -7245,8 +7283,59 @@ def _telegram_send_international_submenu(chat_id: str, token: str):
     pass
 
 
+def _format_bot_article_card_html(item: dict) -> tuple:
+  """تنسيق الخبر في بوت التلغرام بنفس البطاقة التفصيلية الافتراضية للمنصة والبوت (المنصة، الدولة، المصدر، التاريخ، العنوان بالعربية، الملخص الكامل بالعربية، والتصنيف)."""
+  platform_icons = {
+      "الصحف": "📰",
+      "صحافة دولية": "🌍",
+      "فيسبوك": "🟦",
+      "إكس": "⬛",
+      "يوتيوب": "🟥",
+      "أخرى": "🟪",
+  }
+  plat_tg = item.get("platform", "الصحف")
+  icon = platform_icons.get(plat_tg, "📡")
+  clean_u = clean_social_post_url(item.get("url", ""))
+
+  country_tag, topic_tag = detect_article_country_and_topic(
+      item.get("title", ""), item.get("raw_snippet", ""), clean_u, item.get("source_name", ""), plat_tg
+  )
+  country_flags = {
+      "المغرب": "🇲🇦",
+      "الولايات المتحدة": "🇺🇸",
+      "فرنسا": "🇫🇷",
+      "إسبانيا": "🇪🇸",
+      "الجزائر": "🇩🇿",
+      "دولي": "🏛️",
+  }
+  c_flag = country_flags.get(country_tag, "🌍")
+
+  ar_title_tg, ar_summary_tg = _ensure_arabic_title_and_summary(item)
+  monitored_dt = datetime.fromtimestamp(
+      float(item.get("created_at") or item.get("pub_timestamp") or time.time()), tz=timezone.utc
+  ).strftime("%Y-%m-%d %H:%M")
+  pub_dt_str = clean_display_text(str(item.get("pub_date") or monitored_dt))
+
+  cat_label = clean_display_text(str(item.get("category") or topic_tag or "شؤون قضائية"))
+  if plat_tg != "صحافة دولية" and cat_label in ("يتطرق للمغرب", "يهم المغرب"):
+    cat_label = "شؤون قضائية ومحاكم"
+
+  card_lines = [
+      "⚖️ <b>المرصد القضائي</b>",
+      f"{icon} <b>المنصة:</b> {html.escape(plat_tg)} | {c_flag} <b>الدولة:</b> {html.escape(country_tag)}",
+      f"🗞️ <b>المصدر:</b> {html.escape(str(item.get('source_name') or plat_tg))}",
+      f"📅 <b>تاريخ النشر:</b> {html.escape(pub_dt_str)} | 📡 <b>الرصد:</b> {monitored_dt}",
+      f"📌 <b>العنوان:</b> {html.escape(ar_title_tg)}",
+      "",
+      f"📝 <b>الملخص:</b> {html.escape(ar_summary_tg)}",
+      "",
+      f"🏷️ <b>التصنيف:</b> {html.escape(cat_label)}",
+  ]
+  return "\n".join(card_lines), clean_u
+
+
 def _telegram_bot_send_filtered_response(filter_key: str, filter_type: str, chat_id: str, token: str):
-  """عرض الأخبار المطابقة للتصنيف المختار في رسالة واحدة واضحة ومترجمة مع احترام حد طول الرسالة في تلغرام."""
+  """عرض الأخبار المطابقة للزر المختار في البوت على شكل بطاقات إخبارية كاملة مع وضع أزرار التنقل في آخر بطاقة كي تظهر مباشرة أمام المستخدم دون الحاجة للتمرير (Scrolling)."""
   if not token or not chat_id:
     return
 
@@ -7291,28 +7380,27 @@ def _telegram_bot_send_filtered_response(filter_key: str, filter_type: str, chat
     elif filter_type == "platform":
       if filter_key == "all" or r_plat == filter_key:
         rows.append(r)
-    if len(rows) >= 5:
+    if len(rows) >= 4:
       break
 
   inline_nav = [
       [
-          {"text": "🇺🇸 أمريكا", "callback_data": "c_us"},
-          {"text": "🇫🇷 فرنسا", "callback_data": "c_fr"},
-          {"text": "🇪🇸 إسبانيا", "callback_data": "c_es"},
-          {"text": "🇩🇿 الجزائر", "callback_data": "c_dz"}
+          {"text": "📰 الصحف الوطنية", "callback_data": "p_press"},
+          {"text": "🌍 دولية (حسب الدولة)", "callback_data": "menu_intl"},
       ],
       [
-          {"text": "🌍 القائمة الفرعية للدولية", "callback_data": "menu_intl"},
-          {"text": "🔙 القائمة الرئيسية", "callback_data": "menu_main"}
-      ]
+          {"text": "🇲🇦 دولية عن المغرب", "callback_data": "t_ma"},
+          {"text": "🔙 القائمة الرئيسية", "callback_data": "menu_main"},
+      ],
   ]
 
   if not rows:
-    msg_empty = (
-        f"⚖️ <b>{html.escape(label)}</b>\n\n"
-        "لا توجد أخبار مسجلة حالياً ضمن هذا التصنيف.\n"
-        "💡 يمكنك النقر على <b>⚡ تشغيل رصد فوري</b> لجلب أحدث المستجدات."
-    )
+    msg_empty = "\n".join([
+        f"⚖️ <b>{html.escape(label)}</b>",
+        "",
+        "لا توجد أخبار مسجلة حالياً ضمن هذا التصنيف.",
+        "💡 يمكنك النقر على <b>⚡ تشغيل رصد فوري</b> لجلب أحدث المستجدات.",
+    ])
     try:
       requests.post(
           f"https://api.telegram.org/bot{token}/sendMessage",
@@ -7328,32 +7416,34 @@ def _telegram_bot_send_filtered_response(filter_key: str, filter_type: str, chat
       pass
     return
 
-  resp_lines = [f"⚖️ <b>{html.escape(label)} (أحدث {len(rows)} أخبار):</b>"]
+  # إرسال كل خبر في بطاقة كاملة بنفس الشكل الافتراضي للبوت والمنصة حتى تظهر مباشرة في أسفل الشاشة أمام المستخدم
+  total_r = len(rows)
   for idx, r in enumerate(rows, 1):
-    ar_t_r, ar_s_r = _ensure_arabic_title_and_summary(r)
-    t_clean = html.escape(ar_t_r[:160])
-    s_short = html.escape(ar_s_r[:145] + ("..." if len(ar_s_r) > 145 else "")) if ar_s_r else ""
-    u_clean = html.escape(clean_social_post_url(r.get("url") or ""))
-    src_clean = html.escape(clean_display_text(r.get("source_name") or r.get("platform") or ""))
-    entry_block = f"\n<b>{idx}.</b> <a href=\"{u_clean}\">{t_clean}</a>\n    📝 {s_short}\n    🗞️ {src_clean}"
-    if sum(len(x) for x in resp_lines) + len(entry_block) > 3700:
-      break
-    resp_lines.append(entry_block)
+    card_html, clean_u = _format_bot_article_card_html(r)
+    header_line = f"📂 <b>{html.escape(label)} ({idx}/{total_r})</b>\n━━━━━━━━━━━━━━━━━━\n"
+    full_card_text = (header_line + card_html)[:3900]
 
-  try:
-    requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={
-            "chat_id": chat_id,
-            "text": "\n".join(resp_lines),
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-            "reply_markup": {"inline_keyboard": inline_nav},
-        },
-        timeout=8,
-    )
-  except Exception:
-    pass
+    kb_rows = []
+    if clean_u and clean_u.startswith("http"):
+      kb_rows.append([{"text": "🔗 فتح المصدر الأصلي للخبر", "url": clean_u}])
+    # في البطاقة الأخيرة نضيف أزرار التنقل السريع حتى تبقى في أسفل الشاشة أمام عين المستخدم مباشرة
+    if idx == total_r:
+      kb_rows.extend(inline_nav)
+
+    try:
+      requests.post(
+          f"https://api.telegram.org/bot{token}/sendMessage",
+          json={
+              "chat_id": chat_id,
+              "text": full_card_text,
+              "parse_mode": "HTML",
+              "disable_web_page_preview": True,
+              "reply_markup": {"inline_keyboard": kb_rows},
+          },
+          timeout=8,
+      )
+    except Exception:
+      pass
 
 
 _TG_CALLBACK_MAP = {
@@ -8826,20 +8916,101 @@ button[data-baseweb="tab"][aria-selected="true"] {
     color: #ffffff !important;
 }
 
+/* إزالة أي خلفية بيضاء في كافة حقول الإدخال وحقول المفاتيح السرية والقوائم المنسدلة والنوافذ المنبثقة */
+div[data-baseweb="input"],
 div[data-baseweb="input"] > div,
-div[data-baseweb="select"] > div {
-    background-color: rgba(15, 23, 42, 0.88) !important;
-    border-color: rgba(148, 163, 184, 0.32) !important;
+div[data-baseweb="base-input"],
+div[data-baseweb="base-input"] > div,
+div[data-baseweb="select"],
+div[data-baseweb="select"] > div,
+div[data-testid="stTextInput"] div[data-baseweb="input"],
+div[data-testid="stTextInput"] div[data-baseweb="base-input"],
+div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+div[data-testid="stForm"],
+details[data-testid="stExpander"],
+div[data-testid="stExpander"],
+div[data-testid="stExpander"] summary,
+div[data-testid="stExpanderDetails"],
+section[data-testid="stFileUploaderDropzone"],
+div[data-testid="stFileUploader"] section {
+    background: rgba(15, 23, 42, 0.92) !important;
+    background-color: #0f172a !important;
+    border-color: rgba(56, 189, 248, 0.32) !important;
     color: #f8fafc !important;
     border-radius: 12px !important;
     direction: rtl !important;
     text-align: right !important;
 }
 
-input {
+input,
+textarea,
+div[data-baseweb="input"] input,
+div[data-baseweb="base-input"] input,
+div[data-testid="stTextInput"] input {
+    background: transparent !important;
+    background-color: transparent !important;
     color: #f8fafc !important;
+    caret-color: #38bdf8 !important;
     direction: rtl !important;
     text-align: right !important;
+}
+
+/* منع المتصفح من تلوين حقول كلمات المرور والمفاتيح باللون الأبيض أو الأصفر عند التعبئة التلقائية */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 40px #0f172a inset !important;
+    -webkit-text-fill-color: #f8fafc !important;
+    caret-color: #38bdf8 !important;
+}
+
+/* زر إظهار/إخفاء كلمة المرور داخل حقول المفاتيح والرمز السري */
+div[data-baseweb="input"] button,
+div[data-baseweb="base-input"] button,
+div[data-testid="stTextInput"] button {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: #94a3b8 !important;
+    min-height: 28px !important;
+    width: auto !important;
+    padding: 0 6px !important;
+}
+
+/* القوائم المنسدلة المفتوحة (Popover / Dropdown Menu List) بخلفية داكنة كاملة بدون أي إطار أبيض */
+div[data-baseweb="popover"],
+div[data-baseweb="popover"] > div,
+div[data-baseweb="menu"],
+ul[data-testid="stSelectboxVirtualDropdown"],
+ul[role="listbox"],
+div[role="listbox"] {
+    background: #0b1324 !important;
+    background-color: #0b1324 !important;
+    border: 1px solid rgba(56, 189, 248, 0.38) !important;
+    border-radius: 12px !important;
+    color: #f8fafc !important;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.65) !important;
+}
+
+div[data-baseweb="popover"] li,
+div[data-baseweb="menu"] li,
+ul[data-testid="stSelectboxVirtualDropdown"] li,
+li[role="option"] {
+    background: transparent !important;
+    background-color: transparent !important;
+    color: #f1f5f9 !important;
+}
+
+div[data-baseweb="popover"] li:hover,
+div[data-baseweb="menu"] li:hover,
+ul[data-testid="stSelectboxVirtualDropdown"] li:hover,
+li[role="option"]:hover,
+li[role="option"][aria-selected="true"] {
+    background: rgba(56, 189, 248, 0.22) !important;
+    background-color: rgba(56, 189, 248, 0.22) !important;
+    color: #38bdf8 !important;
 }
 
 @media (max-width: 900px) {
@@ -9276,9 +9447,10 @@ def render_article_cards(
     pub_date_safe = html.escape(raw_pub_date)
     mon_date_safe = html.escape(mon_date_str)
     rel_time = html.escape(format_relative_arabic(pub_ts))
-    category_safe = html.escape(
-        clean_display_text(item.get("category") or "شؤون قضائية")
-    )
+    raw_cat_val = clean_display_text(item.get("category") or "شؤون قضائية")
+    if plat != "صحافة دولية" and raw_cat_val in ("يتطرق للمغرب", "يهم المغرب", "يتعلق بالمغرب"):
+      raw_cat_val = "شؤون قضائية ومحاكم"
+    category_safe = html.escape(raw_cat_val)
     url_safe = html.escape(clean_link_url, quote=True)
     target_tag = (
         '<span class="badge-target">🎯 رصد مخصص</span>'
