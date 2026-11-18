@@ -3840,6 +3840,95 @@ def scrape_international_press(
 
   items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
   return items
+def scrape_open_web_keyword(
+    keyword_query: str, search_period: str = "آخر 7 أيام", progress_cb=None
+) -> list:
+  """بحث ورصد شامل في الويب المفتوح عن كلمة أو عبارة مفتاحية خلال فترة زمنية محددة (خارج نطاق المصادر الثابتة)."""
+  kw = clean_display_text(keyword_query or "")
+  if not kw:
+    return []
+  items = []
+  seen_urls = set()
+  p_cfg = get_period_config(search_period)
+  when_tag = p_cfg["gnews"]
+  max_age = p_cfg["sec"]
+  ddg_tag = p_cfg["ddg"]
+
+  gnews_editions = [
+      ("أخبار الويب (عربي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=ar&gl=MA&ceid=MA:ar", "الصحف"),
+      ("أخبار الويب (دولي - عربي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=ar&gl=EG&ceid=EG:ar", "صحافة دولية"),
+      ("أخبار الويب (فرنسي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=fr&gl=FR&ceid=FR:fr", "صحافة دولية"),
+      ("أخبار الويب (إنجليزي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=en-US&gl=US&ceid=US:en", "صحافة دولية"),
+      ("أخبار الويب (إسباني)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=es&gl=ES&ceid=ES:es", "صحافة دولية"),
+      ("أخبار Bing الشاملة", f"https://www.bing.com/news/search?q={urllib.parse.quote(kw)}&format=rss", "صحافة دولية"),
+  ]
+
+  total_steps = len(gnews_editions) + 1
+  for idx, (lbl, feed_u, default_plat) in enumerate(gnews_editions, 1):
+    if is_stop_requested():
+      break
+    if progress_cb:
+      progress_cb(min(0.85, idx / total_steps), f"رصد شامل في الويب ({lbl}): {kw}")
+    try:
+      r = requests.get(feed_u, headers=DEFAULT_HEADERS, timeout=7)
+      if r.status_code == 200 and (b"<rss" in r.content or b"<feed" in r.content):
+        for entry in parse_rss_xml(r.content, default_plat, default_source="ويب مفتوح", max_age_sec=max_age):
+          u = entry.get("url", "")
+          if u and u not in seen_urls:
+            seen_urls.add(u)
+            normalize_press_platform_and_source(entry)
+            items.append(entry)
+    except Exception:
+      pass
+
+  # بحث ويب مفتوح عبر DuckDuckGo HTML لجلب المقالات والصفحات خارج موجزات الأخبار
+  if not is_stop_requested():
+    if progress_cb:
+      progress_cb(0.90, f"بحث الويب المفتوح (صفحات ومقالات): {kw}")
+    try:
+      ddg_u = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(kw)}&df={ddg_tag}"
+      r_ddg = requests.get(ddg_u, headers=DEFAULT_HEADERS, timeout=7)
+      if r_ddg.status_code == 200 and BeautifulSoup is not None:
+        soup = BeautifulSoup(r_ddg.text, "html.parser")
+        for res in soup.select(".result")[:15]:
+          a_tag = res.select_one("a.result__a")
+          snip_tag = res.select_one(".result__snippet")
+          if not a_tag:
+            continue
+          href = a_tag.get("href") or ""
+          if "uddg=" in href:
+            try:
+              href = urllib.parse.unquote(href.split("uddg=", 1)[1].split("&", 1)[0])
+            except Exception:
+              pass
+          if not href.startswith("http") or href in seen_urls:
+            continue
+          seen_urls.add(href)
+          dom = urllib.parse.urlparse(href).netloc.replace("www.", "")
+          t_txt = clean_display_text(a_tag.get_text(" ", strip=True))
+          s_txt = clean_display_text(snip_tag.get_text(" ", strip=True)) if snip_tag else t_txt
+          if not t_txt:
+            continue
+          entry = {
+              "title": t_txt,
+              "raw_snippet": s_txt,
+              "summary": s_txt,
+              "url": href,
+              "source_name": dom or "ويب مفتوح",
+              "platform": "صحافة دولية" if not dom.endswith(".ma") else "الصحف",
+              "pub_timestamp": time.time(),
+              "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+              "is_custom_target": 0,
+          }
+          normalize_press_platform_and_source(entry)
+          items.append(entry)
+    except Exception:
+      pass
+
+  items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
+  return items
+
+
 def scrape_moroccan_press(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ):
@@ -7840,7 +7929,7 @@ def _telegram_bot_updates_listener():
 
 
 def quick_process_and_save(
-    items: list, cfg: dict, is_target_run: bool = False
+    items: list, cfg: dict, is_target_run: bool = False, open_web_keyword: bool = False
 ) -> int:
   if not items:
     upgrade_incomplete_existing_articles(cfg, max_upgrades=6)
@@ -7882,7 +7971,7 @@ def quick_process_and_save(
     is_tgt = bool(is_target_run or it.get("is_custom_target"))
     if not u or not t:
       continue
-    if not is_strictly_judicial_and_clean(
+    if not open_web_keyword and not is_strictly_judicial_and_clean(
         t, s_raw, u, kw_filter if not is_tgt else "", is_target=is_tgt
     ):
       continue
@@ -9451,8 +9540,11 @@ with col_side_panel:
     save_credentials(cfg)
     if kw_input_side.strip():
       st.session_state["global_site_search"] = kw_input_side.strip()
-    clear_stop_scan()
-    triggered_mode = scan_target_key
+      clear_stop_scan()
+      triggered_mode = "web_keyword"
+    else:
+      clear_stop_scan()
+      triggered_mode = scan_target_key
 
   # قسم إعدادات المشرف والمفاتيح السرية (مقفل برمز سري)
   with st.expander("🔒 إعدادات المشرف والمفاتيح (محمي)", expanded=False):
@@ -9753,14 +9845,24 @@ with col_main_feed:
       collected = scrape_custom_targets(
           custom_targets, kw, s_period, update_ui_progress
       )
+    elif mode_key == "web_keyword":
+      active_kw_q = (st.session_state.get("global_site_search") or kw or "").strip()
+      collected = scrape_open_web_keyword(
+          active_kw_q, s_period, update_ui_progress
+      )
 
     if not is_stop_requested():
       update_ui_progress(
           0.94, "استخراج صور المقالات ومتونها وتلخيصها عبر Gemini AI..."
       )
+      is_web_kw = (mode_key == "web_keyword")
       added_count = quick_process_and_save(
-          collected, cfg, is_target_run=is_target_mode
+          collected, cfg, is_target_run=is_target_mode, open_web_keyword=is_web_kw
       )
+      if is_web_kw:
+        st.session_state["last_web_keyword_results"] = list(collected)
+        st.session_state["last_web_keyword_query"] = (st.session_state.get("global_site_search") or kw or "").strip()
+        st.session_state["last_web_keyword_period"] = s_period
       invalidate_articles_cache()
       update_ui_progress(1.0, "اكتملت عملية الرصد بنجاح")
       time.sleep(0.25)
@@ -9869,6 +9971,8 @@ with col_main_feed:
 
   if reset_clicked:
     st.session_state["global_site_search"] = ""
+    st.session_state.pop("last_web_keyword_results", None)
+    st.session_state.pop("last_web_keyword_query", None)
     st.session_state["adv_filter_country"] = "الكل"
     st.session_state["adv_filter_topic"] = "الكل"
     st.session_state["adv_filter_source"] = "الكل"
@@ -9887,7 +9991,7 @@ with col_main_feed:
     cfg["keywords_input"] = entered_kw
     save_credentials(cfg)
     clear_stop_scan()
-    execute_interactive_scan(scan_target_key)
+    execute_interactive_scan("web_keyword" if entered_kw else scan_target_key)
     st.rerun()
 
   global_search_q = st.session_state.get("global_site_search", "")
@@ -10000,6 +10104,20 @@ with col_main_feed:
       displayed_articles.sort(key=lambda x: float(x.get("pub_timestamp") or 0), reverse=False)
     else:
       displayed_articles.sort(key=lambda x: float(x.get("pub_timestamp") or 0), reverse=True)
+
+  # إذا كان المستخدم قد أطلق لتوه عملية رصد شامل في الويب عن كلمة مفتاحية، نعرض نتائج الويب المستخرجة فوراً في الصدارة
+  web_kw_res = st.session_state.get("last_web_keyword_results")
+  web_kw_q = (st.session_state.get("last_web_keyword_query") or "").strip()
+  if isinstance(web_kw_res, list) and web_kw_q and web_kw_q == (global_search_q or "").strip():
+    seen_wk_u = set()
+    merged_wk = []
+    for _w_it in web_kw_res + displayed_articles:
+      _wu = _w_it.get("url", "")
+      if _wu and _wu not in seen_wk_u:
+        seen_wk_u.add(_wu)
+        merged_wk.append(_w_it)
+    displayed_articles = merged_wk
+    active_feed_title = f"نتائج الرصد الشامل في الويب لـ «{web_kw_q}» ({st.session_state.get('last_web_keyword_period', '')})"
 
   total_matching = len(displayed_articles)
   page_limit = int(st.session_state.get("feed_page_limit", 15))
