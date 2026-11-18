@@ -8534,23 +8534,40 @@ li[role="option"]:hover * {
     -webkit-text-fill-color: #f3e5ab !important;
 }
 
-/* حقول النصوص والمفاتيح السرية */
-input,
-textarea,
-div[data-baseweb="input"] input,
-div[data-baseweb="base-input"] input,
-div[data-testid="stTextInputRootElement"] input,
-div[data-testid="stTextInput"] input {
-    background: #091c22 !important;
-    background-color: #091c22 !important;
+/* حقول النصوص والكلمات المفتاحية والمفاتيح السرية — ظهور فوري وواضح 100% أثناء الكتابة */
+html body .stApp input,
+html body .stApp textarea,
+html body .stApp input[type="text"],
+html body .stApp input[type="password"],
+html body .stApp input[type="search"],
+html body .stApp div[data-baseweb="input"] input,
+html body .stApp div[data-baseweb="base-input"] input,
+html body .stApp div[data-testid="stTextInputRootElement"] input,
+html body .stApp div[data-testid="stTextInput"] input {
+    background: #07171d !important;
+    background-color: #07171d !important;
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
-    caret-color: #d4af37 !important;
+    caret-color: #f3e5ab !important;
     font-family: 'Cairo', sans-serif !important;
-    font-size: 0.94rem !important;
+    font-size: 15px !important;
     font-weight: 700 !important;
+    line-height: normal !important;
+    height: auto !important;
+    min-height: 42px !important;
+    padding: 10px 14px !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    text-shadow: none !important;
+    -webkit-background-clip: border-box !important;
+    background-clip: border-box !important;
     direction: rtl !important;
     text-align: right !important;
+    z-index: 2 !important;
+}
+
+html body .stApp div[data-testid="InputInstructions"] {
+    display: none !important;
 }
 
 input::placeholder,
@@ -9073,12 +9090,27 @@ try:
                       border-color: rgba(212, 175, 55, 0.48) !important;
                       color: #ffffff !important;
                   }
-                  html body div[data-baseweb="select"] *,
-                  html body div[data-baseweb="input"] input {
+                  html body div[data-baseweb="select"] * {
                       color: #ffffff !important;
                       -webkit-text-fill-color: #ffffff !important;
                       background-color: transparent !important;
                       font-weight: 800 !important;
+                  }
+                  html body input,
+                  html body textarea,
+                  html body div[data-baseweb="input"] input,
+                  html body div[data-baseweb="base-input"] input,
+                  html body div[data-testid="stTextInput"] input {
+                      background: #07171d !important;
+                      background-color: #07171d !important;
+                      color: #ffffff !important;
+                      -webkit-text-fill-color: #ffffff !important;
+                      caret-color: #f3e5ab !important;
+                      font-size: 1rem !important;
+                      font-weight: 800 !important;
+                      opacity: 1 !important;
+                      visibility: visible !important;
+                      -webkit-background-clip: border-box !important;
                   }
                   html body div[data-baseweb="popover"],
                   html body div[data-baseweb="popover"] > div,
@@ -9386,26 +9418,41 @@ with col_side_panel:
         invalidate_articles_cache()
         st.rerun()
 
-  with st.expander("⚙️ معايير الرصد المسبقة (الكلمات والفترة)", expanded=False):
-    kw_input = st.text_input(
-        "تخصيص الرصد بكلمات مفتاحية (اختياري)",
-        value=cfg.get("keywords_input", ""),
-        placeholder="اتركه فارغاً للرصد القضائي العام...",
-    )
-    if kw_input != cfg.get("keywords_input", ""):
-      cfg["keywords_input"] = kw_input
-      save_credentials(cfg)
+  render_html('''
+  <div style="margin-top:10px;margin-bottom:4px;font-size:0.88rem;font-weight:800;color:#f3e5ab;">
+      🎯 رصد الويب بكلمة مفتاحية والفترة الزمنية:
+  </div>
+  ''')
+  kw_input_side = st.text_input(
+      "كلمة مفتاحية للرصد في الويب (اختياري):",
+      value=cfg.get("keywords_input", ""),
+      placeholder="اكتب كلمة أو جملة لرصدها في الويب...",
+      key="sidebar_kw_direct_input",
+  )
+  period_options = list(SEARCH_PERIOD_MAP.keys())
+  curr_period = cfg.get("search_period", "آخر 7 أيام")
+  selected_period = st.selectbox(
+      "⏱️ الفترة الزمنية للرصد:",
+      options=period_options,
+      index=period_options.index(curr_period) if curr_period in period_options else 2,
+      key="sidebar_period_direct_select",
+  )
+  if kw_input_side != cfg.get("keywords_input", "") or selected_period != cfg.get("search_period", ""):
+    cfg["keywords_input"] = kw_input_side.strip()
+    cfg["search_period"] = selected_period
+    save_credentials(cfg)
 
-    period_options = list(SEARCH_PERIOD_MAP.keys())
-    curr_period = cfg.get("search_period", "آخر 7 أيام")
-    selected_period = st.selectbox(
-        "⏱️ النطاق الزمني لجلب الأخبار الجديدة",
-        options=period_options,
-        index=period_options.index(curr_period) if curr_period in period_options else 2,
-    )
-    if selected_period != cfg.get("search_period", ""):
-      cfg["search_period"] = selected_period
-      save_credentials(cfg)
+  if st.button(
+      "📡 رصد الكلمة المفتاحية في الويب الآن",
+      key="sidebar_kw_launch_scan_btn",
+      use_container_width=True,
+  ):
+    cfg["keywords_input"] = kw_input_side.strip()
+    save_credentials(cfg)
+    if kw_input_side.strip():
+      st.session_state["global_site_search"] = kw_input_side.strip()
+    clear_stop_scan()
+    triggered_mode = scan_target_key
 
   # قسم إعدادات المشرف والمفاتيح السرية (مقفل برمز سري)
   with st.expander("🔒 إعدادات المشرف والمفاتيح (محمي)", expanded=False):
@@ -9781,49 +9828,83 @@ with col_main_feed:
   displayed_articles = list(active_feed_list)
 
   # =====================================================================
-  # لوحة البحث الاحترافية والفلاتر المتقدمة متعددة المعايير
+  # لوحة البحث والرصد المباشر بالكلمات المفتاحية + الفلاتر المتقدمة
   # =====================================================================
   render_html("""
-  <div style="background:linear-gradient(145deg, rgba(11,36,44,0.92) 0%, rgba(7,22,28,0.88) 100%);border:1px solid rgba(212,175,55,0.38);border-radius:16px;padding:12px 16px;margin-bottom:10px;" dir="rtl">
-      <div style="font-size:0.96rem;font-weight:900;color:#f3e5ab;margin-bottom:4px;">🔎 محرك البحث الذكي والفلاتر المتقدمة</div>
-      <div style="font-size:0.78rem;color:#cbd5e1;">ابحث بالكلمات أو الجمل وقم بتصفية الأخبار حسب المصدر، الدولة، الموضوع، الفترة الزمنية، والترتيب</div>
+  <div style="background:linear-gradient(145deg, rgba(11,36,44,0.95) 0%, rgba(7,22,28,0.92) 100%);border:1px solid rgba(212,175,55,0.45);border-right:4px solid #d4af37;border-radius:16px;padding:12px 16px;margin-bottom:10px;" dir="rtl">
+      <div style="font-size:0.98rem;font-weight:900;color:#f3e5ab;margin-bottom:3px;">🔎 محرك البحث والرصد الفوري بالكلمات المفتاحية</div>
+      <div style="font-size:0.8rem;color:#cbd5e1;">اكتب كلمة أو عدة كلمات مفتاحية أو جملة، ثم اضغط <b>«🔎 بحث في المرصد»</b> لتصفية الأخبار المخزنة أو <b>«📡 رصد الكلمة في الويب»</b> لجلب أخبارها مباشرة من الإنترنت</div>
   </div>
   """)
 
-  col_gs_inp, col_gs_scope, col_gs_sort, col_gs_clr = st.columns([2.8, 1.3, 1.1, 0.7])
   if "global_site_search" not in st.session_state:
     st.session_state["global_site_search"] = ""
 
-  with col_gs_inp:
-    global_search_q = st.text_input(
-        "البحث بالكلمات المفتاحية أو الجمل",
-        key="global_site_search",
-        placeholder="🔎 ابحث بكلمة، كلمتين، أو جملة كاملة في العناوين والملخصات...",
-        label_visibility="collapsed",
-    )
+  with st.form("main_keyword_hub_form", clear_on_submit=False):
+    col_kw_box, col_btn_search, col_btn_webscan, col_btn_reset = st.columns([2.7, 1.15, 1.35, 0.7])
+    with col_kw_box:
+      kw_form_val = st.text_input(
+          "أدخل الكلمة أو الكلمات المفتاحية للبحث أو الرصد:",
+          value=st.session_state.get("global_site_search", ""),
+          placeholder="✍️ اكتب هنا الكلمة المفتاحية (مثال: المجلس الأعلى، محكمة النقض، المغرب)...",
+          label_visibility="collapsed",
+      )
+    with col_btn_search:
+      search_clicked = st.form_submit_button(
+          "🔎 بحث في المرصد",
+          type="primary",
+          use_container_width=True,
+      )
+    with col_btn_webscan:
+      webscan_clicked = st.form_submit_button(
+          "📡 رصد الكلمة في الويب",
+          type="primary",
+          use_container_width=True,
+      )
+    with col_btn_reset:
+      reset_clicked = st.form_submit_button(
+          "🔄 مسح",
+          use_container_width=True,
+      )
+
+  if reset_clicked:
+    st.session_state["global_site_search"] = ""
+    st.session_state["adv_filter_country"] = "الكل"
+    st.session_state["adv_filter_topic"] = "الكل"
+    st.session_state["adv_filter_source"] = "الكل"
+    st.session_state["adv_filter_time"] = "كل الأوقات"
+    st.session_state["feed_page_limit"] = 15
+    if cfg.get("keywords_input"):
+      cfg["keywords_input"] = ""
+      save_credentials(cfg)
+    st.rerun()
+  elif search_clicked:
+    st.session_state["global_site_search"] = (kw_form_val or "").strip()
+    st.session_state["feed_page_limit"] = 20
+  elif webscan_clicked:
+    entered_kw = (kw_form_val or "").strip()
+    st.session_state["global_site_search"] = entered_kw
+    cfg["keywords_input"] = entered_kw
+    save_credentials(cfg)
+    clear_stop_scan()
+    execute_interactive_scan(scan_target_key)
+    st.rerun()
+
+  global_search_q = st.session_state.get("global_site_search", "")
+
+  col_gs_scope, col_gs_sort = st.columns(2)
   with col_gs_scope:
     search_scope = st.selectbox(
-        "نطاق البحث",
-        options=["في القسم المعروض حالياً", "في جميع الأخبار النشطة والأرشيف", "في الأخبار النشطة فقط", "في الأرشيف فقط"],
+        "📂 نطاق البحث:",
+        options=["في جميع الأخبار النشطة والأرشيف", "في القسم المعروض حالياً", "في الأخبار النشطة فقط", "في الأرشيف فقط"],
         key="global_search_scope",
-        label_visibility="collapsed",
     )
   with col_gs_sort:
     sort_order = st.selectbox(
-        "ترتيب العرض",
+        "↕️ ترتيب النتائج:",
         options=["الأحدث نشراً أولاً", "الأحدث رصداً أولاً", "الأقدم أولاً"],
         key="global_sort_order",
-        label_visibility="collapsed",
     )
-  with col_gs_clr:
-    if st.button("🔄 ضبط", key="btn_clear_global_search", use_container_width=True):
-      st.session_state["global_site_search"] = ""
-      st.session_state["adv_filter_country"] = "الكل"
-      st.session_state["adv_filter_topic"] = "الكل"
-      st.session_state["adv_filter_source"] = "الكل"
-      st.session_state["adv_filter_time"] = "كل الأوقات"
-      st.session_state["feed_page_limit"] = 15
-      st.rerun()
 
   # شريط الفلاتر المتقدمة (الدولة، الموضوع القضائي، المصدر/الجريدة، والنافذة الزمنية)
   available_sources = sorted(list({clean_display_text(a.get("source_name") or "") for a in displayed_articles if clean_display_text(a.get("source_name") or "")}))
