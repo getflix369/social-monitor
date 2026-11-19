@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import concurrent.futures
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -286,23 +287,27 @@ BLOCKED_INAPPROPRIATE_TERMS = [
 ]
 
 MOROCCAN_PRESS_SITES = [
-    {"domain": "hespress.com", "name": "هسبريس", "rss": "https://www.hespress.com/feed"},
-    {"domain": "akhbarona.com", "name": "أخبارنا", "rss": "https://www.akhbarona.com/feed"},
-    {"domain": "agadir24.info", "name": "أكادير 24", "rss": "https://agadir24.info/feed"},
-    {"domain": "kech24.com", "name": "كش 24", "rss": "https://www.kech24.com/feed"},
-    {"domain": "alayam24.com", "name": "الأيام 24", "rss": "https://www.alayam24.com/feed"},
-    {"domain": "madar21.com", "name": "مدار 21", "rss": "https://madar21.com/feed"},
-    {"domain": "sabahagadir.com", "name": "صباح أكادير", "rss": "https://sabahagadir.com/feed"},
-    {"domain": "goud.ma", "name": "كود", "rss": "https://www.goud.ma/feed"},
-    {"domain": "assabah.ma", "name": "الصباح", "rss": "https://assabah.ma/feed"},
-    {"domain": "thevoice.ma", "name": "ذا فويس", "rss": "https://thevoice.ma/feed"},
-    {"domain": "nadorcity.com", "name": "ناظورسيتي", "rss": ""},
-    {"domain": "al3omk.com", "name": "العمق المغربي", "rss": "https://al3omk.com/feed"},
-    {"domain": "alyaoum24.com", "name": "اليوم 24", "rss": "https://alyaoum24.com/feed"},
-    {"domain": "rue20.com", "name": "زنقة 20", "rss": "https://rue20.com/feed"},
-    {"domain": "le360.ma", "name": "Le360", "rss": ""},
-    {"domain": "barlamane.com", "name": "برلمان.كوم", "rss": "https://www.barlamane.com/feed"},
-    {"domain": "tanja24.com", "name": "طنجة 24", "rss": "https://tanja24.com/feed"},
+    {"domain": "hespress.com", "name": "هسبريس", "rss": "https://www.hespress.com/feed", "wp": True},
+    {"domain": "akhbarona.com", "name": "أخبارنا", "rss": "https://www.akhbarona.com/feed", "wp": False},
+    {"domain": "agadir24.info", "name": "أكادير 24", "rss": "https://agadir24.info/feed", "wp": True},
+    {"domain": "kech24.com", "name": "كش 24", "rss": "https://www.kech24.com/feed", "wp": True},
+    {"domain": "alayam24.com", "name": "الأيام 24", "rss": "https://www.alayam24.com/feed", "wp": True},
+    {"domain": "madar21.com", "name": "مدار 21", "rss": "https://madar21.com/feed", "wp": True},
+    {"domain": "sabahagadir.com", "name": "صباح أكادير", "rss": "https://sabahagadir.com/feed", "wp": True},
+    {"domain": "goud.ma", "name": "كود", "rss": "https://www.goud.ma/feed", "wp": True},
+    {"domain": "assabah.ma", "name": "الصباح", "rss": "https://assabah.ma/feed", "wp": True},
+    {"domain": "thevoice.ma", "name": "ذا فويس", "rss": "https://thevoice.ma/feed", "wp": True},
+    {"domain": "nadorcity.com", "name": "ناظورسيتي", "rss": "https://www.nadorcity.com/xml/syndication.rss", "wp": False},
+    {"domain": "al3omk.com", "name": "العمق المغربي", "rss": "https://al3omk.com/feed", "wp": True},
+    {"domain": "alyaoum24.com", "name": "اليوم 24", "rss": "https://alyaoum24.com/feed", "wp": True},
+    {"domain": "rue20.com", "name": "زنقة 20", "rss": "https://rue20.com/feed", "wp": True},
+    {"domain": "le360.ma", "name": "Le360", "rss": "https://ar.le360.ma/arc/outboundfeeds/rss/", "sitemap": "https://ar.le360.ma/arc/outboundfeeds/news-sitemap/", "wp": False},
+    {"domain": "barlamane.com", "name": "برلمان.كوم", "rss": "https://www.barlamane.com/feed", "wp": True},
+    {"domain": "tanja24.com", "name": "طنجة 24", "rss": "https://tanja24.com/feed", "wp": True},
+    {"domain": "hibapress.com", "name": "هبة بريس", "rss": "https://ar.hibapress.com/feed", "wp": True},
+    {"domain": "febrayer.com", "name": "فبراير.كوم", "rss": "https://www.febrayer.com/feed", "wp": True},
+    {"domain": "lematin.ma", "name": "Le Matin", "rss": "https://lematin.ma/rssFeed/0", "wp": False},
+    {"domain": "medias24.com", "name": "Médias24", "rss": "https://medias24.com/feed/", "wp": True},
 ]
 
 # =====================================================================
@@ -375,7 +380,27 @@ INTERNATIONAL_PRESS_SITES = [
     {"domain": "aawsat.com", "name": "الشرق الأوسط (دولي)", "country": "دولي", "lang": "ar", "rss": "https://aawsat.com/feed"},
     {"domain": "curia.europa.eu", "name": "محكمة العدل الأوروبية CJUE", "country": "دولي", "lang": "fr", "rss": ""},
     {"domain": "icj-cij.org", "name": "محكمة العدل الدولية CIJ", "country": "دولي", "lang": "fr", "rss": ""},
-    {"domain": "icc-cpi.int", "name": "المحكمة الجنائية الدولية CPI", "country": "دولي", "lang": "fr", "rss": ""},
+    {"domain": "icc-cpi.int", "name": "المحكمة الجنائية الدولية CPI", "country": "دولي", "lang": "fr", "rss": "https://www.icc-cpi.int/rss/news"},
+]
+
+# خلاصات حية مباشرة للصحف والمواقع الرياضية الدولية والعربية المتخصصة (رصد فوري في وقت النشر بدون أرشفة)
+DIRECT_SPORTS_AND_SPECIALIZED_FEEDS = [
+    {"domain": "lequipe.fr", "name": "L'Équipe (فرنسا - رياضة)", "country": "فرنسا", "rss": "https://dwh.lequipe.fr/api/edito/rss?path=/"},
+    {"domain": "marca.com", "name": "Marca (إسبانيا - رياضة)", "country": "إسبانيا", "rss": "https://e00-marca.uecdn.es/rss/portada.xml"},
+    {"domain": "as.com", "name": "Diario AS (إسبانيا - رياضة)", "country": "إسبانيا", "rss": "https://feeds.as.com/mrss-s/pages/as/site/as.com/portada"},
+    {"domain": "mundodeportivo.com", "name": "Mundo Deportivo (إسبانيا)", "country": "إسبانيا", "rss": "https://www.mundodeportivo.com/rss/home.xml"},
+    {"domain": "sport.es", "name": "Sport (إسبانيا - رياضة)", "country": "إسبانيا", "rss": "https://www.sport.es/es/rss/last_news/rss.xml"},
+    {"domain": "rmcsport.bfmtv.com", "name": "RMC Sport (فرنسا)", "country": "فرنسا", "rss": "https://rmcsport.bfmtv.com/rss/fil-sport/"},
+    {"domain": "footmercato.net", "name": "Foot Mercato (فرنسا)", "country": "فرنسا", "rss": "https://www.footmercato.net/flux-rss"},
+    {"domain": "gazzetta.it", "name": "La Gazzetta dello Sport (إيطاليا)", "country": "دولي", "rss": "https://www.gazzetta.it/dynamic-feed/rss/section/last.xml"},
+    {"domain": "kicker.de", "name": "Kicker (ألمانيا - رياضة)", "country": "دولي", "rss": "https://newsfeed.kicker.de/news/aktuell"},
+    {"domain": "espn.com", "name": "ESPN (عالمي - رياضة)", "country": "الولايات المتحدة", "rss": "https://www.espn.com/espn/rss/news"},
+    {"domain": "skysports.com", "name": "Sky Sports (بريطانيا)", "country": "دولي", "rss": "https://www.skysports.com/rss/12040"},
+    {"domain": "bbc.com", "name": "BBC Sport (بريطانيا)", "country": "دولي", "rss": "https://feeds.bbci.co.uk/sport/rss.xml"},
+    {"domain": "hesport.com", "name": "هسبورت (المغرب - رياضة)", "country": "المغرب", "rss": "https://www.hesport.com/feed", "wp": True},
+    {"domain": "elbotola.com", "name": "البطولة (المغرب - رياضة)", "country": "المغرب", "rss": "https://www.elbotola.com/feed", "wp": True},
+    {"domain": "almountakhab.com", "name": "المنتخب (المغرب - رياضة)", "country": "المغرب", "rss": "https://www.almountakhab.com/feed", "wp": True},
+    {"domain": "winwin.com", "name": "WinWin (رياضة عربي)", "country": "دولي", "rss": "https://www.winwin.com/rss.xml"},
 ]
 
 MOROCCO_EXPLICIT_AND_IMPLICIT_TERMS = [
@@ -3722,41 +3747,209 @@ def parse_rss_xml(
 
 
 # =====================================================================
+# محرك الرصد الفوري المباشر من خوادم الناشرين (بدون انتظار أرشفة Google News)
+# WordPress REST API + Live No-Cache RSS/Atom + News Sitemaps + Parallel Workers
+# =====================================================================
+LIVE_FETCH_HEADERS = {
+    **DEFAULT_HEADERS,
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+def parse_news_sitemap_xml(
+    xml_bytes: bytes,
+    default_platform: str,
+    default_source: str = "",
+    max_age_sec: int = 0,
+) -> list:
+  """قراءة خرائط الأخبار المباشرة (Google News Sitemap XML) التي يحدّثها الناشر فور النشر بالثانية."""
+  results = []
+  try:
+    root = ET.fromstring(xml_bytes)
+  except Exception:
+    return results
+  now_ts = time.time()
+  for url_el in root.findall(".//{*}url"):
+    loc = ""
+    title = ""
+    pub_raw = ""
+    for child in url_el:
+      tag_low = child.tag.lower()
+      if tag_low.endswith("loc") and child.text:
+        loc = child.text.strip()
+      elif tag_low.endswith("lastmod") and child.text and not pub_raw:
+        pub_raw = child.text.strip()
+      elif tag_low.endswith("news"):
+        for n_child in child:
+          nt = n_child.tag.lower()
+          if nt.endswith("title") and n_child.text:
+            title = clean_html_text(n_child.text)
+          elif nt.endswith("publication_date") and n_child.text:
+            pub_raw = n_child.text.strip()
+    if not loc or not title:
+      continue
+    pub_str, pub_ts = extract_date_from_url_or_text(loc, title, pub_raw, fallback_offset_sec=9999999)
+    if max_age_sec > 0 and (now_ts - pub_ts) > max_age_sec:
+      continue
+    results.append({
+        "title": title,
+        "url": clean_social_post_url(loc),
+        "raw_snippet": title,
+        "source_name": default_source or default_platform,
+        "platform": default_platform,
+        "pub_date": pub_str,
+        "pub_timestamp": pub_ts,
+        "image_url": "",
+    })
+  return results
+
+
+def fetch_wp_rest_posts(
+    domain: str,
+    source_name: str,
+    default_platform: str = "الصحف",
+    keyword: str = "",
+    max_age_sec: int = 0,
+    per_page: int = 20,
+) -> list:
+  """جلب المقالات مباشرة من واجهة WordPress REST API الخاصة بالموقع لحظة نشرها الفعلي مع توقيت GMT الدقيق."""
+  results = []
+  now_ts = time.time()
+  params = [f"per_page={per_page}", "orderby=date", "order=desc", "_fields=link,title,excerpt,date_gmt,date,jetpack_featured_media_url"]
+  if keyword and keyword.strip():
+    params.append(f"search={urllib.parse.quote(keyword.strip())}")
+  if max_age_sec > 0:
+    after_iso = datetime.fromtimestamp(now_ts - max_age_sec, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    params.append(f"after={urllib.parse.quote(after_iso)}")
+  api_url = f"https://{domain}/wp-json/wp/v2/posts?{'&'.join(params)}"
+  try:
+    r = requests.get(api_url, headers=LIVE_FETCH_HEADERS, timeout=5.5)
+    if r.status_code != 200:
+      return results
+    data = r.json()
+    if not isinstance(data, list):
+      return results
+    for post in data:
+      if not isinstance(post, dict):
+        continue
+      link = clean_social_post_url(str(post.get("link") or "").strip())
+      raw_t = (post.get("title") or {}).get("rendered", "") if isinstance(post.get("title"), dict) else str(post.get("title") or "")
+      raw_ex = (post.get("excerpt") or {}).get("rendered", "") if isinstance(post.get("excerpt"), dict) else str(post.get("excerpt") or "")
+      title = clean_html_text(raw_t)
+      desc = clean_html_text(raw_ex) or title
+      if not link or not title:
+        continue
+      date_raw = str(post.get("date_gmt") or post.get("date") or "").strip()
+      pub_str, pub_ts = extract_date_from_url_or_text(link, desc, date_raw, fallback_offset_sec=9999999)
+      if max_age_sec > 0 and (now_ts - pub_ts) > max_age_sec:
+        continue
+      img_u = str(post.get("jetpack_featured_media_url") or "").strip()
+      results.append({
+          "title": title,
+          "url": link,
+          "raw_snippet": desc[:1800],
+          "source_name": source_name,
+          "platform": default_platform,
+          "pub_date": pub_str,
+          "pub_timestamp": pub_ts,
+          "image_url": img_u,
+      })
+  except Exception:
+    pass
+  return results
+
+
+def _fetch_single_publisher_live(
+    site_info: dict,
+    default_platform: str,
+    max_age_sec: int,
+    keyword: str = "",
+) -> list:
+  """فحص ناشر واحد مباشرة عبر WP REST API + RSS الحي + News Sitemap بدون المرور بمحركات الأرشفة."""
+  collected = []
+  seen_u = set()
+  domain = site_info.get("domain", "")
+  name = site_info.get("name", domain)
+
+  # 1) واجهة WordPress REST API المباشرة (أدق توقيت نشر فوري)
+  if site_info.get("wp") and domain:
+    for item in fetch_wp_rest_posts(domain, name, default_platform, keyword=keyword, max_age_sec=max_age_sec):
+      if item["url"] not in seen_u:
+        seen_u.add(item["url"])
+        collected.append(item)
+
+  # 2) خلاصة RSS / Atom الحية مباشرة من خادم الناشر
+  rss_u = site_info.get("rss", "")
+  if rss_u and not collected:
+    try:
+      sep = "&" if "?" in rss_u else "?"
+      live_rss_u = f"{rss_u}{sep}_rt={int(time.time() // 60)}"
+      rf = requests.get(live_rss_u, headers=LIVE_FETCH_HEADERS, timeout=5.5)
+      if rf.status_code != 200 or not (b"<rss" in rf.content or b"<feed" in rf.content or b"<rdf" in rf.content or b"<item" in rf.content):
+        rf = requests.get(rss_u, headers=LIVE_FETCH_HEADERS, timeout=5.5)
+      if rf.status_code == 200 and (b"<rss" in rf.content or b"<feed" in rf.content or b"<rdf" in rf.content or b"<item" in rf.content):
+        for entry in parse_rss_xml(rf.content, default_platform, default_source=name, fallback_offset=9999999, max_age_sec=max_age_sec):
+          if entry["url"] not in seen_u:
+            seen_u.add(entry["url"])
+            entry["source_name"] = name
+            collected.append(entry)
+    except Exception:
+      pass
+
+  # 3) خريطة الأخبار الفورية (News Sitemap) للمواقع التي لا توفر RSS
+  sm_u = site_info.get("sitemap", "")
+  if sm_u and not collected:
+    try:
+      rs = requests.get(sm_u, headers=LIVE_FETCH_HEADERS, timeout=5.5)
+      if rs.status_code == 200 and b"<url" in rs.content:
+        for entry in parse_news_sitemap_xml(rs.content, default_platform, default_source=name, max_age_sec=max_age_sec):
+          if entry["url"] not in seen_u:
+            seen_u.add(entry["url"])
+            collected.append(entry)
+    except Exception:
+      pass
+
+  return collected
+
+
+# =====================================================================
 # محرك رصد الصحافة الدولية (الفرنسية، الإسبانية، الجزائرية، والدولية)
 # =====================================================================
 def scrape_international_press(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ) -> list:
-  """رصد متقدم للصحافة الدولية (فرنسا، إسبانيا، الجزائر، وكبرى الوكالات)
-  لجلب الأخبار ذات البعد القضائي والدولي، والأخبار التي تتناول المغرب مباشرة أو ضمناً."""
+  """رصد مباشر وفوري للصحافة الدولية (فرنسا، إسبانيا، الجزائر، أمريكا، والهيئات الدولية)
+  عبر الاتصال المتوازي بخوادم الصحف مباشرة (RSS / Atom / WP API) مع فرض صارم لتاريخ النشر الفعلي."""
   items = []
   seen_urls = set()
   p_cfg = get_period_config(search_period)
   max_age = p_cfg["sec"]
-  now_ts = time.time()
-  has_custom_kw = bool(keywords_input and str(keywords_input).strip())
+  direct_sites = [s for s in INTERNATIONAL_PRESS_SITES if s.get("rss") or s.get("sitemap") or s.get("wp")]
+  total_sites = max(1, len(direct_sites))
 
-  direct_intl_sites = [s for s in INTERNATIONAL_PRESS_SITES if s.get("rss")]
-  total_sites = len(direct_intl_sites)
+  if progress_cb:
+    progress_cb(0.10, f"اتصال مباشر متوازي بـ {total_sites} صحيفة دولية (رصد فوري في وقت النشر)...")
 
-  for idx, site_info in enumerate(direct_intl_sites):
-    if is_stop_requested():
-      break
-    if progress_cb:
-      progress_cb(
-          0.10 + 0.35 * (idx / max(1, total_sites)),
-          f"فحص خلاصة: {site_info['name']}...",
-      )
-    feed_u = site_info["rss"]
-    try:
-      rf = requests.get(feed_u, headers=DEFAULT_HEADERS, timeout=5.5)
-      if rf.status_code == 200 and (b"<rss" in rf.content or b"<feed" in rf.content or b"<xml" in rf.content):
-        for entry in parse_rss_xml(
-            rf.content,
-            "صحافة دولية",
-            default_source=site_info["name"],
-            max_age_sec=max_age,
-        ):
+  done_cnt = 0
+  with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+    fut_map = {
+        pool.submit(_fetch_single_publisher_live, site_info, "صحافة دولية", max_age, keywords_input): site_info
+        for site_info in direct_sites
+    }
+    for fut in concurrent.futures.as_completed(fut_map):
+      if is_stop_requested():
+        break
+      done_cnt += 1
+      site_info = fut_map[fut]
+      if progress_cb and (done_cnt % 4 == 0 or done_cnt == total_sites):
+        progress_cb(
+            0.10 + 0.72 * (done_cnt / total_sites),
+            f"رصد فوري مباشر للصحافة الدولية ({done_cnt}/{total_sites}): {site_info['name']}...",
+        )
+      try:
+        for entry in fut.result():
           e_url = entry["url"]
           if e_url not in seen_urls and is_strictly_judicial_and_clean(
               entry["title"],
@@ -3769,81 +3962,53 @@ def scrape_international_press(
             entry["platform"] = "صحافة دولية"
             entry["source_name"] = site_info["name"]
             items.append(entry)
-    except Exception:
-      pass
+      except Exception:
+        pass
 
-  intl_queries = []
-  if has_custom_kw:
-    kw_c = str(keywords_input).strip()
-    intl_queries.extend([
-        f'"{kw_c}" Maroc justice OR tribunal OR extradition',
-        f'"{kw_c}" Marruecos judicial OR tribunal OR justicia',
-        f'"{kw_c}" المغرب قضاء OR محكمة (site:lemonde.fr OR site:elpais.com OR site:echoroukonline.com)',
-    ])
-  else:
-    intl_queries.extend([
-        'Maroc justice OR tribunal OR extradition site:lemonde.fr OR site:lefigaro.fr OR site:france24.com',
-        'Maroc Sahara "Cour de justice" OR CJUE OR jugement',
-        'Maroc tribunal OR enquête OR police site:rfi.fr OR site:mediapart.fr',
-        'Marruecos justicia OR tribunal OR Audiencia Nacional site:elpais.com OR site:elmundo.es',
-        'Marruecos extradición OR narcotráfico OR Ceuta OR Melilla tribunal',
-        'Marruecos Sahara TJUE OR "Tribunal General" sentencia',
-        'المغرب محكمة OR قضاء OR النيابة العامة site:echoroukonline.com OR site:elkhabar.com OR site:tsa-algerie.com',
-        'Maroc justice OR tribunal site:elwatan-dz.com OR site:tsa-algerie.com',
-        '"محكمة العدل الدولية" OR "المحكمة الجنائية الدولية" المغرب',
-        '"Cour internationale de justice" OR "Cour pénale internationale" Maroc',
-        # أمريكية: الولايات المتحدة وقضايا المغرب والقضاء
-        'Morocco justice OR court OR extradition site:nytimes.com OR site:washingtonpost.com OR site:apnews.com OR site:wsj.com',
-        'Morocco "Western Sahara" OR "Security Council" OR court site:al-monitor.com OR site:politico.com OR site:cnn.com',
-        '"Supreme Court" OR "Department of Justice" Morocco OR extradition',
-    ])
-
-  total_q = len(intl_queries)
-  for q_idx, q_str in enumerate(intl_queries):
-    if is_stop_requested():
-      break
-    if progress_cb:
-      progress_cb(
-          0.45 + 0.45 * (q_idx / max(1, total_q)),
-          f"رصد الصحف الفرنسية والإسبانية والجزائرية والدولية...",
-      )
-    bing_news_u = (
-        f"https://www.bing.com/news/search?q={urllib.parse.quote(q_str)}"
-        "&format=rss&adlt=strict"
-    )
-    try:
-      rb = requests.get(bing_news_u, headers=DEFAULT_HEADERS, timeout=6.5)
-      if rb.status_code == 200 and b"<item>" in rb.content:
-        for entry in parse_rss_xml(rb.content, "صحافة دولية", default_source="صحافة دولية", max_age_sec=max_age):
-          e_url = _unwrap_any_redirect_url(entry["url"])
-          entry["url"] = e_url
-          u_domain = urllib.parse.urlparse(e_url).netloc.lower().replace("www.", "")
-          # استبعاد الصحافة المغربية الوطنية من تبويب الصحافة الدولية لمنع الاختلاط
-          if u_domain.endswith(".ma") or any(d in u_domain for d in MOROCCAN_EXTRA_DOMAINS):
-            continue
-          if e_url not in seen_urls and is_strictly_judicial_and_clean(
-              entry["title"],
-              entry["raw_snippet"],
-              e_url,
-              keywords_input,
-              is_international=True,
-          ):
-            seen_urls.add(e_url)
-            entry["platform"] = "صحافة دولية"
-            for s_info in INTERNATIONAL_PRESS_SITES:
-              if s_info["domain"] in u_domain:
-                entry["source_name"] = s_info["name"]
-                break
-            items.append(entry)
-    except Exception:
-      pass
+  # مسار تكميلي سريع ومضبوط زمنياً فقط للوكالات التي لا تتيح خلاصة RSS مفتوحة (مثل AP/Reuters/WSJ)
+  if not is_stop_requested() and len(items) < 12:
+    when_tag = p_cfg["gnews"]
+    supp_queries = [
+        f'Morocco justice OR court OR extradition (site:reuters.com OR site:apnews.com OR site:wsj.com) when:{when_tag}',
+        f'Maroc justice OR tribunal OR extradition (site:mediapart.fr OR site:afp.com) when:{when_tag}',
+    ]
+    for q_idx, q_str in enumerate(supp_queries, 1):
+      if is_stop_requested():
+        break
+      if progress_cb:
+        progress_cb(0.84 + 0.06 * q_idx, "فحص تكميلي للوكالات الدولية بدون RSS...")
+      try:
+        rb = requests.get(
+            f"https://www.bing.com/news/search?q={urllib.parse.quote(q_str)}&format=rss&adlt=strict",
+            headers=LIVE_FETCH_HEADERS,
+            timeout=5.5,
+        )
+        if rb.status_code == 200 and b"<item>" in rb.content:
+          for entry in parse_rss_xml(rb.content, "صحافة دولية", default_source="صحافة دولية", fallback_offset=9999999, max_age_sec=max_age):
+            e_url = _unwrap_any_redirect_url(entry["url"])
+            entry["url"] = e_url
+            u_domain = urllib.parse.urlparse(e_url).netloc.lower().replace("www.", "")
+            if u_domain.endswith(".ma") or any(d in u_domain for d in MOROCCAN_EXTRA_DOMAINS):
+              continue
+            if e_url not in seen_urls and is_strictly_judicial_and_clean(
+                entry["title"], entry["raw_snippet"], e_url, keywords_input, is_international=True
+            ):
+              seen_urls.add(e_url)
+              entry["platform"] = "صحافة دولية"
+              items.append(entry)
+      except Exception:
+        pass
 
   items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
   return items
+
+
 def scrape_open_web_keyword(
     keyword_query: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ) -> list:
-  """بحث ورصد شامل في الويب المفتوح عن كلمة أو عبارة مفتاحية خلال فترة زمنية محددة (خارج نطاق المصادر الثابتة)."""
+  """رصد حر وفوري في الوقت الفعلي لكلمة أو عبارة مفتاحية عبر:
+  1) الفحص المباشر المتوازي للصحف الرياضية الدولية والمواقع المتخصصة والصحف العالمية والمغربية (لحظة النشر).
+  2) مسح تكميلي لمحركات الأخبار والويب مع احترام صارم لتاريخ النشر الفعلي ضمن الفترة الزمنية المحددة."""
   kw = clean_display_text(keyword_query or "")
   if not kw:
     return []
@@ -3852,34 +4017,72 @@ def scrape_open_web_keyword(
   p_cfg = get_period_config(search_period)
   when_tag = p_cfg["gnews"]
   max_age = p_cfg["sec"]
-  ddg_tag = p_cfg["ddg"]
 
-  sports_eu_sites = "site:lequipe.fr OR site:marca.com OR site:as.com OR site:mundodeportivo.com OR site:sport.es OR site:rmcsport.bfmtv.com OR site:footmercato.net OR site:gazzetta.it OR site:corrieredellosport.it OR site:abola.pt"
-  sports_en_sites = "site:espn.com OR site:skysports.com OR site:bbc.com/sport OR site:goal.com OR site:theathletic.com OR site:nytimes.com/athletic OR site:fourfourtwo.com OR site:kicker.de OR site:beinsports.com"
-  sports_ar_sites = "site:kooora.com OR site:winwin.com OR site:beinsports.com OR site:filgoal.com OR site:almountakhab.com OR site:hesport.com OR site:elbotola.com"
+  # 1) الرصد المباشر في وقت النشر الفعلي من خوادم الصحف الرياضية والدولية والمغربية بالتوازي
+  all_direct_publishers = (
+      DIRECT_SPORTS_AND_SPECIALIZED_FEEDS
+      + [s for s in MOROCCAN_PRESS_SITES if s.get("rss") or s.get("wp")]
+      + [s for s in INTERNATIONAL_PRESS_SITES if s.get("rss")][:18]
+  )
+  if progress_cb:
+    progress_cb(0.12, f"رصد فوري مباشر في {len(all_direct_publishers)} صحيفة رياضية ودولية ووطنية عن: {kw}")
 
-  gnews_editions = [
-      ("صحف رياضية دولية (أوروبا)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' (' + sports_eu_sites + ') when:' + when_tag)}&hl=fr&gl=FR&ceid=FR:fr", "صحافة دولية"),
-      ("صحف ومواقع رياضية عالمية", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' (' + sports_en_sites + ') when:' + when_tag)}&hl=en-US&gl=US&ceid=US:en", "صحافة دولية"),
-      ("مواقع رياضية عربية متخصصة", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' (' + sports_ar_sites + ') when:' + when_tag)}&hl=ar&gl=MA&ceid=MA:ar", "صحافة دولية"),
-      ("الويب المفتوح (عربي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=ar&gl=MA&ceid=MA:ar", "الصحف"),
-      ("الويب المفتوح (عربي دولي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=ar&gl=EG&ceid=EG:ar", "صحافة دولية"),
-      ("الويب المفتوح (فرنسي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=fr&gl=FR&ceid=FR:fr", "صحافة دولية"),
-      ("الويب المفتوح (إنجليزي)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=en-US&gl=US&ceid=US:en", "صحافة دولية"),
-      ("الويب المفتوح (إسباني)", f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=es&gl=ES&ceid=ES:es", "صحافة دولية"),
-      ("أخبار Bing الشاملة", f"https://www.bing.com/news/search?q={urllib.parse.quote(kw)}&format=rss", "صحافة دولية"),
-  ]
+  raw_direct_pool = []
+  with concurrent.futures.ThreadPoolExecutor(max_workers=14) as pool:
+    futs = [
+        pool.submit(
+            _fetch_single_publisher_live,
+            site_info,
+            "صحافة دولية" if site_info.get("country", "") not in ("", "المغرب") else "الصحف",
+            max_age,
+            kw if site_info.get("wp") else "",
+        )
+        for site_info in all_direct_publishers
+    ]
+    for fut in concurrent.futures.as_completed(futs):
+      if is_stop_requested():
+        break
+      try:
+        raw_direct_pool.extend(fut.result())
+      except Exception:
+        pass
 
-  total_steps = len(gnews_editions) + 1
-  for idx, (lbl, feed_u, default_plat) in enumerate(gnews_editions, 1):
-    if is_stop_requested():
-      break
+  # تصفية المقالات الفورية المباشرة وفق الكلمة المفتاحية (تطابق دقيق أو مشابه/مشتق)
+  if raw_direct_pool:
+    matched_direct = smart_search_articles(raw_direct_pool, kw)
+    for entry in matched_direct:
+      u = entry.get("url", "")
+      if u and u not in seen_urls:
+        seen_urls.add(u)
+        normalize_press_platform_and_source(entry)
+        entry["category"] = "رصد حر بالويب"
+        entry["_open_web_kw"] = True
+        items.append(entry)
+
+  # 2) بحث تكميلي في الويب المفتوح مع فرض صارم على تاريخ النشر الفعلي (fallback_offset=9999999 لرفض الأخبار القديمة/المؤرشفة)
+  if not is_stop_requested():
     if progress_cb:
-      progress_cb(min(0.85, idx / total_steps), f"رصد شامل في الويب ({lbl}): {kw}")
-    try:
-      r = requests.get(feed_u, headers=DEFAULT_HEADERS, timeout=7)
-      if r.status_code == 200 and (b"<rss" in r.content or b"<feed" in r.content):
-        for entry in parse_rss_xml(r.content, default_plat, default_source="ويب مفتوح", max_age_sec=max_age):
+      progress_cb(0.65, f"توسيع الرصد الحر في الويب المتخصص ({search_period}): {kw}")
+    web_feeds = [
+        f"https://www.bing.com/news/search?q={urllib.parse.quote(kw)}&format=rss&qft=sortbydate%3d%221%22",
+        f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=ar&gl=MA&ceid=MA:ar",
+        f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=fr&gl=FR&ceid=FR:fr",
+        f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=en-US&gl=US&ceid=US:en",
+        f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=es&gl=ES&ceid=ES:es",
+    ]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+      def _get_feed(u_f):
+        try:
+          r = requests.get(u_f, headers=LIVE_FETCH_HEADERS, timeout=6.0)
+          if r.status_code == 200 and (b"<rss" in r.content or b"<feed" in r.content):
+            return parse_rss_xml(r.content, "صحافة دولية", default_source="ويب مفتوح", fallback_offset=9999999, max_age_sec=max_age)
+        except Exception:
+          pass
+        return []
+      for fut in concurrent.futures.as_completed([pool.submit(_get_feed, u_f) for u_f in web_feeds]):
+        if is_stop_requested():
+          break
+        for entry in fut.result():
           u = entry.get("url", "")
           if u and u not in seen_urls:
             seen_urls.add(u)
@@ -3887,54 +4090,6 @@ def scrape_open_web_keyword(
             entry["category"] = "رصد حر بالويب"
             entry["_open_web_kw"] = True
             items.append(entry)
-    except Exception:
-      pass
-
-  # بحث ويب مفتوح عبر DuckDuckGo HTML لجلب المقالات والصفحات خارج موجزات الأخبار
-  if not is_stop_requested():
-    if progress_cb:
-      progress_cb(0.90, f"بحث الويب المفتوح (صفحات ومقالات): {kw}")
-    try:
-      ddg_u = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(kw)}&df={ddg_tag}"
-      r_ddg = requests.get(ddg_u, headers=DEFAULT_HEADERS, timeout=7)
-      if r_ddg.status_code == 200 and BeautifulSoup is not None:
-        soup = BeautifulSoup(r_ddg.text, "html.parser")
-        for res in soup.select(".result")[:15]:
-          a_tag = res.select_one("a.result__a")
-          snip_tag = res.select_one(".result__snippet")
-          if not a_tag:
-            continue
-          href = a_tag.get("href") or ""
-          if "uddg=" in href:
-            try:
-              href = urllib.parse.unquote(href.split("uddg=", 1)[1].split("&", 1)[0])
-            except Exception:
-              pass
-          if not href.startswith("http") or href in seen_urls:
-            continue
-          seen_urls.add(href)
-          dom = urllib.parse.urlparse(href).netloc.replace("www.", "")
-          t_txt = clean_display_text(a_tag.get_text(" ", strip=True))
-          s_txt = clean_display_text(snip_tag.get_text(" ", strip=True)) if snip_tag else t_txt
-          if not t_txt:
-            continue
-          entry = {
-              "title": t_txt,
-              "raw_snippet": s_txt,
-              "summary": s_txt,
-              "url": href,
-              "source_name": dom or "ويب مفتوح",
-              "platform": "صحافة دولية" if not dom.endswith(".ma") else "الصحف",
-              "pub_timestamp": time.time(),
-              "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-              "is_custom_target": 0,
-              "category": "رصد حر بالويب",
-              "_open_web_kw": True,
-          }
-          normalize_press_platform_and_source(entry)
-          items.append(entry)
-    except Exception:
-      pass
 
   items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
   return items
@@ -3943,149 +4098,74 @@ def scrape_open_web_keyword(
 def scrape_moroccan_press(
     keywords_input: str, search_period: str = "آخر 7 أيام", progress_cb=None
 ):
+  """رصد مباشر وفوري للصحف والمواقع المغربية في وقت النشر الفعلي عبر الاتصال المتوازي بخوادم الصحف
+  (WordPress REST API + RSS الحي + News Sitemap) دون انتظار أرشفة Google News."""
   items = []
   seen_urls = set()
-  queries = build_search_queries(keywords_input)
   p_cfg = get_period_config(search_period)
-  when_tag = p_cfg["gnews"]
   max_age = p_cfg["sec"]
+  total_sites = max(1, len(MOROCCAN_PRESS_SITES))
 
-  direct_sites = [s for s in MOROCCAN_PRESS_SITES if s.get("rss")]
-  batch_size = 4
-  site_batches = [
-      MOROCCAN_PRESS_SITES[i : i + batch_size]
-      for i in range(0, len(MOROCCAN_PRESS_SITES), batch_size)
-  ]
-  total_steps = len(direct_sites[:6]) + len(queries) + len(site_batches)
-  step = 0
+  if progress_cb:
+    progress_cb(0.10, f"رصد فوري مباشر لـ {total_sites} جريدة وموقع مغربي (وقت النشر الفعلي)...")
 
-  search_term_wp = (
-      keywords_input.strip().split(",")[0].strip()
-      if keywords_input.strip()
-      else "القضاء"
-  )
-  for site_info in direct_sites[:6]:
-    if is_stop_requested():
-      break
-    step += 1
-    if progress_cb:
-      progress_cb(
-          min(0.95, step / max(1, total_steps)),
-          f"فحص الخلاصة المباشرة لجريدة {site_info['name']}...",
-      )
-    wp_search_rss = f"https://{site_info['domain']}/?s={urllib.parse.quote(search_term_wp)}&feed=rss2"
-    for feed_u in [wp_search_rss, site_info["rss"]]:
+  done_cnt = 0
+  with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+    fut_map = {
+        pool.submit(_fetch_single_publisher_live, site_info, "الصحف", max_age, keywords_input): site_info
+        for site_info in MOROCCAN_PRESS_SITES
+    }
+    for fut in concurrent.futures.as_completed(fut_map):
+      if is_stop_requested():
+        break
+      done_cnt += 1
+      site_info = fut_map[fut]
+      if progress_cb and (done_cnt % 3 == 0 or done_cnt == total_sites):
+        progress_cb(
+            0.10 + 0.78 * (done_cnt / total_sites),
+            f"رصد فوري مباشر للصحافة الوطنية ({done_cnt}/{total_sites}): {site_info['name']}...",
+        )
       try:
-        rf = requests.get(feed_u, headers=DEFAULT_HEADERS, timeout=6)
-        if rf.status_code == 200 and (
-            b"<rss" in rf.content or b"<feed" in rf.content
-        ):
-          for entry in parse_rss_xml(
-              rf.content,
-              "الصحف",
-              default_source=site_info["name"],
-              max_age_sec=max_age,
+        for entry in fut.result():
+          if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
+              entry["title"],
+              entry["raw_snippet"],
+              entry["url"],
+              keywords_input,
           ):
-            if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
-                entry["title"],
-                entry["raw_snippet"],
-                entry["url"],
-                keywords_input,
-            ):
-              seen_urls.add(entry["url"])
-              items.append(entry)
-          break
+            seen_urls.add(entry["url"])
+            entry["platform"] = "الصحف"
+            entry["source_name"] = site_info["name"]
+            items.append(entry)
       except Exception:
         pass
 
-  for q in queries:
-    if is_stop_requested():
-      break
-    step += 1
-    if progress_cb:
-      progress_cb(
-          min(0.95, step / max(1, total_steps)), f"رصد الصحافة الوطنية: {q}"
+  # مسار تكميلي سريع عبر Bing News المرتب زمنياً فقط إذا كانت الحصيلة المباشرة قليلة، مع فرض صارم لتاريخ النشر
+  if not is_stop_requested() and len(items) < 6:
+    queries = build_search_queries(keywords_input)[:2]
+    for q in queries:
+      if is_stop_requested():
+        break
+      bing_news_u = (
+          f"https://www.bing.com/news/search?q={urllib.parse.quote(q)}"
+          "&format=rss&adlt=strict&cc=MA&setlang=ar&qft=sortbydate%3d%221%22"
       )
-    bing_news_u = (
-        f"https://www.bing.com/news/search?q={urllib.parse.quote(q)}"
-        "&format=rss&adlt=strict&cc=MA&setlang=ar"
-    )
-    try:
-      rb = requests.get(bing_news_u, headers=DEFAULT_HEADERS, timeout=8)
-      if rb.status_code == 200 and b"<item>" in rb.content:
-        for entry in parse_rss_xml(rb.content, "الصحف", max_age_sec=max_age):
-          normalize_press_platform_and_source(entry)
-          is_intl_e = (entry.get("platform") == "صحافة دولية")
-          if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
-              entry["title"],
-              entry["raw_snippet"],
-              entry["url"],
-              keywords_input,
-              is_international=is_intl_e,
-          ):
-            seen_urls.add(entry["url"])
-            items.append(entry)
-    except Exception:
-      pass
+      try:
+        rb = requests.get(bing_news_u, headers=LIVE_FETCH_HEADERS, timeout=6.0)
+        if rb.status_code == 200 and b"<item>" in rb.content:
+          for entry in parse_rss_xml(rb.content, "الصحف", fallback_offset=9999999, max_age_sec=max_age):
+            normalize_press_platform_and_source(entry)
+            if entry.get("platform") != "الصحف":
+              continue
+            if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
+                entry["title"], entry["raw_snippet"], entry["url"], keywords_input
+            ):
+              seen_urls.add(entry["url"])
+              items.append(entry)
+      except Exception:
+        pass
 
-    rss_url = (
-        "https://news.google.com/rss/search?q="
-        f"{urllib.parse.quote(f'{q} when:{when_tag}')}&hl=ar&gl=MA&ceid=MA:ar"
-    )
-    try:
-      r = requests.get(rss_url, headers=DEFAULT_HEADERS, timeout=10)
-      if r.status_code == 200:
-        for entry in parse_rss_xml(r.content, "الصحف", max_age_sec=max_age):
-          normalize_press_platform_and_source(entry)
-          is_intl_e = (entry.get("platform") == "صحافة دولية")
-          if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
-              entry["title"],
-              entry["raw_snippet"],
-              entry["url"],
-              keywords_input,
-              is_international=is_intl_e,
-          ):
-            seen_urls.add(entry["url"])
-            items.append(entry)
-    except Exception:
-      pass
-
-  core_kw = (
-      queries[0]
-      if keywords_input.strip()
-      else "(القضاء OR العدالة OR المحكمة OR النيابة العامة OR السلطة القضائية)"
-  )
-  for batch in site_batches:
-    if is_stop_requested():
-      break
-    step += 1
-    names_label = "، ".join(s["name"] for s in batch[:2])
-    if progress_cb:
-      progress_cb(
-          min(0.98, step / max(1, total_steps)),
-          f"مسح الصحف المغربية ({names_label}...)",
-      )
-    sites_expr = " OR ".join(f"site:{s['domain']}" for s in batch)
-    full_q = f"({sites_expr}) {core_kw} when:{when_tag}"
-    rss_url = (
-        "https://news.google.com/rss/search?q="
-        f"{urllib.parse.quote(full_q)}&hl=ar&gl=MA&ceid=MA:ar"
-    )
-    try:
-      r = requests.get(rss_url, headers=DEFAULT_HEADERS, timeout=10)
-      if r.status_code == 200:
-        for entry in parse_rss_xml(r.content, "الصحف", max_age_sec=max_age):
-          if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
-              entry["title"],
-              entry["raw_snippet"],
-              entry["url"],
-              keywords_input,
-          ):
-            seen_urls.add(entry["url"])
-            items.append(entry)
-    except Exception:
-      pass
-
+  items.sort(key=lambda x: float(x.get("pub_timestamp", 0)), reverse=True)
   return items
 
 
