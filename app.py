@@ -320,8 +320,8 @@ INTERNATIONAL_PRESS_SITES = [
     {"domain": "liberation.fr", "name": "Libération (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.liberation.fr/arc/outboundfeeds/rss-all/collection/accueil-une/"},
     {"domain": "france24.com", "name": "France 24 (فرنسا)", "country": "فرنسا", "lang": "ar", "rss": "https://www.france24.com/ar/rss"},
     {"domain": "rfi.fr", "name": "RFI (فرنسا)", "country": "فرنسا", "lang": "ar", "rss": "https://www.rfi.fr/ar/rss"},
-    {"domain": "afp.com", "name": "وكالة الصحافة الفرنسية AFP", "country": "فرنسا", "lang": "ar", "rss": ""},
-    {"domain": "mediapart.fr", "name": "Mediapart (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": ""},
+    {"domain": "afp.com", "name": "وكالة الصحافة الفرنسية AFP", "country": "فرنسا", "lang": "ar", "rss": "https://www.afp.com/en/news-hub/rss", "live_url": "https://www.afp.com/en/news-hub"},
+    {"domain": "mediapart.fr", "name": "Mediapart (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.mediapart.fr/articles/feed", "live_url": "https://www.mediapart.fr/journal/international"},
     {"domain": "jeuneafrique.com", "name": "Jeune Afrique (باريس)", "country": "فرنسا", "lang": "fr", "rss": "https://www.jeuneafrique.com/feed/"},
     {"domain": "lexpress.fr", "name": "L'Express (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.lexpress.fr/rss/alaune.xml"},
     {"domain": "lepoint.fr", "name": "Le Point (فرنسا)", "country": "فرنسا", "lang": "fr", "rss": "https://www.lepoint.fr/rss.xml"},
@@ -362,24 +362,24 @@ INTERNATIONAL_PRESS_SITES = [
     # --- الولايات المتحدة الأمريكية (USA) ---
     {"domain": "nytimes.com", "name": "New York Times (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"},
     {"domain": "washingtonpost.com", "name": "Washington Post (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": "https://feeds.washingtonpost.com/rss/world"},
-    {"domain": "wsj.com", "name": "Wall Street Journal (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": ""},
-    {"domain": "apnews.com", "name": "Associated Press AP (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": ""},
-    {"domain": "bloomberg.com", "name": "Bloomberg (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": ""},
+    {"domain": "wsj.com", "name": "Wall Street Journal (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": "https://feeds.a.dj.com/rss/RSSWorldNews.xml"},
+    {"domain": "apnews.com", "name": "Associated Press AP (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": "https://feedx.net/rss/ap.xml", "sitemap": "https://apnews.com/news-sitemap-content.xml", "live_url": "https://apnews.com/hub/world-news"},
+    {"domain": "bloomberg.com", "name": "Bloomberg (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": "https://feeds.bloomberg.com/politics/news.rss"},
     {"domain": "cnn.com", "name": "CNN (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": "http://rss.cnn.com/rss/edition_world.rss"},
     {"domain": "politico.com", "name": "Politico (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": "https://rss.politico.com/politics-news.xml"},
     {"domain": "npr.org", "name": "NPR (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": "https://feeds.npr.org/1004/rss.xml"},
     {"domain": "al-monitor.com", "name": "Al-Monitor (واشنطن)", "country": "الولايات المتحدة", "lang": "en", "rss": "https://www.al-monitor.com/rss"},
-    {"domain": "usatoday.com", "name": "USA Today (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": ""},
+    {"domain": "usatoday.com", "name": "USA Today (أمريكا)", "country": "الولايات المتحدة", "lang": "en", "rss": "https://rssfeeds.usatoday.com/usatoday-NewsTopStories"},
 
     # --- صحافة ووكالات وهيئات دولية كبرى ---
     {"domain": "aljazeera.net", "name": "الجزيرة نت (دولي)", "country": "دولي", "lang": "ar", "rss": "https://www.aljazeera.net/aljazeerarss/a7c186be-1baa-4bd4-9d80-a84db769f779/73d0e1b4-532f-45ef-b135-bfdff8b8cab9"},
     {"domain": "bbc.com", "name": "BBC عربي (دولي)", "country": "دولي", "lang": "ar", "rss": "https://feeds.bbci.co.uk/arabic/rss.xml"},
-    {"domain": "reuters.com", "name": "رويترز Reuters (دولي)", "country": "دولي", "lang": "ar", "rss": ""},
+    {"domain": "reuters.com", "name": "رويترز Reuters (دولي)", "country": "دولي", "lang": "ar", "rss": "", "sitemap": "https://www.reuters.com/arc/outboundfeeds/news-sitemap/?outputType=xml", "live_url": "https://www.reuters.com/world/africa/"},
     {"domain": "dw.com", "name": "دويتشه فيله DW (ألمانيا)", "country": "دولي", "lang": "ar", "rss": "https://rss.dw.com/rdf/rss-ar-all"},
     {"domain": "independentarabia.com", "name": "إندبندنت عربية", "country": "دولي", "lang": "ar", "rss": "https://www.independentarabia.com/rss.xml"},
     {"domain": "aawsat.com", "name": "الشرق الأوسط (دولي)", "country": "دولي", "lang": "ar", "rss": "https://aawsat.com/feed"},
-    {"domain": "curia.europa.eu", "name": "محكمة العدل الأوروبية CJUE", "country": "دولي", "lang": "fr", "rss": ""},
-    {"domain": "icj-cij.org", "name": "محكمة العدل الدولية CIJ", "country": "دولي", "lang": "fr", "rss": ""},
+    {"domain": "curia.europa.eu", "name": "محكمة العدل الأوروبية CJUE", "country": "دولي", "lang": "fr", "rss": "https://curia.europa.eu/jcms/jcms/Jo2_7052/fr/?portal=rss", "live_url": "https://curia.europa.eu/jcms/jcms/Jo2_7052/fr/"},
+    {"domain": "icj-cij.org", "name": "محكمة العدل الدولية CIJ", "country": "دولي", "lang": "fr", "rss": "https://www.icj-cij.org/rss.xml", "live_url": "https://www.icj-cij.org/press-releases"},
     {"domain": "icc-cpi.int", "name": "المحكمة الجنائية الدولية CPI", "country": "دولي", "lang": "fr", "rss": "https://www.icc-cpi.int/rss/news"},
 ]
 
@@ -3898,16 +3898,72 @@ def _fetch_single_publisher_live(
     except Exception:
       pass
 
-  # 3) خريطة الأخبار الفورية (News Sitemap) للمواقع التي لا توفر RSS
-  sm_u = site_info.get("sitemap", "")
-  if sm_u and not collected:
+  # 3) خريطة الأخبار الفورية (News Sitemap) مباشرة من خادم الناشر
+  sm_candidates = [site_info.get("sitemap", "")] if site_info.get("sitemap") else []
+  if not collected and domain and not sm_candidates:
+    sm_candidates = [f"https://{domain}/news-sitemap.xml", f"https://{domain}/sitemap_news.xml"]
+  for sm_u in sm_candidates:
+    if collected or not sm_u:
+      break
     try:
-      rs = requests.get(sm_u, headers=LIVE_FETCH_HEADERS, timeout=5.5)
+      rs = requests.get(sm_u, headers=LIVE_FETCH_HEADERS, timeout=4.5)
       if rs.status_code == 200 and b"<url" in rs.content:
         for entry in parse_news_sitemap_xml(rs.content, default_platform, default_source=name, max_age_sec=max_age_sec):
           if entry["url"] not in seen_u:
             seen_u.add(entry["url"])
             collected.append(entry)
+    except Exception:
+      pass
+
+  # 4) المسح المباشر للصفحة الرئيسية / صفحة المستجدات الحية للناشر (HTML Live Scrape + JSON-LD) بدون أي وسيط أرشفة
+  if not collected and domain and BeautifulSoup is not None:
+    live_page_u = site_info.get("live_url") or f"https://{domain}/"
+    try:
+      rh = requests.get(live_page_u, headers=LIVE_FETCH_HEADERS, timeout=5.5)
+      if rh.status_code == 200 and rh.text:
+        soup = BeautifulSoup(rh.text, "html.parser")
+        now_ts = time.time()
+        # اكتشاف تلقائي لأي رابط RSS بديل في ترويسة الصفحة
+        alt_rss = soup.find("link", attrs={"type": re.compile(r"rss|atom", re.I)})
+        if alt_rss and alt_rss.get("href"):
+          alt_u = urllib.parse.urljoin(live_page_u, alt_rss["href"])
+          try:
+            ra = requests.get(alt_u, headers=LIVE_FETCH_HEADERS, timeout=4.5)
+            if ra.status_code == 200 and (b"<rss" in ra.content or b"<feed" in ra.content):
+              for entry in parse_rss_xml(ra.content, default_platform, default_source=name, fallback_offset=9999999, max_age_sec=max_age_sec):
+                if entry["url"] not in seen_u:
+                  seen_u.add(entry["url"])
+                  entry["source_name"] = name
+                  collected.append(entry)
+          except Exception:
+            pass
+        if not collected:
+          for art_node in soup.select("article, .post, .news-item, h2 a, h3 a")[:25]:
+            a_el = art_node if art_node.name == "a" else art_node.find("a", href=True)
+            if not a_el or not a_el.get("href"):
+              continue
+            href = urllib.parse.urljoin(live_page_u, a_el["href"].strip())
+            if domain not in href or href in seen_u:
+              continue
+            title_txt = clean_display_text(a_el.get_text(" ", strip=True))
+            if len(title_txt) < 22:
+              continue
+            time_el = art_node.find("time") if art_node.name != "a" else None
+            dt_raw = (time_el.get("datetime") or time_el.get_text(" ", strip=True)) if time_el else ""
+            pub_str, pub_ts = extract_date_from_url_or_text(href, title_txt, dt_raw, fallback_offset_sec=1800)
+            if max_age_sec > 0 and (now_ts - pub_ts) > max_age_sec:
+              continue
+            seen_u.add(href)
+            collected.append({
+                "title": title_txt,
+                "url": clean_social_post_url(href),
+                "raw_snippet": title_txt,
+                "source_name": name,
+                "platform": default_platform,
+                "pub_date": pub_str,
+                "pub_timestamp": pub_ts,
+                "image_url": "",
+            })
     except Exception:
       pass
 
@@ -3967,10 +4023,9 @@ def scrape_international_press(
 
   # مسار تكميلي سريع ومضبوط زمنياً فقط للوكالات التي لا تتيح خلاصة RSS مفتوحة (مثل AP/Reuters/WSJ)
   if not is_stop_requested() and len(items) < 12:
-    when_tag = p_cfg["gnews"]
     supp_queries = [
-        f'Morocco justice OR court OR extradition (site:reuters.com OR site:apnews.com OR site:wsj.com) when:{when_tag}',
-        f'Maroc justice OR tribunal OR extradition (site:mediapart.fr OR site:afp.com) when:{when_tag}',
+        'Morocco justice OR court OR extradition (site:reuters.com OR site:apnews.com OR site:wsj.com)',
+        'Maroc justice OR tribunal OR extradition (site:mediapart.fr OR site:afp.com)',
     ]
     for q_idx, q_str in enumerate(supp_queries, 1):
       if is_stop_requested():
@@ -4021,8 +4076,8 @@ def scrape_open_web_keyword(
   # 1) الرصد المباشر في وقت النشر الفعلي من خوادم الصحف الرياضية والدولية والمغربية بالتوازي
   all_direct_publishers = (
       DIRECT_SPORTS_AND_SPECIALIZED_FEEDS
-      + [s for s in MOROCCAN_PRESS_SITES if s.get("rss") or s.get("wp")]
-      + [s for s in INTERNATIONAL_PRESS_SITES if s.get("rss")][:18]
+      + list(MOROCCAN_PRESS_SITES)
+      + list(INTERNATIONAL_PRESS_SITES)
   )
   if progress_cb:
     progress_cb(0.12, f"رصد فوري مباشر في {len(all_direct_publishers)} صحيفة رياضية ودولية ووطنية عن: {kw}")
@@ -4059,16 +4114,15 @@ def scrape_open_web_keyword(
         entry["_open_web_kw"] = True
         items.append(entry)
 
-  # 2) بحث تكميلي في الويب المفتوح مع فرض صارم على تاريخ النشر الفعلي (fallback_offset=9999999 لرفض الأخبار القديمة/المؤرشفة)
+  # 2) مسار تكميلي فوري مرتب بالتاريخ (بدون Google News المؤرشف) مع فرض صارم لتاريخ النشر الفعلي
   if not is_stop_requested():
     if progress_cb:
-      progress_cb(0.65, f"توسيع الرصد الحر في الويب المتخصص ({search_period}): {kw}")
+      progress_cb(0.72, f"فحص التغطيات الحية المرتبة بالوقت ({search_period}): {kw}")
     web_feeds = [
         f"https://www.bing.com/news/search?q={urllib.parse.quote(kw)}&format=rss&qft=sortbydate%3d%221%22",
-        f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=ar&gl=MA&ceid=MA:ar",
-        f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=fr&gl=FR&ceid=FR:fr",
-        f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=en-US&gl=US&ceid=US:en",
-        f"https://news.google.com/rss/search?q={urllib.parse.quote(kw + ' when:' + when_tag)}&hl=es&gl=ES&ceid=ES:es",
+        f"https://www.bing.com/news/search?q={urllib.parse.quote(kw)}&format=rss&cc=FR&setlang=fr&qft=sortbydate%3d%221%22",
+        f"https://www.bing.com/news/search?q={urllib.parse.quote(kw)}&format=rss&cc=ES&setlang=es&qft=sortbydate%3d%221%22",
+        f"https://www.bing.com/news/search?q={urllib.parse.quote(kw)}&format=rss&cc=US&setlang=en&qft=sortbydate%3d%221%22",
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
       def _get_feed(u_f):
@@ -4491,12 +4545,13 @@ def _multi_engine_social_search(
     for sq in social_g_queries:
       if is_stop_requested():
         break
-      gnews_social_url = (
-          "https://news.google.com/rss/search?q="
-          f"{urllib.parse.quote(sq)}&hl=ar&gl=MA&ceid=MA:ar"
+      sq_clean = re.sub(r"\s+when:\S+", "", sq).strip()
+      bing_social_url = (
+          "https://www.bing.com/news/search?q="
+          f"{urllib.parse.quote(sq_clean)}&format=rss&adlt=strict&qft=sortbydate%3d%221%22"
       )
       try:
-        r = requests.get(gnews_social_url, headers=DEFAULT_HEADERS, timeout=10)
+        r = requests.get(bing_social_url, headers=LIVE_FETCH_HEADERS, timeout=7)
         if r.status_code == 200:
           for entry in parse_rss_xml(
               r.content,
