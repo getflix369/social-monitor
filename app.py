@@ -287,27 +287,47 @@ BLOCKED_INAPPROPRIATE_TERMS = [
 ]
 
 MOROCCAN_PRESS_SITES = [
-    {"domain": "hespress.com", "name": "هسبريس", "rss": "https://www.hespress.com/feed", "wp": True},
-    {"domain": "akhbarona.com", "name": "أخبارنا", "rss": "https://www.akhbarona.com/feed", "wp": False},
-    {"domain": "agadir24.info", "name": "أكادير 24", "rss": "https://agadir24.info/feed", "wp": True},
-    {"domain": "kech24.com", "name": "كش 24", "rss": "https://www.kech24.com/feed", "wp": True},
-    {"domain": "alayam24.com", "name": "الأيام 24", "rss": "https://www.alayam24.com/feed", "wp": True},
-    {"domain": "madar21.com", "name": "مدار 21", "rss": "https://madar21.com/feed", "wp": True},
-    {"domain": "sabahagadir.com", "name": "صباح أكادير", "rss": "https://sabahagadir.com/feed", "wp": True},
-    {"domain": "goud.ma", "name": "كود", "rss": "https://www.goud.ma/feed", "wp": True},
-    {"domain": "assabah.ma", "name": "الصباح", "rss": "https://assabah.ma/feed", "wp": True},
-    {"domain": "thevoice.ma", "name": "ذا فويس", "rss": "https://thevoice.ma/feed", "wp": True},
-    {"domain": "nadorcity.com", "name": "ناظورسيتي", "rss": "https://www.nadorcity.com/xml/syndication.rss", "wp": False},
-    {"domain": "al3omk.com", "name": "العمق المغربي", "rss": "https://al3omk.com/feed", "wp": True},
-    {"domain": "alyaoum24.com", "name": "اليوم 24", "rss": "https://alyaoum24.com/feed", "wp": True},
-    {"domain": "rue20.com", "name": "زنقة 20", "rss": "https://rue20.com/feed", "wp": True},
-    {"domain": "le360.ma", "name": "Le360", "rss": "https://ar.le360.ma/arc/outboundfeeds/rss/", "sitemap": "https://ar.le360.ma/arc/outboundfeeds/news-sitemap/", "wp": False},
-    {"domain": "barlamane.com", "name": "برلمان.كوم", "rss": "https://www.barlamane.com/feed", "wp": True},
-    {"domain": "tanja24.com", "name": "طنجة 24", "rss": "https://tanja24.com/feed", "wp": True},
-    {"domain": "hibapress.com", "name": "هبة بريس", "rss": "https://ar.hibapress.com/feed", "wp": True},
-    {"domain": "febrayer.com", "name": "فبراير.كوم", "rss": "https://www.febrayer.com/feed", "wp": True},
-    {"domain": "lematin.ma", "name": "Le Matin", "rss": "https://lematin.ma/rssFeed/0", "wp": False},
-    {"domain": "medias24.com", "name": "Médias24", "rss": "https://medias24.com/feed/", "wp": True},
+    {"domain": "hespress.com", "name": "هسبريس", "rss": "https://www.hespress.com/feed", "live_url": "https://www.hespress.com/", "wp": True},
+    {"domain": "madar21.com", "name": "مدار 21", "rss": "https://madar21.com/feed", "live_url": "https://madar21.com/", "wp": True},
+    {"domain": "hibapress.com", "name": "هبة بريس", "rss": "https://ar.hibapress.com/feed", "live_url": "https://ar.hibapress.com/", "wp": True},
+    {"domain": "akhbarona.com", "name": "أخبارنا", "rss": "https://www.akhbarona.com/feed", "live_url": "https://www.akhbarona.com/", "wp": False},
+    {"domain": "al3omk.com", "name": "العمق المغربي", "rss": "https://al3omk.com/feed", "live_url": "https://al3omk.com/", "wp": True},
+    {"domain": "alyaoum24.com", "name": "اليوم 24", "rss": "https://alyaoum24.com/feed", "live_url": "https://alyaoum24.com/", "wp": True},
+    {"domain": "rue20.com", "name": "زنقة 20", "rss": "https://rue20.com/feed", "live_url": "https://rue20.com/", "wp": True},
+    {"domain": "barlamane.com", "name": "برلمان.كوم", "rss": "https://www.barlamane.com/feed", "live_url": "https://www.barlamane.com/", "wp": True},
+    {"domain": "alayam24.com", "name": "الأيام 24", "rss": "https://www.alayam24.com/feed", "live_url": "https://www.alayam24.com/", "wp": True},
+    {"domain": "goud.ma", "name": "كود", "rss": "https://www.goud.ma/feed", "live_url": "https://www.goud.ma/", "wp": True},
+    {"domain": "assabah.ma", "name": "الصباح", "rss": "https://assabah.ma/feed", "live_url": "https://assabah.ma/", "wp": True},
+    {"domain": "achkayen.com", "name": "آشكاين", "rss": "https://achkayen.com/feed", "live_url": "https://achkayen.com/", "wp": True},
+    {"domain": "alaoual.com", "name": "الأول", "rss": "https://alaoual.com/feed", "live_url": "https://alaoual.com/", "wp": True},
+    {"domain": "lakome2.com", "name": "لكم", "rss": "https://lakome2.com/feed", "live_url": "https://lakome2.com/", "wp": True},
+    {"domain": "assahifa.com", "name": "الصحيفة", "rss": "https://www.assahifa.com/feed", "live_url": "https://www.assahifa.com/", "wp": True},
+    {"domain": "howiyapress.com", "name": "هوية بريس", "rss": "https://howiyapress.com/feed", "live_url": "https://howiyapress.com/", "wp": True},
+    {"domain": "ahdath.info", "name": "الأحداث المغربية", "rss": "https://ahdath.info/feed", "live_url": "https://ahdath.info/", "wp": True},
+    {"domain": "febrayer.com", "name": "فبراير.كوم", "rss": "https://www.febrayer.com/feed", "live_url": "https://www.febrayer.com/", "wp": True},
+    {"domain": "chouftv.ma", "name": "شوف تيفي", "rss": "https://chouftv.ma/feed", "live_url": "https://chouftv.ma/", "wp": True},
+    {"domain": "anfaspress.com", "name": "أنفاس بريس", "rss": "https://anfaspress.com/feed", "live_url": "https://anfaspress.com/", "wp": False},
+    {"domain": "telquel.ma", "name": "تيل كيل عربي", "rss": "https://ar.telquel.ma/feed", "live_url": "https://ar.telquel.ma/", "wp": True},
+    {"domain": "le360.ma", "name": "Le360 عربي", "rss": "https://ar.le360.ma/arc/outboundfeeds/rss/", "sitemap": "https://ar.le360.ma/arc/outboundfeeds/news-sitemap/", "live_url": "https://ar.le360.ma/", "wp": False},
+    {"domain": "snrtnews.com", "name": "SNRT News", "rss": "https://snrtnews.com/rss.xml", "live_url": "https://snrtnews.com/", "wp": False},
+    {"domain": "medi1news.com", "name": "ميدي 1 نيوز", "rss": "https://www.medi1news.com/ar/rss", "live_url": "https://www.medi1news.com/ar", "wp": False},
+    {"domain": "mapexpress.ma", "name": "وكالة المغرب العربي MAP", "rss": "https://www.mapexpress.ma/ar/feed/", "live_url": "https://www.mapexpress.ma/ar/", "wp": True},
+    {"domain": "kech24.com", "name": "كش 24", "rss": "https://www.kech24.com/feed", "live_url": "https://www.kech24.com/", "wp": True},
+    {"domain": "marrakechalaan.com", "name": "مراكش الآن", "rss": "https://marrakechalaan.com/feed", "live_url": "https://marrakechalaan.com/", "wp": True},
+    {"domain": "agadir24.info", "name": "أكادير 24", "rss": "https://agadir24.info/feed", "live_url": "https://agadir24.info/", "wp": True},
+    {"domain": "sabahagadir.com", "name": "صباح أكادير", "rss": "https://sabahagadir.com/feed", "live_url": "https://sabahagadir.com/", "wp": True},
+    {"domain": "tanja24.com", "name": "طنجة 24", "rss": "https://tanja24.com/feed", "live_url": "https://tanja24.com/", "wp": True},
+    {"domain": "tanjanews.com", "name": "طنجة نيوز", "rss": "https://www.tanjanews.com/feed", "live_url": "https://www.tanjanews.com/", "wp": True},
+    {"domain": "fesnews.media", "name": "فاس نيوز", "rss": "https://fesnews.media/feed", "live_url": "https://fesnews.media/", "wp": True},
+    {"domain": "nadorcity.com", "name": "ناظورسيتي", "rss": "https://www.nadorcity.com/xml/syndication.rss", "live_url": "https://www.nadorcity.com/", "wp": False},
+    {"domain": "oujdacity.net", "name": "وجدة سيتي", "rss": "https://www.oujdacity.net/feed", "live_url": "https://www.oujdacity.net/", "wp": True},
+    {"domain": "meknespress.com", "name": "مكناس بريس", "rss": "https://www.meknespress.com/feed", "live_url": "https://www.meknespress.com/", "wp": True},
+    {"domain": "thevoice.ma", "name": "ذا فويس", "rss": "https://thevoice.ma/feed", "live_url": "https://thevoice.ma/", "wp": True},
+    {"domain": "bayanealyaoume.press.ma", "name": "بيان اليوم", "rss": "https://bayanealyaoume.press.ma/feed", "live_url": "https://bayanealyaoume.press.ma/", "wp": True},
+    {"domain": "lematin.ma", "name": "Le Matin", "rss": "https://lematin.ma/rssFeed/0", "live_url": "https://lematin.ma/", "wp": False},
+    {"domain": "medias24.com", "name": "Médias24", "rss": "https://medias24.com/feed/", "live_url": "https://medias24.com/", "wp": True},
+    {"domain": "lopinion.ma", "name": "L'Opinion", "rss": "https://www.lopinion.ma/xml/syndication.rss", "live_url": "https://www.lopinion.ma/", "wp": False},
+    {"domain": "leconomiste.com", "name": "L'Économiste", "rss": "https://www.leconomiste.com/rss-leconomiste", "live_url": "https://www.leconomiste.com/", "wp": False},
 ]
 
 # =====================================================================
@@ -3752,6 +3772,8 @@ def parse_rss_xml(
 # =====================================================================
 LIVE_FETCH_HEADERS = {
     **DEFAULT_HEADERS,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
+    "Accept-Language": "ar,fr-FR;q=0.9,fr;q=0.8,en;q=0.7",
     "Cache-Control": "no-cache, no-store, must-revalidate",
     "Pragma": "no-cache",
     "Expires": "0",
@@ -3806,24 +3828,37 @@ def parse_news_sitemap_xml(
   return results
 
 
+def _get_site_origin(site_info: dict) -> str:
+  """استخراج النطاق الفرعي الدقيق للموقع (مثل https://ar.hibapress.com أو https://www.hespress.com)."""
+  for k in ("live_url", "rss", "sitemap"):
+    u = str(site_info.get(k) or "").strip()
+    if u.startswith("http"):
+      p_u = urllib.parse.urlparse(u)
+      if p_u.netloc:
+        return f"{p_u.scheme}://{p_u.netloc}"
+  dom = str(site_info.get("domain") or "").strip()
+  return f"https://{dom}" if dom else ""
+
+
 def fetch_wp_rest_posts(
-    domain: str,
+    domain_or_origin: str,
     source_name: str,
     default_platform: str = "الصحف",
     keyword: str = "",
     max_age_sec: int = 0,
-    per_page: int = 20,
+    per_page: int = 30,
 ) -> list:
   """جلب المقالات مباشرة من واجهة WordPress REST API الخاصة بالموقع لحظة نشرها الفعلي مع توقيت GMT الدقيق."""
   results = []
   now_ts = time.time()
+  origin = domain_or_origin.rstrip("/") if domain_or_origin.startswith("http") else f"https://{domain_or_origin}"
   params = [f"per_page={per_page}", "orderby=date", "order=desc", "_fields=link,title,excerpt,date_gmt,date,jetpack_featured_media_url"]
   if keyword and keyword.strip():
     params.append(f"search={urllib.parse.quote(keyword.strip())}")
   if max_age_sec > 0:
     after_iso = datetime.fromtimestamp(now_ts - max_age_sec, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     params.append(f"after={urllib.parse.quote(after_iso)}")
-  api_url = f"https://{domain}/wp-json/wp/v2/posts?{'&'.join(params)}"
+  api_url = f"{origin}/wp-json/wp/v2/posts?{'&'.join(params)}"
   try:
     r = requests.get(api_url, headers=LIVE_FETCH_HEADERS, timeout=5.5)
     if r.status_code != 200:
@@ -3867,36 +3902,44 @@ def _fetch_single_publisher_live(
     max_age_sec: int,
     keyword: str = "",
 ) -> list:
-  """فحص ناشر واحد مباشرة عبر WP REST API + RSS الحي + News Sitemap بدون المرور بمحركات الأرشفة."""
+  """فحص ناشر واحد مباشرة عبر WP REST API (العام + البحث القضائي المباشر) + RSS الحي + News Sitemap + الصفحة الحية بدون المرور بمحركات الأرشفة."""
   collected = []
   seen_u = set()
   domain = site_info.get("domain", "")
   name = site_info.get("name", domain)
+  origin = _get_site_origin(site_info)
 
-  # 1) واجهة WordPress REST API المباشرة (أدق توقيت نشر فوري)
-  if site_info.get("wp") and domain:
-    for item in fetch_wp_rest_posts(domain, name, default_platform, keyword=keyword, max_age_sec=max_age_sec):
-      if item["url"] not in seen_u:
-        seen_u.add(item["url"])
-        collected.append(item)
+  # 1) واجهة WordPress REST API المباشرة على نفس خادم الجريدة (المقالات الأحدث + البحث الداخلي الفوري في الجريدة)
+  if site_info.get("wp") and origin:
+    search_terms = [keyword.strip()] if (keyword and keyword.strip()) else (["", "القضاء", "المحكمة"] if default_platform == "الصحف" else [""])
+    for sterm in search_terms:
+      per_p = 35 if not sterm else 12
+      for item in fetch_wp_rest_posts(origin, name, default_platform, keyword=sterm, max_age_sec=max_age_sec, per_page=per_p):
+        if item["url"] not in seen_u:
+          seen_u.add(item["url"])
+          collected.append(item)
 
-  # 2) خلاصة RSS / Atom الحية مباشرة من خادم الناشر
+  # 2) خلاصة RSS / Atom الحية مباشرة من خادم الناشر (+ خلاصة البحث المباشر على الموقع للمواقع المغربية)
   rss_u = site_info.get("rss", "")
-  if rss_u and not collected:
-    try:
-      sep = "&" if "?" in rss_u else "?"
-      live_rss_u = f"{rss_u}{sep}_rt={int(time.time() // 60)}"
-      rf = requests.get(live_rss_u, headers=LIVE_FETCH_HEADERS, timeout=5.5)
-      if rf.status_code != 200 or not (b"<rss" in rf.content or b"<feed" in rf.content or b"<rdf" in rf.content or b"<item" in rf.content):
-        rf = requests.get(rss_u, headers=LIVE_FETCH_HEADERS, timeout=5.5)
-      if rf.status_code == 200 and (b"<rss" in rf.content or b"<feed" in rf.content or b"<rdf" in rf.content or b"<item" in rf.content):
-        for entry in parse_rss_xml(rf.content, default_platform, default_source=name, fallback_offset=9999999, max_age_sec=max_age_sec):
-          if entry["url"] not in seen_u:
-            seen_u.add(entry["url"])
-            entry["source_name"] = name
-            collected.append(entry)
-    except Exception:
-      pass
+  rss_urls_to_try = []
+  if rss_u:
+    rss_urls_to_try.append(rss_u)
+  if default_platform == "الصحف" and site_info.get("wp") and origin and len(collected) < 5:
+    q_s = keyword.strip() if (keyword and keyword.strip()) else "القضاء"
+    rss_urls_to_try.append(f"{origin}/?s={urllib.parse.quote(q_s)}&feed=rss2")
+
+  if rss_urls_to_try and (not collected or (default_platform == "الصحف" and len(collected) < 8)):
+    for r_target in rss_urls_to_try:
+      try:
+        rf = requests.get(r_target, headers=LIVE_FETCH_HEADERS, timeout=5.5)
+        if rf.status_code == 200 and (b"<rss" in rf.content or b"<feed" in rf.content or b"<rdf" in rf.content or b"<item" in rf.content):
+          for entry in parse_rss_xml(rf.content, default_platform, default_source=name, fallback_offset=9999999, max_age_sec=max_age_sec):
+            if entry["url"] not in seen_u:
+              seen_u.add(entry["url"])
+              entry["source_name"] = name
+              collected.append(entry)
+      except Exception:
+        pass
 
   # 3) خريطة الأخبار الفورية (News Sitemap) مباشرة من خادم الناشر
   sm_candidates = [site_info.get("sitemap", "")] if site_info.get("sitemap") else []
@@ -4191,31 +4234,6 @@ def scrape_moroccan_press(
             entry["platform"] = "الصحف"
             entry["source_name"] = site_info["name"]
             items.append(entry)
-      except Exception:
-        pass
-
-  # مسار تكميلي سريع عبر Bing News المرتب زمنياً فقط إذا كانت الحصيلة المباشرة قليلة، مع فرض صارم لتاريخ النشر
-  if not is_stop_requested() and len(items) < 6:
-    queries = build_search_queries(keywords_input)[:2]
-    for q in queries:
-      if is_stop_requested():
-        break
-      bing_news_u = (
-          f"https://www.bing.com/news/search?q={urllib.parse.quote(q)}"
-          "&format=rss&adlt=strict&cc=MA&setlang=ar&qft=sortbydate%3d%221%22"
-      )
-      try:
-        rb = requests.get(bing_news_u, headers=LIVE_FETCH_HEADERS, timeout=6.0)
-        if rb.status_code == 200 and b"<item>" in rb.content:
-          for entry in parse_rss_xml(rb.content, "الصحف", fallback_offset=9999999, max_age_sec=max_age):
-            normalize_press_platform_and_source(entry)
-            if entry.get("platform") != "الصحف":
-              continue
-            if entry["url"] not in seen_urls and is_strictly_judicial_and_clean(
-                entry["title"], entry["raw_snippet"], entry["url"], keywords_input
-            ):
-              seen_urls.add(entry["url"])
-              items.append(entry)
       except Exception:
         pass
 
