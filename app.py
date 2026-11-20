@@ -328,6 +328,12 @@ MOROCCAN_PRESS_SITES = [
     {"domain": "medias24.com", "name": "Médias24", "rss": "https://medias24.com/feed/", "live_url": "https://medias24.com/", "wp": True},
     {"domain": "lopinion.ma", "name": "L'Opinion", "rss": "https://www.lopinion.ma/xml/syndication.rss", "live_url": "https://www.lopinion.ma/", "wp": False},
     {"domain": "leconomiste.com", "name": "L'Économiste", "rss": "https://www.leconomiste.com/rss-leconomiste", "live_url": "https://www.leconomiste.com/", "wp": False},
+    {"domain": "inews.ma", "name": "آي نيوز المغرب", "rss": "https://inews.ma/feed", "live_url": "https://inews.ma/", "wp": True},
+    {"domain": "aabbir.com", "name": "عبّر.كوم", "rss": "https://aabbir.com/feed", "live_url": "https://aabbir.com/", "wp": True},
+    {"domain": "i3lamtv.com", "name": "إعلام تيفي", "rss": "https://i3lamtv.com/feed", "live_url": "https://i3lamtv.com/", "wp": True},
+    {"domain": "expresstv.ma", "name": "إكسبريس تيفي", "rss": "https://expresstv.ma/feed", "live_url": "https://expresstv.ma/", "wp": True},
+    {"domain": "le12.ma", "name": "Le12.ma", "rss": "https://le12.ma/feed", "live_url": "https://le12.ma/", "wp": True},
+    {"domain": "belpresse.com", "name": "بلبريس", "rss": "https://www.belpresse.com/feed", "live_url": "https://www.belpresse.com/", "wp": True},
 ]
 
 # =====================================================================
@@ -396,7 +402,11 @@ INTERNATIONAL_PRESS_SITES = [
     {"domain": "bbc.com", "name": "BBC عربي (دولي)", "country": "دولي", "lang": "ar", "rss": "https://feeds.bbci.co.uk/arabic/rss.xml"},
     {"domain": "reuters.com", "name": "رويترز Reuters (دولي)", "country": "دولي", "lang": "ar", "rss": "", "sitemap": "https://www.reuters.com/arc/outboundfeeds/news-sitemap/?outputType=xml", "live_url": "https://www.reuters.com/world/africa/"},
     {"domain": "dw.com", "name": "دويتشه فيله DW (ألمانيا)", "country": "دولي", "lang": "ar", "rss": "https://rss.dw.com/rdf/rss-ar-all"},
-    {"domain": "independentarabia.com", "name": "إندبندنت عربية", "country": "دولي", "lang": "ar", "rss": "https://www.independentarabia.com/rss.xml"},
+    {"domain": "independentarabia.com", "name": "إندبندنت عربية", "country": "دولي", "lang": "ar", "rss": "https://www.independentarabia.com/rss.xml", "live_url": "https://www.independentarabia.com/"},
+    {"domain": "alquds.com", "name": "جريدة القدس (دولي)", "country": "دولي", "lang": "ar", "rss": "https://alquds.com/feed/", "live_url": "https://alquds.com/", "wp": True},
+    {"domain": "elaph.com", "name": "إيلاف (دولي)", "country": "دولي", "lang": "ar", "rss": "https://elaph.com/rss.xml", "live_url": "https://elaph.com/", "wp": False},
+    {"domain": "zahraa.mr", "name": "زهرة شنقيط (موريتانيا)", "country": "دولي", "lang": "ar", "rss": "https://zahraa.mr/rss.xml", "live_url": "https://zahraa.mr/", "wp": False},
+    {"domain": "twaslnews1.twaslnews.com", "name": "تواصل نيوز (دولي)", "country": "دولي", "lang": "ar", "rss": "https://twaslnews1.twaslnews.com/feed", "live_url": "https://twaslnews1.twaslnews.com/", "wp": True},
     {"domain": "aawsat.com", "name": "الشرق الأوسط (دولي)", "country": "دولي", "lang": "ar", "rss": "https://aawsat.com/feed"},
     {"domain": "curia.europa.eu", "name": "محكمة العدل الأوروبية CJUE", "country": "دولي", "lang": "fr", "rss": "https://curia.europa.eu/jcms/jcms/Jo2_7052/fr/?portal=rss", "live_url": "https://curia.europa.eu/jcms/jcms/Jo2_7052/fr/"},
     {"domain": "icj-cij.org", "name": "محكمة العدل الدولية CIJ", "country": "دولي", "lang": "fr", "rss": "https://www.icj-cij.org/rss.xml", "live_url": "https://www.icj-cij.org/press-releases"},
@@ -3771,13 +3781,48 @@ def parse_rss_xml(
 # WordPress REST API + Live No-Cache RSS/Atom + News Sitemaps + Parallel Workers
 # =====================================================================
 LIVE_FETCH_HEADERS = {
-    **DEFAULT_HEADERS,
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
-    "Accept-Language": "ar,fr-FR;q=0.9,fr;q=0.8,en;q=0.7",
+    "Accept-Language": "ar,fr-FR;q=0.9,fr;q=0.8,en-US;q=0.7,en;q=0.6",
     "Cache-Control": "no-cache, no-store, must-revalidate",
     "Pragma": "no-cache",
-    "Expires": "0",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Upgrade-Insecure-Requests": "1",
 }
+
+try:
+  import cloudscraper as _cloudscraper_mod
+except Exception:
+  _cloudscraper_mod = None
+
+
+def _direct_http_get(url: str, timeout: float = 6.0):
+  """جلب مباشر من خادم الناشر مع تجاوز ذكي لقيود User-Agent / www وتجربة cloudscraper عند حظر 403/503."""
+  try:
+    r = requests.get(url, headers=LIVE_FETCH_HEADERS, timeout=timeout, allow_redirects=True)
+    if r.status_code == 200 and r.content:
+      return r
+    if r.status_code in (403, 503, 429) and _cloudscraper_mod is not None:
+      try:
+        sc = _cloudscraper_mod.create_scraper(browser={"browser": "chrome", "platform": "windows", "mobile": False})
+        r_cs = sc.get(url, timeout=timeout + 2.0)
+        if r_cs.status_code == 200 and r_cs.content:
+          return r_cs
+      except Exception:
+        pass
+    # تجربة تبديل www. عند فشل الاستجابة
+    p_u = urllib.parse.urlparse(url)
+    if p_u.netloc and r.status_code in (403, 404, 500, 502, 503):
+      alt_netloc = p_u.netloc[4:] if p_u.netloc.startswith("www.") else f"www.{p_u.netloc}"
+      alt_url = urllib.parse.urlunparse((p_u.scheme, alt_netloc, p_u.path, p_u.params, p_u.query, p_u.fragment))
+      r_alt = requests.get(alt_url, headers=LIVE_FETCH_HEADERS, timeout=timeout, allow_redirects=True)
+      if r_alt.status_code == 200 and r_alt.content:
+        return r_alt
+    return r
+  except Exception:
+    return None
 
 
 def parse_news_sitemap_xml(
@@ -3860,8 +3905,8 @@ def fetch_wp_rest_posts(
     params.append(f"after={urllib.parse.quote(after_iso)}")
   api_url = f"{origin}/wp-json/wp/v2/posts?{'&'.join(params)}"
   try:
-    r = requests.get(api_url, headers=LIVE_FETCH_HEADERS, timeout=5.5)
-    if r.status_code != 200:
+    r = _direct_http_get(api_url, timeout=6.0)
+    if r is None or r.status_code != 200:
       return results
     data = r.json()
     if not isinstance(data, list):
@@ -3877,7 +3922,7 @@ def fetch_wp_rest_posts(
       if not link or not title:
         continue
       date_raw = str(post.get("date_gmt") or post.get("date") or "").strip()
-      pub_str, pub_ts = extract_date_from_url_or_text(link, desc, date_raw, fallback_offset_sec=9999999)
+      pub_str, pub_ts = extract_date_from_url_or_text(link, desc, date_raw, fallback_offset_sec=1800)
       if max_age_sec > 0 and (now_ts - pub_ts) > max_age_sec:
         continue
       img_u = str(post.get("jetpack_featured_media_url") or "").strip()
@@ -3924,16 +3969,20 @@ def _fetch_single_publisher_live(
   rss_urls_to_try = []
   if rss_u:
     rss_urls_to_try.append(rss_u)
-  if default_platform == "الصحف" and site_info.get("wp") and origin and len(collected) < 5:
+  if origin:
+    for candidate_r in (f"{origin}/feed/", f"{origin}/rss.xml"):
+      if candidate_r not in rss_urls_to_try and not rss_u:
+        rss_urls_to_try.append(candidate_r)
+  if default_platform == "الصحف" and site_info.get("wp") and origin:
     q_s = keyword.strip() if (keyword and keyword.strip()) else "القضاء"
     rss_urls_to_try.append(f"{origin}/?s={urllib.parse.quote(q_s)}&feed=rss2")
 
-  if rss_urls_to_try and (not collected or (default_platform == "الصحف" and len(collected) < 8)):
+  if rss_urls_to_try and (not collected or (default_platform == "الصحف" and len(collected) < 12)):
     for r_target in rss_urls_to_try:
       try:
-        rf = requests.get(r_target, headers=LIVE_FETCH_HEADERS, timeout=5.5)
-        if rf.status_code == 200 and (b"<rss" in rf.content or b"<feed" in rf.content or b"<rdf" in rf.content or b"<item" in rf.content):
-          for entry in parse_rss_xml(rf.content, default_platform, default_source=name, fallback_offset=9999999, max_age_sec=max_age_sec):
+        rf = _direct_http_get(r_target, timeout=6.0)
+        if rf is not None and rf.status_code == 200 and (b"<rss" in rf.content or b"<feed" in rf.content or b"<rdf" in rf.content or b"<item" in rf.content):
+          for entry in parse_rss_xml(rf.content, default_platform, default_source=name, fallback_offset=1800, max_age_sec=max_age_sec):
             if entry["url"] not in seen_u:
               seen_u.add(entry["url"])
               entry["source_name"] = name
@@ -3943,14 +3992,14 @@ def _fetch_single_publisher_live(
 
   # 3) خريطة الأخبار الفورية (News Sitemap) مباشرة من خادم الناشر
   sm_candidates = [site_info.get("sitemap", "")] if site_info.get("sitemap") else []
-  if not collected and domain and not sm_candidates:
-    sm_candidates = [f"https://{domain}/news-sitemap.xml", f"https://{domain}/sitemap_news.xml"]
+  if not collected and origin and not sm_candidates:
+    sm_candidates = [f"{origin}/news-sitemap.xml", f"{origin}/sitemap_news.xml", f"{origin}/post-sitemap.xml"]
   for sm_u in sm_candidates:
     if collected or not sm_u:
       break
     try:
-      rs = requests.get(sm_u, headers=LIVE_FETCH_HEADERS, timeout=4.5)
-      if rs.status_code == 200 and b"<url" in rs.content:
+      rs = _direct_http_get(sm_u, timeout=5.0)
+      if rs is not None and rs.status_code == 200 and b"<url" in rs.content:
         for entry in parse_news_sitemap_xml(rs.content, default_platform, default_source=name, max_age_sec=max_age_sec):
           if entry["url"] not in seen_u:
             seen_u.add(entry["url"])
@@ -3958,55 +4007,59 @@ def _fetch_single_publisher_live(
     except Exception:
       pass
 
-  # 4) المسح المباشر للصفحة الرئيسية / صفحة المستجدات الحية للناشر (HTML Live Scrape + JSON-LD) بدون أي وسيط أرشفة
-  if not collected and domain and BeautifulSoup is not None:
-    live_page_u = site_info.get("live_url") or f"https://{domain}/"
+  # 4) المسح المباشر للصفحة الرئيسية / صفحة المستجدات الحية للناشر (HTML Live Scrape + JSON-LD + a[title])
+  if (not collected or len(collected) < 3) and origin and BeautifulSoup is not None:
+    live_page_u = site_info.get("live_url") or f"{origin}/"
     try:
-      rh = requests.get(live_page_u, headers=LIVE_FETCH_HEADERS, timeout=5.5)
-      if rh.status_code == 200 and rh.text:
+      rh = _direct_http_get(live_page_u, timeout=6.0)
+      if rh is not None and rh.status_code == 200 and rh.text:
         soup = BeautifulSoup(rh.text, "html.parser")
         now_ts = time.time()
         # اكتشاف تلقائي لأي رابط RSS بديل في ترويسة الصفحة
         alt_rss = soup.find("link", attrs={"type": re.compile(r"rss|atom", re.I)})
-        if alt_rss and alt_rss.get("href"):
+        if alt_rss and alt_rss.get("href") and not collected:
           alt_u = urllib.parse.urljoin(live_page_u, alt_rss["href"])
           try:
-            ra = requests.get(alt_u, headers=LIVE_FETCH_HEADERS, timeout=4.5)
-            if ra.status_code == 200 and (b"<rss" in ra.content or b"<feed" in ra.content):
-              for entry in parse_rss_xml(ra.content, default_platform, default_source=name, fallback_offset=9999999, max_age_sec=max_age_sec):
+            ra = _direct_http_get(alt_u, timeout=5.0)
+            if ra is not None and ra.status_code == 200 and (b"<rss" in ra.content or b"<feed" in ra.content):
+              for entry in parse_rss_xml(ra.content, default_platform, default_source=name, fallback_offset=1800, max_age_sec=max_age_sec):
                 if entry["url"] not in seen_u:
                   seen_u.add(entry["url"])
                   entry["source_name"] = name
                   collected.append(entry)
           except Exception:
             pass
-        if not collected:
-          for art_node in soup.select("article, .post, .news-item, h2 a, h3 a")[:25]:
-            a_el = art_node if art_node.name == "a" else art_node.find("a", href=True)
-            if not a_el or not a_el.get("href"):
-              continue
-            href = urllib.parse.urljoin(live_page_u, a_el["href"].strip())
-            if domain not in href or href in seen_u:
-              continue
-            title_txt = clean_display_text(a_el.get_text(" ", strip=True))
-            if len(title_txt) < 22:
-              continue
-            time_el = art_node.find("time") if art_node.name != "a" else None
-            dt_raw = (time_el.get("datetime") or time_el.get_text(" ", strip=True)) if time_el else ""
-            pub_str, pub_ts = extract_date_from_url_or_text(href, title_txt, dt_raw, fallback_offset_sec=1800)
-            if max_age_sec > 0 and (now_ts - pub_ts) > max_age_sec:
-              continue
-            seen_u.add(href)
-            collected.append({
-                "title": title_txt,
-                "url": clean_social_post_url(href),
-                "raw_snippet": title_txt,
-                "source_name": name,
-                "platform": default_platform,
-                "pub_date": pub_str,
-                "pub_timestamp": pub_ts,
-                "image_url": "",
-            })
+        # استخراج المقالات المباشرة من بنية الصفحة الحية (عناوين h1/h2/h3 وبطاقات article وسمة title)
+        for art_node in soup.select("article, .post, .card, .news-item, .entry-title a, h2 a, h3 a, a[title]")[:45]:
+          a_el = art_node if art_node.name == "a" else art_node.find("a", href=True)
+          if not a_el or not a_el.get("href"):
+            continue
+          href = urllib.parse.urljoin(live_page_u, a_el["href"].strip())
+          if domain not in href or href in seen_u:
+            continue
+          if any(skip_p in href.lower() for skip_p in ("/category/", "/tag/", "/author/", "/page/", "wp-login", "#")):
+            continue
+          title_txt = clean_display_text(a_el.get_text(" ", strip=True) or a_el.get("title") or "")
+          if len(title_txt) < 18:
+            title_txt = clean_display_text(a_el.get("title") or title_txt)
+          if len(title_txt) < 18:
+            continue
+          time_el = art_node.find("time") if art_node.name != "a" else None
+          dt_raw = (time_el.get("datetime") or time_el.get_text(" ", strip=True)) if time_el else ""
+          pub_str, pub_ts = extract_date_from_url_or_text(href, title_txt, dt_raw, fallback_offset_sec=1800)
+          if max_age_sec > 0 and (now_ts - pub_ts) > max_age_sec:
+            continue
+          seen_u.add(href)
+          collected.append({
+              "title": title_txt,
+              "url": clean_social_post_url(href),
+              "raw_snippet": title_txt,
+              "source_name": name,
+              "platform": default_platform,
+              "pub_date": pub_str,
+              "pub_timestamp": pub_ts,
+              "image_url": "",
+          })
     except Exception:
       pass
 
