@@ -1253,3 +1253,8 @@ https://www.ups.com/track?tracknum=tracking&loc=en_US
 https://tools.usps.com/go/TrackConfirmAction_input?origTrackNum=9534610866516028793854
 https://www.17track.net/EN
 https://www.trackingmore.com/track
+https://www.setlist.fm/setlist/foo-fighters/2026/anfield-liverpool-england-234fc40b.html
+https://www.concertarchives.org/concerts/foo-fighters-inhaler-otoboke-beaver-3c48fc57-2d99-41df-b5bb-2943a37431e9
+https://www.concertarchives.org/concerts/take-cover-tour-2026--14374182
+https://foofightersdb.com/shows/25-june-2026-anfield
+https://m.youtube.com/watch?v=pboeH9WKMMU
