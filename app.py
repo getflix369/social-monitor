@@ -1,5 +1,11 @@
 import difflib
 import base64
+import io
+import zipfile
+try:
+  from zoneinfo import ZoneInfo
+except Exception:
+  ZoneInfo = None
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import html
@@ -3216,6 +3222,8 @@ def load_credentials():
       "auto_monitor": True,
       "monitor_interval": "كل ساعة",
       "admin_pin": DEFAULT_ADMIN_PIN,
+      "daily_report_enabled": True,
+      "daily_report_hour": 21,
   }
   if os.path.exists(CREDENTIALS_FILE):
     try:
@@ -7678,6 +7686,611 @@ def _get_all_articles_for_bot() -> list:
   return []
 
 
+# =====================================================================
+# محرك التقرير اليومي التركيبي والمخصص (21:00) وتصدير PDF / Word وجولة في الصحافة لتلغرام
+# =====================================================================
+def _get_morocco_now() -> datetime:
+  """إرجاع التوقيت المحلي الحالي بالمغرب (Africa/Casablanca أو UTC+1)."""
+  try:
+    if ZoneInfo is not None:
+      return datetime.now(ZoneInfo("Africa/Casablanca"))
+  except Exception:
+    pass
+  return datetime.now(timezone(timedelta(hours=1)))
+
+
+def _select_daily_composite_articles(all_arts: list, max_hours: int = 24) -> list:
+  """انتقاء أهم الأخبار الوطنية والدولية (القضاء والعدالة وما يتطرق للمغرب) خلال آخر 24 ساعة."""
+  now_ts = time.time()
+  recent = []
+  for a in all_arts:
+    if not isinstance(a, dict):
+      continue
+    if a.get("category") == "رصد حر بالويب":
+      continue
+    pub_t = float(a.get("pub_timestamp") or a.get("created_at") or 0)
+    mon_t = float(a.get("created_at") or pub_t)
+    if (now_ts - min(pub_t, mon_t)) <= max_hours * 3600 or (now_ts - mon_t) <= max_hours * 3600:
+      recent.append(a)
+  # في حال كان عدد أخبار آخر 24 ساعة قليلاً جداً، نأخذ أحدث 20 خبراً متاحاً في القاعدة
+  pool = recent if len(recent) >= 3 else [a for a in all_arts if isinstance(a, dict) and a.get("category") != "رصد حر بالويب"][:25]
+  pool.sort(key=lambda x: float(x.get("pub_timestamp") or x.get("created_at") or 0), reverse=True)
+  return pool
+
+
+def _generate_executive_synthesis_ar(national_items: list, intl_items: list, morocco_intl_items: list, cfg: dict, report_mode_label: str) -> str:
+  """توليد خلاصة تركيبية مهنية باللغة العربية الفصحى عبر Gemini AI مع بديل تركيبي حتمي."""
+  sample_lines = []
+  for it in (national_items[:8] + morocco_intl_items[:6] + intl_items[:6]):
+    t_ar, s_ar = _ensure_arabic_title_and_summary(it, fast_render=True)
+    sample_lines.append(f"- [{it.get('platform', '')} | {it.get('source_name', '')}] {t_ar}: {s_ar[:180]}")
+
+  api_key = (cfg.get("gemini_api_key") or "").strip() if isinstance(cfg, dict) else ""
+  if api_key and sample_lines:
+    prompt = (
+        "أنت محرر صحفي وقضائي محترف في «المرصد القضائي».\n"
+        f"صُغ خلاصة تركيبية مهنية وموجزة (فقرتان إلى ثلاث فقرات بالعربية الفصحى السليمة، بدون رموز ماركداون مثل * أو #) "
+        f"بمثابة جولة في الصحافة لـ ({report_mode_label})، تجمع أبرز المستجدات القضائية الوطنية في المغرب "
+        "وأهم ما تناولته الصحافة الدولية حول القضاء أو ما يتطرق للمغرب، مع إبراز القضايا والمحاكم والاتجاهات المشتركة:\n\n"
+        + "\n".join(sample_lines[:18])
+    )
+    ai_txt = _call_gemini_rest_or_sdk(prompt, api_key)
+    if ai_txt and _is_predominantly_arabic(ai_txt) and len(ai_txt) >= 60:
+      cleaned_ai = re.sub(r"[*#`]+", "", ai_txt).strip()
+      return cleaned_ai
+
+  # بديل تركيبي حتمي ومنظم عند عدم توفر Gemini
+  parts = []
+  if national_items:
+    top_nat_titles = "، و".join(_ensure_arabic_title_and_summary(x, fast_render=True)[0][:90] for x in national_items[:3])
+    parts.append(
+        f"على الصعيد الوطني، رصدت المنصة {len(national_items)} مستجداً قضائياً عبر الصحافة والمواقع المغربية، "
+        f"تصدرتها مواضيع: {top_nat_titles}."
+    )
+  if morocco_intl_items:
+    top_ma_intl = "، و".join(_ensure_arabic_title_and_summary(x, fast_render=True)[0][:90] for x in morocco_intl_items[:3])
+    parts.append(
+        f"وفي الصحافة الدولية المتطرقة للمغرب، تم توثيق {len(morocco_intl_items)} تغطية إعلامية بارزة، "
+        f"من أبرزها: {top_ma_intl}."
+    )
+  elif intl_items:
+    top_intl = "، و".join(_ensure_arabic_title_and_summary(x, fast_render=True)[0][:90] for x in intl_items[:3])
+    parts.append(
+        f"وعلى مستوى القضاء الدولي والصحافة الأجنبية، جرى رصد {len(intl_items)} مقالاً وتقريراً، "
+        f"أبرزها: {top_intl}."
+    )
+  if not parts:
+    return "تم إعداد هذا التقرير بناءً على المعطيات المتاحة حالياً في قاعدة بيانات المرصد القضائي."
+  return " ".join(parts)
+
+
+def build_daily_report_data(
+    articles: list,
+    cfg: dict,
+    report_type: str = "composite",
+    filter_summary: str = "",
+) -> dict:
+  """بناء البنية الكاملة للتقرير اليومي (تركيبي شامل أو مخصص حسب الفلاتر)."""
+  ma_now = _get_morocco_now()
+  date_str = ma_now.strftime("%Y-%m-%d")
+  time_str = ma_now.strftime("%H:%M")
+
+  if report_type == "composite":
+    working = _select_daily_composite_articles(articles, max_hours=24)
+    title = f"التقرير اليومي التركيبي — جولة في الصحافة ({date_str})"
+    subtitle = "تقرير مركب لأهم المستجدات القضائية الوطنية والدولية وما يتطرق للمغرب (إصدار الساعة 21:00)"
+  else:
+    working = list(articles or [])
+    title = f"تقرير رصد مخصص — المرصد القضائي ({date_str})"
+    subtitle = filter_summary or "تقرير مخصص بناءً على معايير الفلترة المختارة في المنصة"
+
+  national_items = []
+  morocco_intl_items = []
+  other_intl_items = []
+  social_items = []
+
+  for raw_a in working:
+    a = dict(raw_a)
+    normalize_press_platform_and_source(a)
+    plat = a.get("platform", "الصحف")
+    ar_t, ar_s = _ensure_arabic_title_and_summary(a, fast_render=True)
+    a["_ar_title"] = ar_t
+    a["_ar_summary"] = ar_s
+    c_tag, t_tag = detect_article_country_and_topic(
+        a.get("title", ""), a.get("raw_snippet", ""), a.get("url", ""), a.get("source_name", ""), plat
+    )
+    a["_country"] = c_tag
+    a["_topic"] = t_tag
+
+    if plat == "الصحف":
+      national_items.append(a)
+    elif plat == "صحافة دولية":
+      if t_tag == "يتطرق للمغرب" or a.get("category") == "يتطرق للمغرب" or _has_morocco_reference(f"{ar_t} {ar_s}"):
+        morocco_intl_items.append(a)
+      else:
+        other_intl_items.append(a)
+    else:
+      social_items.append(a)
+
+  synthesis = _generate_executive_synthesis_ar(
+      national_items, other_intl_items, morocco_intl_items, cfg, title
+  )
+
+  return {
+      "title": title,
+      "subtitle": subtitle,
+      "report_type": report_type,
+      "date_str": date_str,
+      "time_str": time_str,
+      "filter_summary": filter_summary,
+      "synthesis": synthesis,
+      "total_count": len(working),
+      "national_items": national_items[:25],
+      "morocco_intl_items": morocco_intl_items[:20],
+      "other_intl_items": other_intl_items[:15],
+      "social_items": social_items[:15],
+  }
+
+
+def generate_report_html(report_data: dict) -> str:
+  """توليد نسخة HTML احترافية منسقة للطباعة وتصدير PDF بدعم كامل للغة العربية RTL."""
+  def _render_sec(sec_title: str, items: list, accent_hex: str) -> str:
+    if not items:
+      return ""
+    blocks = []
+    for idx, it in enumerate(items, 1):
+      t_safe = html.escape(it.get("_ar_title") or it.get("title") or "")
+      s_safe = html.escape(it.get("_ar_summary") or it.get("summary") or "")
+      src_safe = html.escape(clean_display_text(it.get("source_name") or it.get("platform") or ""))
+      dt_safe = html.escape(clean_display_text(it.get("pub_date") or ""))
+      cnt_safe = html.escape(clean_display_text(it.get("_country") or ""))
+      u_safe = html.escape(clean_social_post_url(it.get("url") or "#"), quote=True)
+      blocks.append(f"""
+      <div class="item-card" style="border-right:4px solid {accent_hex};">
+        <div class="item-meta">
+          <span class="badge">{idx}</span>
+          <strong>{src_safe}</strong>
+          <span>• {cnt_safe}</span>
+          <span dir="ltr">• {dt_safe}</span>
+        </div>
+        <div class="item-title"><a href="{u_safe}">{t_safe}</a></div>
+        <div class="item-summary">{s_safe}</div>
+        <div class="item-url"><a href="{u_safe}">{u_safe}</a></div>
+      </div>
+      """)
+    return f"""
+    <section class="report-sec">
+      <h2 class="sec-title" style="border-right:5px solid {accent_hex};">{html.escape(sec_title)} ({len(items)})</h2>
+      {''.join(blocks)}
+    </section>
+    """
+
+  sec_nat = _render_sec("أولاً: أبرز أخبار القضاء والعدالة في الصحافة الوطنية المغربية", report_data["national_items"], "#059669")
+  sec_ma_intl = _render_sec("ثانياً: الصحافة الدولية — الأخبار المتطرقة للمغرب", report_data["morocco_intl_items"], "#b45309")
+  sec_intl = _render_sec("ثالثاً: مستجدات القضاء الدولي والصحافة الأجنبية", report_data["other_intl_items"], "#0369a1")
+  sec_soc = _render_sec("رابعاً: رصد المنصات الرقمية وشبكات التواصل", report_data["social_items"], "#6d28d9")
+
+  filter_badge = (
+      f'<div class="filter-strip"><strong>معايير التصفية المطبقة:</strong> {html.escape(report_data["filter_summary"])}</div>'
+      if report_data.get("filter_summary")
+      else ""
+  )
+
+  return f"""<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<title>{html.escape(report_data['title'])}</title>
+<style>
+  @page {{ size: A4; margin: 16mm 14mm; }}
+  body {{
+    font-family: 'DejaVu Sans', 'Cairo', 'Tahoma', Arial, sans-serif;
+    direction: rtl;
+    text-align: right;
+    color: #0f172a;
+    background: #ffffff;
+    margin: 0;
+    padding: 0;
+    line-height: 1.65;
+    font-size: 10.5pt;
+  }}
+  .cover-header {{
+    background: #071920;
+    color: #ffffff;
+    padding: 18px 22px;
+    border-radius: 10px;
+    border-bottom: 4px solid #d4af37;
+    margin-bottom: 14px;
+  }}
+  .cover-brand {{ font-size: 11pt; color: #f3e5ab; font-weight: 700; margin-bottom: 4px; }}
+  .cover-title {{ font-size: 16pt; font-weight: 900; margin: 0 0 6px 0; color: #ffffff; }}
+  .cover-sub {{ font-size: 9.5pt; color: #cbd5e1; margin: 0; }}
+  .kpi-table {{ width: 100%; border-collapse: separate; border-spacing: 6px; margin-bottom: 14px; }}
+  .kpi-cell {{
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-top: 3px solid #0b2229;
+    border-radius: 8px;
+    padding: 8px 6px;
+    text-align: center;
+    width: 25%;
+  }}
+  .kpi-num {{ font-size: 15pt; font-weight: 900; color: #071920; }}
+  .kpi-lbl {{ font-size: 8.5pt; color: #475569; font-weight: 700; }}
+  .filter-strip {{
+    background: #fef9c3;
+    border: 1px solid #eab308;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 9pt;
+    margin-bottom: 12px;
+  }}
+  .synthesis-box {{
+    background: #f0fdfa;
+    border: 1px solid #99f6e4;
+    border-right: 5px solid #0d9488;
+    border-radius: 8px;
+    padding: 12px 15px;
+    margin-bottom: 16px;
+  }}
+  .synthesis-title {{ font-size: 11.5pt; font-weight: 900; color: #0f766e; margin: 0 0 6px 0; }}
+  .sec-title {{
+    font-size: 12pt;
+    font-weight: 900;
+    color: #071920;
+    background: #f1f5f9;
+    padding: 7px 12px;
+    border-radius: 6px;
+    margin: 14px 0 10px 0;
+  }}
+  .item-card {{
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 9px;
+    page-break-inside: avoid;
+  }}
+  .item-meta {{ font-size: 8.5pt; color: #475569; margin-bottom: 4px; }}
+  .badge {{
+    display: inline-block;
+    background: #071920;
+    color: #f3e5ab;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-weight: 700;
+    margin-left: 6px;
+  }}
+  .item-title {{ font-size: 10.5pt; font-weight: 800; color: #0f172a; margin-bottom: 4px; }}
+  .item-title a {{ color: #0f172a; text-decoration: none; }}
+  .item-summary {{ font-size: 9.5pt; color: #334155; margin-bottom: 4px; }}
+  .item-url {{ font-size: 7.5pt; color: #0284c7; word-break: break-all; direction: ltr; text-align: left; }}
+  .item-url a {{ color: #0284c7; text-decoration: none; }}
+  .footer {{
+    margin-top: 18px;
+    padding-top: 8px;
+    border-top: 1px solid #cbd5e1;
+    font-size: 8.5pt;
+    color: #64748b;
+    text-align: center;
+  }}
+</style>
+</head>
+<body>
+  <div class="cover-header">
+    <div class="cover-brand">⚖️ المرصد القضائي — التقرير الإعلامي والقضائي</div>
+    <h1 class="cover-title">{html.escape(report_data['title'])}</h1>
+    <p class="cover-sub">{html.escape(report_data['subtitle'])} • تاريخ الإصدار: {html.escape(report_data['date_str'])} على الساعة {html.escape(report_data['time_str'])}</p>
+  </div>
+
+  <table class="kpi-table">
+    <tr>
+      <td class="kpi-cell"><div class="kpi-num">{report_data['total_count']}</div><div class="kpi-lbl">إجمالي الأخبار المشمولة</div></td>
+      <td class="kpi-cell"><div class="kpi-num">{len(report_data['national_items'])}</div><div class="kpi-lbl">الصحافة الوطنية المغربية</div></td>
+      <td class="kpi-cell"><div class="kpi-num">{len(report_data['morocco_intl_items'])}</div><div class="kpi-lbl">دولية تتطرق للمغرب</div></td>
+      <td class="kpi-cell"><div class="kpi-num">{len(report_data['other_intl_items']) + len(report_data['social_items'])}</div><div class="kpi-lbl">قضاء دولي ومنصات رقمية</div></td>
+    </tr>
+  </table>
+
+  {filter_badge}
+
+  <div class="synthesis-box">
+    <div class="synthesis-title">📌 الخلاصة التركيبية (جولة في الصحافة)</div>
+    <div>{html.escape(report_data['synthesis']).replace(chr(10), '<br/>')}</div>
+  </div>
+
+  {sec_nat}
+  {sec_ma_intl}
+  {sec_intl}
+  {sec_soc}
+
+  <div class="footer">صدر آلياً عن منصة المرصد القضائي • {html.escape(report_data['date_str'])} {html.escape(report_data['time_str'])}</div>
+</body>
+</html>"""
+
+
+def generate_report_pdf_bytes(report_data: dict) -> tuple:
+  """توليد ملف PDF احترافي بدعم كامل للعربية عبر WeasyPrint، مع بديل HTML جاهز للطباعة إن لم تكن WeasyPrint مثبتة."""
+  report_html = generate_report_html(report_data)
+  try:
+    import weasyprint
+    pdf_bytes = weasyprint.HTML(string=report_html).write_pdf()
+    if pdf_bytes and pdf_bytes[:4] == b"%PDF":
+      return pdf_bytes, "application/pdf", f"marsad_report_{report_data['date_str']}.pdf"
+  except Exception:
+    pass
+  return report_html.encode("utf-8"), "text/html", f"marsad_report_{report_data['date_str']}_printable.html"
+
+
+def _xml_escape_docx(text: str) -> str:
+  return (
+      str(text or "")
+      .replace("&", "&amp;")
+      .replace("<", "&lt;")
+      .replace(">", "&gt;")
+      .replace('"', "&quot;")
+      .replace("'", "&apos;")
+  )
+
+
+def generate_report_docx_bytes(report_data: dict) -> bytes:
+  """توليد ملف Word (.docx) احترافي باتجاه RTL كامل عبر python-docx، مع محرك OOXML مدمج كبديل مضمون بدون مكتبات خارجية."""
+  try:
+    import docx
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Pt, RGBColor
+
+    doc = docx.Document()
+
+    def _set_rtl_para(p_obj):
+      p_obj.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+      pPr = p_obj._p.get_or_add_pPr()
+      bidi = OxmlElement("w:bidi")
+      pPr.append(bidi)
+
+    def _add_ar_para(text: str, bold: bool = False, size_pt: int = 11, color_rgb=(15, 23, 42), space_after: int = 4):
+      p_o = doc.add_paragraph()
+      _set_rtl_para(p_o)
+      p_o.paragraph_format.space_after = Pt(space_after)
+      run = p_o.add_run(text)
+      run.bold = bold
+      run.font.name = "Arial"
+      run.font.size = Pt(size_pt)
+      run.font.color.rgb = RGBColor(*color_rgb)
+      rPr = run._r.get_or_add_rPr()
+      rtl_el = OxmlElement("w:rtl")
+      rPr.append(rtl_el)
+      return p_o
+
+    _add_ar_para("⚖️ المرصد القضائي — التقرير الإعلامي والقضائي", bold=True, size_pt=12, color_rgb=(180, 130, 20), space_after=2)
+    _add_ar_para(report_data["title"], bold=True, size_pt=16, color_rgb=(7, 25, 32), space_after=4)
+    _add_ar_para(
+        f"{report_data['subtitle']} | التاريخ: {report_data['date_str']} — الساعة: {report_data['time_str']}",
+        bold=False, size_pt=10, color_rgb=(71, 85, 105), space_after=8
+    )
+
+    if report_data.get("filter_summary"):
+      _add_ar_para(f"معايير التصفية: {report_data['filter_summary']}", bold=True, size_pt=10, color_rgb=(146, 64, 14), space_after=6)
+
+    # جدول المؤشرات الموجز
+    tbl = doc.add_table(rows=2, cols=4)
+    tbl.style = "Table Grid"
+    headers_k = ["إجمالي الأخبار", "الصحافة الوطنية", "دولية عن المغرب", "قضاء دولي ومنصات"]
+    vals_k = [
+        str(report_data["total_count"]),
+        str(len(report_data["national_items"])),
+        str(len(report_data["morocco_intl_items"])),
+        str(len(report_data["other_intl_items"]) + len(report_data["social_items"])),
+    ]
+    for ci in range(4):
+      c0 = tbl.rows[0].cells[ci].paragraphs[0]
+      _set_rtl_para(c0)
+      r0 = c0.add_run(headers_k[ci])
+      r0.bold = True
+      r0.font.size = Pt(10)
+      c1 = tbl.rows[1].cells[ci].paragraphs[0]
+      _set_rtl_para(c1)
+      r1 = c1.add_run(vals_k[ci])
+      r1.bold = True
+      r1.font.size = Pt(12)
+
+    _add_ar_para("📌 الخلاصة التركيبية (جولة في الصحافة)", bold=True, size_pt=13, color_rgb=(13, 148, 136), space_after=4)
+    _add_ar_para(report_data["synthesis"], bold=False, size_pt=11, color_rgb=(30, 41, 59), space_after=10)
+
+    sections = [
+        ("أولاً: أبرز أخبار القضاء والعدالة في الصحافة الوطنية المغربية", report_data["national_items"]),
+        ("ثانياً: الصحافة الدولية — الأخبار المتطرقة للمغرب", report_data["morocco_intl_items"]),
+        ("ثالثاً: مستجدات القضاء الدولي والصحافة الأجنبية", report_data["other_intl_items"]),
+        ("رابعاً: رصد المنصات الرقمية وشبكات التواصل", report_data["social_items"]),
+    ]
+    for sec_title, items_s in sections:
+      if not items_s:
+        continue
+      _add_ar_para(f"{sec_title} ({len(items_s)})", bold=True, size_pt=13, color_rgb=(7, 25, 32), space_after=5)
+      for idx, it in enumerate(items_s, 1):
+        t_ar = it.get("_ar_title") or it.get("title") or ""
+        s_ar = it.get("_ar_summary") or it.get("summary") or ""
+        src_n = clean_display_text(it.get("source_name") or it.get("platform") or "")
+        pub_d = clean_display_text(it.get("pub_date") or "")
+        u_clean = clean_social_post_url(it.get("url") or "")
+        _add_ar_para(f"{idx}. {t_ar}", bold=True, size_pt=11, color_rgb=(15, 23, 42), space_after=2)
+        _add_ar_para(f"المصدر: {src_n} | التاريخ: {pub_d}", bold=False, size_pt=9, color_rgb=(100, 116, 139), space_after=2)
+        _add_ar_para(f"الملخص: {s_ar}", bold=False, size_pt=10, color_rgb=(51, 65, 85), space_after=2)
+        if u_clean:
+          _add_ar_para(f"الرابط: {u_clean}", bold=False, size_pt=8, color_rgb=(2, 132, 199), space_after=6)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+  except Exception:
+    # بديل OOXML نقي ببايثون القياسية لضمان عمل التصدير إلى Word حتى بدون python-docx
+    paras_xml = []
+    def _mk_p(txt, bold=False, sz=22):
+      b_tag = "<w:b/>" if bold else ""
+      return (
+          f'<w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr>'
+          f'<w:r><w:rPr><w:rtl/>{b_tag}<w:sz w:val="{sz}"/></w:rPr>'
+          f'<w:t xml:space="preserve">{_xml_escape_docx(txt)}</w:t></w:r></w:p>'
+      )
+    paras_xml.append(_mk_p(report_data["title"], bold=True, sz=32))
+    paras_xml.append(_mk_p(f"{report_data['subtitle']} ({report_data['date_str']} {report_data['time_str']})", sz=20))
+    paras_xml.append(_mk_p("الخلاصة التركيبية:", bold=True, sz=26))
+    paras_xml.append(_mk_p(report_data["synthesis"], sz=22))
+    for sec_lbl, lst in [
+        ("الصحافة الوطنية المغربية", report_data["national_items"]),
+        ("الصحافة الدولية المتطرقة للمغرب", report_data["morocco_intl_items"]),
+        ("القضاء الدولي والصحافة الأجنبية", report_data["other_intl_items"]),
+        ("المنصات الرقمية", report_data["social_items"]),
+    ]:
+      if not lst:
+        continue
+      paras_xml.append(_mk_p(f"{sec_lbl} ({len(lst)})", bold=True, sz=26))
+      for i, it in enumerate(lst, 1):
+        paras_xml.append(_mk_p(f"{i}. {it.get('_ar_title') or it.get('title', '')}", bold=True, sz=22))
+        paras_xml.append(_mk_p(f"الملخص: {it.get('_ar_summary') or it.get('summary', '')}", sz=20))
+        paras_xml.append(_mk_p(f"المصدر: {it.get('source_name', '')} | {it.get('url', '')}", sz=18))
+
+    doc_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f'<w:body>{"".join(paras_xml)}<w:sectPr/></w:body></w:document>'
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        '</Types>'
+    )
+    rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        '</Relationships>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+      zf.writestr("[Content_Types].xml", content_types)
+      zf.writestr("_rels/.rels", rels_xml)
+      zf.writestr("word/document.xml", doc_xml)
+    return buf.getvalue()
+
+
+def send_telegram_daily_press_review(
+    chat_id: str,
+    token: str,
+    articles_pool: list = None,
+    cfg: dict = None,
+    report_type: str = "composite",
+    filter_summary: str = "",
+) -> bool:
+  """إرسال التقرير اليومي «جولة في الصحافة» إلى بوت التلغرام بتنسيق منظم ومقسم بذكاء دون تجاوز حد تلغرام."""
+  if not token or not chat_id:
+    return False
+  cfg = cfg if isinstance(cfg, dict) else load_credentials()
+  pool = articles_pool if articles_pool is not None else _get_all_articles_for_bot()
+  rep = build_daily_report_data(pool, cfg, report_type=report_type, filter_summary=filter_summary)
+
+  header = (
+      f"🗞️ <b>جولة في الصحافة — المرصد القضائي</b>\n"
+      f"📅 <b>التاريخ:</b> {html.escape(rep['date_str'])} | 🕘 <b>الساعة:</b> {html.escape(rep['time_str'])}\n"
+      f"📊 <b>الإحصائيات:</b> {rep['total_count']} خبر "
+      f"(وطنية: {len(rep['national_items'])} • دولية عن المغرب: {len(rep['morocco_intl_items'])} • دولية أخرى: {len(rep['other_intl_items'])})\n"
+      f"━━━━━━━━━━━━━━━━━━\n"
+      f"📌 <b>الخلاصة التركيبية:</b>\n{html.escape(rep['synthesis'][:950])}"
+  )
+
+  chunks = [header]
+
+  def _append_section_chunks(sec_header: str, items_list: list, limit: int = 6):
+    if not items_list:
+      return
+    cur = f"<b>{html.escape(sec_header)}</b>"
+    for idx, it in enumerate(items_list[:limit], 1):
+      t_ar = html.escape((it.get("_ar_title") or it.get("title") or "")[:140])
+      s_ar = html.escape((it.get("_ar_summary") or it.get("summary") or "")[:170])
+      src_n = html.escape(clean_display_text(it.get("source_name") or it.get("platform") or ""))
+      u_c = html.escape(clean_social_post_url(it.get("url") or "#"), quote=True)
+      block = f'\n\n<b>{idx}.</b> <a href="{u_c}">{t_ar}</a>\n📝 {s_ar}\n🗞️ <i>{src_n}</i>'
+      if len(cur) + len(block) > 3600:
+        chunks.append(cur)
+        cur = f"<b>{html.escape(sec_header)} (تتمة)</b>" + block
+      else:
+        cur += block
+    if cur:
+      chunks.append(cur)
+
+  _append_section_chunks("📰 أولاً: أبرز عناوين الصحافة الوطنية المغربية", rep["national_items"], limit=6)
+  _append_section_chunks("🇲🇦 ثانياً: الصحافة الدولية — ما يتطرق للمغرب", rep["morocco_intl_items"], limit=6)
+  _append_section_chunks("🌍 ثالثاً: القضاء الدولي والصحافة الأجنبية", rep["other_intl_items"], limit=4)
+
+  ok_any = False
+  total_chunks = len(chunks)
+  for c_idx, ch_txt in enumerate(chunks, 1):
+    payload = {
+        "chat_id": chat_id,
+        "text": ch_txt[:3950],
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if c_idx == total_chunks:
+      payload["reply_markup"] = {
+          "inline_keyboard": [
+              [
+                  {"text": "📰 الصحف الوطنية", "callback_data": "p_press"},
+                  {"text": "🇲🇦 دولية عن المغرب", "callback_data": "t_ma"},
+              ],
+              [
+                  {"text": "🔄 تحديث الجولة الصحفية", "callback_data": "action_daily_report"},
+                  {"text": "🔙 القائمة الرئيسية", "callback_data": "menu_main"},
+              ],
+          ]
+      }
+    try:
+      resp = requests.post(
+          f"https://api.telegram.org/bot{token}/sendMessage",
+          json=payload,
+          timeout=8,
+      )
+      if resp.status_code == 200:
+        ok_any = True
+    except Exception:
+      pass
+  return ok_any
+
+
+def check_and_run_scheduled_daily_report() -> bool:
+  """التحقق من بلوغ الساعة التاسعة مساءً (21:00 بتوقيت المغرب) وإرسال التقرير اليومي «جولة في الصحافة» تلقائياً مرة واحدة يومياً."""
+  try:
+    cfg = load_credentials()
+    if not cfg.get("daily_report_enabled", True):
+      return False
+    target_hour = int(cfg.get("daily_report_hour", 21))
+    ma_now = _get_morocco_now()
+    today_str = ma_now.strftime("%Y-%m-%d")
+    if ma_now.hour < target_hour:
+      return False
+    m_state = load_monitor_state()
+    if m_state.get("last_daily_report_date") == today_str:
+      return False
+    token = (cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN).strip()
+    chat_id = (cfg.get("telegram_chat_id") or DEFAULT_TG_CHAT_ID).strip()
+    if not token or not chat_id:
+      return False
+    sent_ok = send_telegram_daily_press_review(chat_id, token, cfg=cfg, report_type="composite")
+    if sent_ok:
+      m_state["last_daily_report_date"] = today_str
+      m_state["last_daily_report_ts"] = time.time()
+      save_monitor_state(m_state)
+      return True
+  except Exception:
+    pass
+  return False
+
+
 def _telegram_send_main_menu(chat_id: str, token: str):
   """إرسال القائمة الرئيسية لبوت تلغرام بشكل سلس وواضح في رسالة واحدة."""
   if not token or not chat_id:
@@ -7690,6 +8303,7 @@ def _telegram_send_main_menu(chat_id: str, token: str):
       [{"text": "📰 الصحف المغربية", "callback_data": "p_press"}, {"text": "🌍 الصحافة الدولية (حسب الدولة ▾)", "callback_data": "menu_intl"}],
       [{"text": "🇲🇦 أخبار دولية عن المغرب", "callback_data": "t_ma"}, {"text": "🏛️ قضاء دولي", "callback_data": "t_intl_court"}],
       [{"text": "🟦 فيسبوك", "callback_data": "p_fb"}, {"text": "⬛ إكس", "callback_data": "p_x"}, {"text": "🟥 يوتيوب", "callback_data": "p_yt"}],
+      [{"text": "🗞️ التقرير اليومي (جولة في الصحافة)", "callback_data": "action_daily_report"}],
       [{"text": "🌐 جميع الأخبار", "callback_data": "p_all"}, {"text": "⚡ تشغيل رصد فوري", "callback_data": "action_run_scan"}],
   ]
   try:
@@ -7962,6 +8576,8 @@ def _handle_single_telegram_update(upd: dict, token_curr: str, chat_curr: str):
       _telegram_bot_send_filtered_response(cb_data.replace("topic_", ""), "topic", cb_chat_id, token_curr)
     elif cb_data.startswith("cat_"):
       _telegram_bot_send_filtered_response(cb_data.replace("cat_", ""), "platform", cb_chat_id, token_curr)
+    elif cb_data == "action_daily_report":
+      send_telegram_daily_press_review(cb_chat_id, token_curr, cfg=load_credentials(), report_type="composite")
     elif cb_data == "action_run_scan":
       try:
         requests.post(
@@ -8031,6 +8647,8 @@ def _handle_single_telegram_update(upd: dict, token_curr: str, chat_curr: str):
       _telegram_bot_send_filtered_response("فيسبوك", "platform", m_chat_id, token_curr)
     elif text_in in ("/yt", "يوتيوب", "🟥 يوتيوب"):
       _telegram_bot_send_filtered_response("يوتيوب", "platform", m_chat_id, token_curr)
+    elif text_in in ("/report", "التقرير اليومي", "جولة في الصحافة", "تقرير اليوم", "🗞️ التقرير اليومي"):
+      send_telegram_daily_press_review(m_chat_id, token_curr, cfg=load_credentials(), report_type="composite")
     elif text_in in ("/all", "الكل", "جميع", "🌐 الكل"):
       _telegram_bot_send_filtered_response("all", "platform", m_chat_id, token_curr)
     elif text_in.startswith("/search ") or text_in.startswith("بحث "):
@@ -8081,6 +8699,7 @@ def _setup_telegram_bot_commands_and_webhook(token: str):
         {"command": "spain", "description": "🇪🇸 الصحافة الإسبانية"},
         {"command": "algeria", "description": "🇩🇿 الصحافة الجزائرية"},
         {"command": "press", "description": "📰 الصحف المغربية الوطنية"},
+        {"command": "report", "description": "🗞️ التقرير اليومي (جولة في الصحافة)"},
         {"command": "scan", "description": "⚡ تشغيل رصد فوري الآن"},
         {"command": "all", "description": "🌐 جميع المستجدات"},
     ]
@@ -8578,6 +9197,7 @@ def ensure_background_daemon():
           last_run = float(state.get("last_auto_run", 0))
           if time.time() - last_run >= interval_sec:
             run_headless_background_cycle()
+        check_and_run_scheduled_daily_report()
       except Exception:
         pass
       time.sleep(15)
@@ -8594,6 +9214,7 @@ if os.environ.get("CRON_MODE") == "1" or st is None:
   init_db()
   _process_pending_telegram_updates_once()
   count = run_headless_background_cycle()
+  check_and_run_scheduled_daily_report()
   print(f"[CRON_MODE] Completed cycle. Added {count} new items.")
   sys.exit(0)
 
@@ -10360,6 +10981,116 @@ with col_main_feed:
   total_matching = len(displayed_articles)
   page_limit = int(st.session_state.get("feed_page_limit", 15))
   paginated_articles = displayed_articles[:page_limit]
+
+  # =====================================================================
+  # استوديو التقرير اليومي (إصدار الساعة 21:00) وتصدير PDF / Word وجولة في الصحافة لتلغرام
+  # =====================================================================
+  with st.expander("📑 التقرير اليومي (21:00) — تصدير PDF / Word وإرسال «جولة في الصحافة» لتلغرام", expanded=False):
+    ma_clock_now = _get_morocco_now()
+    last_rep_dt = monitor_state.get("last_daily_report_date") or "لم يُرسل بعد"
+    render_html(
+        f"""
+        <div style="background:rgba(7,25,32,0.85);border:1px solid rgba(212,175,55,0.4);border-right:4px solid #d4af37;border-radius:12px;padding:10px 14px;margin-bottom:10px;" dir="rtl">
+            <div style="font-size:0.94rem;font-weight:900;color:#f3e5ab;">🕘 جدولة التقرير اليومي الآلي: الساعة 21:00 مساءً (توقيت المغرب)</div>
+            <div style="font-size:0.8rem;color:#cbd5e1;margin-top:2px;">
+                التوقيت الحالي بالمغرب: <strong style="color:#6ee7b7;" dir="ltr">{ma_clock_now.strftime('%Y-%m-%d %H:%M')}</strong>
+                • آخر إرسال تلقائي لتلغرام: <strong style="color:#f3e5ab;" dir="ltr">{html.escape(str(last_rep_dt))}</strong>
+            </div>
+        </div>
+        """
+    )
+
+    col_rep_mode, col_rep_auto = st.columns([2.2, 1.2])
+    with col_rep_mode:
+      rep_mode_choice = st.selectbox(
+          "📋 نوع التقرير المطلوب إعداده وتصديره:",
+          options=[
+              "تقرير يومي تركيبي شامل (أهم أخبار القضاء الوطني والدولي والمغرب)",
+              "تقرير مخصص بناءً على الفلاتر والنتائج المعروضة حالياً",
+          ],
+          key="daily_report_mode_select",
+      )
+    with col_rep_auto:
+      daily_auto_toggle = st.toggle(
+          "إرسال تلقائي يومي لتلغرام (21:00)",
+          value=bool(cfg.get("daily_report_enabled", True)),
+          key="toggle_daily_21h_report",
+      )
+      if daily_auto_toggle != bool(cfg.get("daily_report_enabled", True)):
+        cfg["daily_report_enabled"] = bool(daily_auto_toggle)
+        cfg["daily_report_hour"] = 21
+        save_credentials(cfg)
+
+    is_custom_rep = "مخصص" in rep_mode_choice
+    active_filters_desc = (
+        f"القسم: {active_feed_title} | الدولة: {adv_country} | الموضوع: {adv_topic} | "
+        f"المصدر: {adv_source} | الوقت: {adv_time}"
+        + (f" | البحث: «{global_search_q.strip()}»" if global_search_q.strip() else "")
+    )
+    rep_source_pool = displayed_articles if is_custom_rep else all_articles
+
+    col_gen_btn, col_tg_btn = st.columns(2)
+    with col_gen_btn:
+      if st.button("✨ توليد ومعاينة التقرير الآن", key="btn_build_daily_report_now", type="primary", use_container_width=True):
+        st.session_state["generated_report_obj"] = build_daily_report_data(
+            rep_source_pool,
+            cfg,
+            report_type="custom" if is_custom_rep else "composite",
+            filter_summary=active_filters_desc if is_custom_rep else "",
+        )
+    with col_tg_btn:
+      if st.button("✈️ إرسال «جولة في الصحافة» إلى تلغرام الآن", key="btn_send_tg_press_review_now", use_container_width=True):
+        tok_r = (cfg.get("telegram_bot_token") or DEFAULT_TG_TOKEN).strip()
+        cid_r = (cfg.get("telegram_chat_id") or DEFAULT_TG_CHAT_ID).strip()
+        ok_tg = send_telegram_daily_press_review(
+            cid_r,
+            tok_r,
+            articles_pool=rep_source_pool,
+            cfg=cfg,
+            report_type="custom" if is_custom_rep else "composite",
+            filter_summary=active_filters_desc if is_custom_rep else "",
+        )
+        if ok_tg:
+          st.success("✅ تم إرسال التقرير اليومي «جولة في الصحافة» إلى بوت التلغرام بنجاح")
+        else:
+          st.error("❌ تعذر إرسال التقرير إلى تلغرام؛ تحقق من إعدادات البوت")
+
+    gen_rep = st.session_state.get("generated_report_obj")
+    if isinstance(gen_rep, dict):
+      render_html(
+          f"""
+          <div style="background:rgba(11,36,44,0.92);border:1px solid rgba(20,184,166,0.45);border-radius:12px;padding:12px 15px;margin:10px 0;" dir="rtl">
+              <div style="font-size:1rem;font-weight:900;color:#f3e5ab;margin-bottom:4px;">{html.escape(gen_rep['title'])}</div>
+              <div style="font-size:0.82rem;color:#6ee7b7;margin-bottom:8px;">
+                  إجمالي الأخبار: {gen_rep['total_count']} • وطنية: {len(gen_rep['national_items'])} • دولية عن المغرب: {len(gen_rep['morocco_intl_items'])} • قضاء دولي ومنصات: {len(gen_rep['other_intl_items']) + len(gen_rep['social_items'])}
+              </div>
+              <div style="font-size:0.88rem;color:#f1f5f9;line-height:1.75;background:rgba(5,16,20,0.65);padding:10px 12px;border-radius:8px;border-right:3px solid #d4af37;">
+                  <strong style="color:#f3e5ab;">📌 الخلاصة التركيبية:</strong><br/>{html.escape(gen_rep['synthesis'])}
+              </div>
+          </div>
+          """
+      )
+      pdf_bytes, pdf_mime, pdf_fname = generate_report_pdf_bytes(gen_rep)
+      docx_bytes = generate_report_docx_bytes(gen_rep)
+      col_dl_pdf, col_dl_docx = st.columns(2)
+      with col_dl_pdf:
+        st.download_button(
+            "📄 تصدير التقرير (PDF)",
+            data=pdf_bytes,
+            file_name=pdf_fname,
+            mime=pdf_mime,
+            key="dl_daily_report_pdf",
+            use_container_width=True,
+        )
+      with col_dl_docx:
+        st.download_button(
+            "📝 تصدير التقرير (Word .docx)",
+            data=docx_bytes,
+            file_name=f"marsad_report_{gen_rep['date_str']}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            key="dl_daily_report_docx",
+            use_container_width=True,
+        )
 
   render_html(
       f"""
